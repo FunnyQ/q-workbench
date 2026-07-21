@@ -33,7 +33,7 @@ command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench", "--entr
 id = "restart-agent"
 title = "Restart agent"
 contexts = ["workspace"]
-command = ["zsh", "scripts/restart-agent.zsh"]
+command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench", "--entrypoint", "restart-agent", "--placement", "popup", "--width", "72", "--height", "16"]
 
 [[panes]]
 id = "agent"
@@ -49,6 +49,12 @@ command = ["zsh", "scripts/new-agent-popup.zsh", "worktree"]
 
 [[panes]]
 id = "ssh"
-title = "  ssh"
+title = " ssh"
 placement = "popup"
 command = ["zsh", "scripts/ssh-picker-popup.zsh"]
+
+[[panes]]
+id = "restart-agent"
+title = "󰜉  Restart Agent"
+placement = "popup"
+command = ["zsh", "scripts/restart-agent-popup.zsh"]

@@ -53,7 +53,7 @@ chmod +x "$mock_bin/gum" "$mock_bin/herdr"
 # run outside any git repo so project_dir falls back to $PWD instead of the
 # ambient toplevel (the plugin lives inside a repo during development)
 (cd "$tmp_dir" && PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= \
-  TEST_TMP_DIR="$tmp_dir" TEST_LOG="$log_file" \
+  TEST_TMP_DIR="$tmp_dir" TEST_LOG="$log_file" Q_WORKBENCH_LOCAL_CONFIG=/dev/null \
   "$popup_script")
 
 actual=$(<"$log_file")
@@ -65,7 +65,7 @@ pane rename 1-2 󰥨  Files
 pane run 1-2 yazi .
 pane split 1-2 --direction down --ratio 0.9 --cwd $tmp_dir --no-focus
 pane rename 1-3   term
-pane run 1-1 codex --dangerously-bypass-approvals-and-sandbox
+pane run 1-1 codex
 tab focus 1:2"
 
 [[ "$actual" == "$expected" ]] || {
@@ -74,9 +74,21 @@ tab focus 1:2"
   exit 1
 }
 
+# The sandbox bypass must be opt-in, never a silent default.
 > "$log_file"
+trash "$tmp_dir/gum-count" 2>/dev/null || true
+(cd "$tmp_dir" && PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= \
+  TEST_TMP_DIR="$tmp_dir" TEST_LOG="$log_file" Q_WORKBENCH_LOCAL_CONFIG=/dev/null \
+  Q_UNSAFE_CODEX=1 "$popup_script")
+grep -qxF 'pane run 1-1 codex --dangerously-bypass-approvals-and-sandbox' "$log_file" || {
+  print -u2 'Q_UNSAFE_CODEX=1 did not add the bypass flag'
+  exit 1
+}
+
+> "$log_file"
+trash "$tmp_dir/gum-count" 2>/dev/null || true
 PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= \
-  TEST_TMP_DIR="$tmp_dir" TEST_LOG="$log_file" \
+  TEST_TMP_DIR="$tmp_dir" TEST_LOG="$log_file" Q_WORKBENCH_LOCAL_CONFIG=/dev/null \
   TEST_CANCEL=1 "$popup_script"
 [[ ! -s "$log_file" ]] || {
   print -u2 'cancel created a Herdr resource'

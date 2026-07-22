@@ -37,6 +37,7 @@ cat > "$mock_bin/herdr" <<'EOF'
 #!/bin/zsh
 print -r -- "$*" >> "$TEST_LOG"
 case "$1 $2" in
+  "pane get") print "{\"result\":{\"pane\":{\"cwd\":\"$TEST_ORIGIN_CWD\"}}}" ;;
   "tab create") print '{"result":{"root_pane":{"pane_id":"1-1"},"tab":{"tab_id":"1:2"}}}' ;;
   "pane split")
     if [[ "$*" == *"1-1"* ]]; then
@@ -52,7 +53,7 @@ chmod +x "$mock_bin/gum" "$mock_bin/herdr"
 
 # run outside any git repo so project_dir falls back to $PWD instead of the
 # ambient toplevel (the plugin lives inside a repo during development)
-(cd "$tmp_dir" && PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= \
+(cd "$tmp_dir" && PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= HERDR_ACTIVE_PANE_ID= \
   TEST_TMP_DIR="$tmp_dir" TEST_LOG="$log_file" Q_WORKBENCH_LOCAL_CONFIG=/dev/null \
   "$popup_script")
 
@@ -78,7 +79,7 @@ tab focus 1:2"
 # the sequence above already covers the off case (`pane run 1-1 codex`).
 > "$log_file"
 trash "$tmp_dir/gum-count" 2>/dev/null || true
-(cd "$tmp_dir" && PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= \
+(cd "$tmp_dir" && PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= HERDR_ACTIVE_PANE_ID= \
   TEST_TMP_DIR="$tmp_dir" TEST_LOG="$log_file" Q_WORKBENCH_LOCAL_CONFIG=/dev/null \
   Q_CODEX_EXTRA_ARGS='--dangerously-bypass-approvals-and-sandbox' "$popup_script")
 grep -qxF 'pane run 1-1 codex --dangerously-bypass-approvals-and-sandbox' "$log_file" || {
@@ -89,7 +90,7 @@ grep -qxF 'pane run 1-1 codex --dangerously-bypass-approvals-and-sandbox' "$log_
 # Word-splitting: multiple flags must arrive as separate arguments.
 > "$log_file"
 trash "$tmp_dir/gum-count" 2>/dev/null || true
-(cd "$tmp_dir" && PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= \
+(cd "$tmp_dir" && PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= HERDR_ACTIVE_PANE_ID= \
   TEST_TMP_DIR="$tmp_dir" TEST_LOG="$log_file" Q_WORKBENCH_LOCAL_CONFIG=/dev/null \
   Q_CODEX_EXTRA_ARGS='--search --profile work' "$popup_script")
 grep -qxF 'pane run 1-1 codex --search --profile work' "$log_file" || {
@@ -97,9 +98,25 @@ grep -qxF 'pane run 1-1 codex --search --profile work' "$log_file" || {
   exit 1
 }
 
+# The popup's own cwd is the plugin install dir (a git checkout of its own), so
+# the tab must follow the invoking pane's cwd, not $PWD.
+origin_dir="$tmp_dir/origin"
+mkdir -p "$origin_dir"
 > "$log_file"
 trash "$tmp_dir/gum-count" 2>/dev/null || true
-PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= \
+(cd "$plugin_dir" && PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= \
+  HERDR_ACTIVE_PANE_ID='w1:p1' TEST_ORIGIN_CWD="$origin_dir" \
+  TEST_TMP_DIR="$tmp_dir" TEST_LOG="$log_file" Q_WORKBENCH_LOCAL_CONFIG=/dev/null \
+  "$popup_script")
+grep -qxF "tab create --label review --cwd $origin_dir --env Q_NO_BANNER=1 --no-focus" "$log_file" || {
+  print -u2 'the tab did not inherit the invoking pane cwd'
+  cat "$log_file"
+  exit 1
+}
+
+> "$log_file"
+trash "$tmp_dir/gum-count" 2>/dev/null || true
+PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= HERDR_ACTIVE_PANE_ID= \
   TEST_TMP_DIR="$tmp_dir" TEST_LOG="$log_file" Q_WORKBENCH_LOCAL_CONFIG=/dev/null \
   TEST_CANCEL=1 "$popup_script"
 [[ ! -s "$log_file" ]] || {

@@ -119,7 +119,7 @@ case "$usage" in
     render_menu '  Usage' 'Name this tab.'
     label=$(gum input --placeholder 'label for this tab…' --width 40) || exit 0
     ;;
-  *) label="${usage##*  }" ;;
+  *) label="$usage" ;;   # already pad-stripped above; keep the nerd font icon
 esac
 [[ -n "$label" ]] || exit 0
 

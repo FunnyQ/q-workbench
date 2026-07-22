@@ -16,6 +16,7 @@
 #                    and uses this label (ccc's first tab pins "main")
 #   [wt_mode]      → forwarded to the launcher; "worktree" starts in a git worktree
 export PATH="/opt/homebrew/bin:$PATH"
+herdr_bin="${HERDR_BIN_PATH:-herdr}"
 
 agent_pane="$1"
 tab_id="$2"
@@ -24,6 +25,6 @@ wt_mode="$4"        # "worktree" → launcher prompts for a branch + starts a wo
 [[ -n "$agent_pane" ]] || exit 1
 launcher="${0:A:h}/agent-launcher.zsh"
 
-herdr pane rename "$agent_pane" "󱚟  agent" >/dev/null 2>&1
+"$herdr_bin" pane rename "$agent_pane" "󱚟  agent" >/dev/null 2>&1
 # Quote each arg so an empty tab_id/fixed_usage keeps its slot (args don't shift).
-herdr pane run "$agent_pane" "$launcher '$agent_pane' '$tab_id' '$fixed_usage' '$wt_mode'"
+"$herdr_bin" pane run "$agent_pane" "$launcher '$agent_pane' '$tab_id' '$fixed_usage' '$wt_mode'"

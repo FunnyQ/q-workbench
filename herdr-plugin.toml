@@ -24,6 +24,12 @@ contexts = ["workspace"]
 command = ["zsh", "scripts/dashboard-launcher.zsh"]
 
 [[actions]]
+id = "project"
+title = "Open project picker"
+contexts = ["workspace"]
+command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench", "--entrypoint", "project", "--placement", "popup", "--width", "70%", "--height", "70%"]
+
+[[actions]]
 id = "ssh"
 title = "Open SSH picker"
 contexts = ["workspace"]
@@ -46,6 +52,12 @@ id = "worktree-agent"
 title = "󱚟  new worktree agent"
 placement = "popup"
 command = ["zsh", "scripts/new-agent-popup.zsh", "worktree"]
+
+[[panes]]
+id = "project"
+title = "󰉋 project"
+placement = "popup"
+command = ["zsh", "scripts/project-picker-popup.zsh"]
 
 [[panes]]
 id = "ssh"

@@ -6,10 +6,11 @@
 #   [tab_id]      when given, the tab is renamed to the label too.
 #   [fixed_usage] when set, skips the usage menu and uses this as the label
 #                 (the project picker's pinned "main" tab).
-#   [wt_mode]     "worktree" (alt+shift+c) → prompt for a branch and start in a
-#                 fresh git worktree; empty (alt+c) → no worktree step.
+#   [wt_mode]     "worktree" (the new-worktree-agent action) → prompt for a branch
+#                 and start in a fresh git worktree; empty (new-agent) → no
+#                 worktree step.
 #   [layout_mode] "no-layout" → restart in place: skip the yazi/term split (they
-#                 already exist). Used by restart-agent.zsh (alt+shift+r).
+#                 already exist). Used by restart-agent.zsh.
 #
 # All menus run at the pane's FULL width; yazi + term are split off LAST, so every
 # menu stays centered (no mid-flow resize) and a chosen worktree drives the new
@@ -64,13 +65,13 @@ render_banner() {
   done <<< "$banner"
 }
 
-# ----- Menu 1: git worktree (worktree mode only — alt+shift+c) ---------------
+# ----- Menu 1: git worktree (worktree mode only) -----------------------------
 # A worktree is just another working dir for the same repo, so this step is
 # harness-agnostic. Doing it first lets the chosen worktree drive the working dir
 # for all three panes (agent + yazi + term), not just the agent pane — real
-# parallel-work isolation. The worktree-vs-normal choice IS the keybinding
-# (alt+shift+c vs alt+c), so there's no yes/no prompt — go straight to naming
-# the branch.
+# parallel-work isolation. The worktree-vs-normal choice IS the invoked action
+# (new-worktree-agent vs new-agent), so there's no yes/no prompt — go straight
+# to naming the branch.
 worktree_dir=""
 branch=""
 if [[ -n "$wt_mode" ]] && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then

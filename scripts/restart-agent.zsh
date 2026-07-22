@@ -44,7 +44,7 @@ else
 fi
 [[ "$label" == "null" ]] && label=""
 
-# A plugin action does not move keyboard focus. When alt+r is invoked
+# A plugin action does not move keyboard focus. When the action is invoked
 # from yazi/term, focus the adjacent agent pane before opening its menus.
 if [[ "$cur_pane" != "$target" ]]; then
   focus_direction=""

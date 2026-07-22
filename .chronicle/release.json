@@ -1,0 +1,15 @@
+{
+  "mode": "whole-repo",
+  "tag": "v{version}",
+  "changelog": "CHANGELOG.md",
+  "branches": {
+    "develop": "main",
+    "main": "main"
+  },
+  "versionFiles": [
+    {
+      "path": "herdr-plugin.toml",
+      "pattern": "version = \"([^\"]+)\""
+    }
+  ]
+}

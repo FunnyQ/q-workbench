@@ -85,7 +85,11 @@ Q_WORKBENCH_LOCAL_CONFIG="$tmp_dir/models.zsh" zsh -c "
 
 # With no CLI and no override, the path must still land on Herdr's documented
 # per-plugin config dir — otherwise the user's config silently never loads.
-resolved=$(PATH=/usr/bin:/bin HOME="$tmp_dir/home" XDG_CONFIG_HOME= zsh -c "
+# Both resolution vars must be cleared: config.zsh exports them, so a shell that
+# already sourced it (any herdr pane running a workbench script) hands the
+# resolved paths down and the fallback branch never runs.
+resolved=$(PATH=/usr/bin:/bin HOME="$tmp_dir/home" XDG_CONFIG_HOME= \
+  Q_WORKBENCH_CONFIG_DIR= Q_WORKBENCH_LOCAL_CONFIG= zsh -c "
   source ${(q)config}
   print -r -- \$Q_WORKBENCH_LOCAL_CONFIG
 ")
@@ -101,7 +105,8 @@ cat > "$tmp_dir/bin/herdr" <<EOF
 [[ "\$1 \$2" == 'plugin config-dir' ]] && print -r -- "$tmp_dir/from-cli"
 EOF
 chmod +x "$tmp_dir/bin/herdr"
-resolved=$(PATH="$tmp_dir/bin:/usr/bin:/bin" zsh -c "
+resolved=$(PATH="$tmp_dir/bin:/usr/bin:/bin" \
+  Q_WORKBENCH_CONFIG_DIR= Q_WORKBENCH_LOCAL_CONFIG= zsh -c "
   source ${(q)config}
   print -r -- \$Q_WORKBENCH_LOCAL_CONFIG
 ")
@@ -113,7 +118,8 @@ resolved=$(PATH="$tmp_dir/bin:/usr/bin:/bin" zsh -c "
 # The registries and pickers run under `set -eu` on a minimal PATH. A failing
 # `herdr` shellout inside config.zsh must fall through to the literal path, not
 # abort the sourcing script with 127.
-PATH=/usr/bin:/bin HOME="$tmp_dir/home" Q_WORKBENCH_CONFIG_DIR= zsh -c "
+PATH=/usr/bin:/bin HOME="$tmp_dir/home" \
+  Q_WORKBENCH_CONFIG_DIR= Q_WORKBENCH_LOCAL_CONFIG= zsh -c "
   set -eu
   source ${(q)config}
   [[ -n \$Q_PROJECTS_ROOT ]] || exit 1

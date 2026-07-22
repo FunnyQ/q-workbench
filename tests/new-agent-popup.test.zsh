@@ -10,7 +10,7 @@ popup_script="$plugin_dir/scripts/new-agent-popup.zsh"
   exit 1
 }
 
-tmp_dir=$(mktemp -d)
+tmp_dir=${$(mktemp -d):A}   # :A resolves the /var -> /private/var symlink so it matches $PWD
 trap 'trash "$tmp_dir" 2>/dev/null || true' EXIT
 mock_bin="$tmp_dir/bin"
 log_file="$tmp_dir/herdr.log"
@@ -50,21 +50,23 @@ EOF
 
 chmod +x "$mock_bin/gum" "$mock_bin/herdr"
 
-PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= \
+# run outside any git repo so project_dir falls back to $PWD instead of the
+# ambient toplevel (the plugin lives inside a repo during development)
+(cd "$tmp_dir" && PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= \
   TEST_TMP_DIR="$tmp_dir" TEST_LOG="$log_file" \
-  "$popup_script"
+  "$popup_script")
 
 actual=$(<"$log_file")
-expected='tab create --label review --cwd /Users/funnyq/.config --env Q_NO_BANNER=1 --no-focus
+expected="tab create --label review --cwd $tmp_dir --env Q_NO_BANNER=1 --no-focus
 pane rename 1-1 review
 tab rename 1:2 review
-pane split 1-1 --direction right --ratio 0.38 --cwd /Users/funnyq/.config --env Q_NO_BANNER=1 --no-focus
+pane split 1-1 --direction right --ratio 0.38 --cwd $tmp_dir --env Q_NO_BANNER=1 --no-focus
 pane rename 1-2 󰥨  Files
 pane run 1-2 yazi .
-pane split 1-2 --direction down --ratio 0.9 --cwd /Users/funnyq/.config --no-focus
+pane split 1-2 --direction down --ratio 0.9 --cwd $tmp_dir --no-focus
 pane rename 1-3   term
 pane run 1-1 codex --dangerously-bypass-approvals-and-sandbox
-tab focus 1:2'
+tab focus 1:2"
 
 [[ "$actual" == "$expected" ]] || {
   print -u2 "unexpected command sequence"

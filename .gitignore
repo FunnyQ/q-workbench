@@ -1,0 +1,7 @@
+# Machine-specific overrides live outside the repo, in
+# `herdr plugin config-dir q.workbench` — nothing to ignore here.
+
+# Tooling scratch
+.cockpit/
+.impeccable/
+.DS_Store

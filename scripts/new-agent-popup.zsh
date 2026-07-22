@@ -162,8 +162,7 @@ herdr pane rename "$term_pane" '  term' >/dev/null 2>&1 || cleanup_tab
 launch_args=()
 case "$harness" in
   *codex*)
-    launch_args=(codex)
-    (( Q_UNSAFE_CODEX )) && launch_args+=(--dangerously-bypass-approvals-and-sandbox)
+    launch_args=(codex ${=Q_CODEX_EXTRA_ARGS})
     ;;
   *opencode*) launch_args=(opencode) ;;
   *)

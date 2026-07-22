@@ -3,8 +3,10 @@
 
 set -eu
 
-registry="${Q_PROJECT_REGISTRY_FILE:-$HOME/.local/state/herdr-projects/registry.json}"
-projects_root="${Q_PROJECTS_ROOT:-$HOME/Projects}"
+source "${0:A:h}/config.zsh"
+
+registry="$Q_PROJECT_REGISTRY_FILE"
+projects_root="$Q_PROJECTS_ROOT"
 
 canonical_project() {
   local project_path="$1" root physical_projects_root

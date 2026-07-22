@@ -5,7 +5,9 @@ set -eu
 
 export PATH="$PATH:/opt/homebrew/bin"
 
-registry="${Q_PROJECT_REGISTRY_FILE:-$HOME/.local/state/herdr-projects/registry.json}"
+source "${0:A:h}/config.zsh"
+
+registry="$Q_PROJECT_REGISTRY_FILE"
 query="${1:-}"
 
 [[ -f "$registry" ]] || exit 1

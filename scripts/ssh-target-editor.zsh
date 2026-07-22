@@ -1,8 +1,10 @@
 #!/usr/bin/env zsh
 set -u
 
+source "${0:A:h}/config.zsh"
+
 target="${1:-}"
-config="${ZSSH_CONFIG_FILE:-$HOME/.config/ssh/config}"
+config="$Q_SSH_CONFIG_FILE"
 registry="${0:A:h}/ssh-target-registry.zsh"
 
 [[ -n "$target" ]] || { print -u2 -- "No SSH target selected."; exit 1; }
@@ -20,12 +22,12 @@ if [[ "$target" == *@* ]]; then
     default_hostname="${target#*@}"
 fi
 
-if [[ -n "${ZSSH_EDIT_ALIAS:-}" ]]; then
-    alias_name="$ZSSH_EDIT_ALIAS"
-    hostname="${ZSSH_EDIT_HOSTNAME:-$default_hostname}"
-    user="${ZSSH_EDIT_USER:-$default_user}"
-    port="${ZSSH_EDIT_PORT:-22}"
-    confirmed="${ZSSH_EDIT_CONFIRM:-no}"
+if [[ -n "${Q_SSH_EDIT_ALIAS:-}" ]]; then
+    alias_name="$Q_SSH_EDIT_ALIAS"
+    hostname="${Q_SSH_EDIT_HOSTNAME:-$default_hostname}"
+    user="${Q_SSH_EDIT_USER:-$default_user}"
+    port="${Q_SSH_EDIT_PORT:-22}"
+    confirmed="${Q_SSH_EDIT_CONFIRM:-no}"
 else
     command -v gum >/dev/null || { print -u2 -- "gum is required for SSH target editing."; exit 1; }
     # fzf already owns the alternate screen. Clearing it gives the editor the

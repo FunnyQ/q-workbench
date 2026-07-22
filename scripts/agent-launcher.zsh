@@ -173,8 +173,7 @@ fi
 # menu — including claude's model picker below — renders before any resize.
 launch=()
 if [[ "$harness" == *"codex"* ]]; then
-  launch=(codex)
-  (( Q_UNSAFE_CODEX )) && launch+=(--dangerously-bypass-approvals-and-sandbox)
+  launch=(codex ${=Q_CODEX_EXTRA_ARGS})
 elif [[ "$harness" == *"opencode"* ]]; then
   launch=(opencode)
 else

@@ -1,9 +1,11 @@
 #!/usr/bin/env zsh
 set -u
 
-registry="${ZSSH_REGISTRY_FILE:-$HOME/.local/state/ssh-targets/registry.json}"
-config="${ZSSH_CONFIG_FILE:-$HOME/.config/ssh/config}"
-history_file="${ZSSH_HISTORY_FILE:-$HOME/.zsh_history}"
+source "${0:A:h}/config.zsh"
+
+registry="$Q_SSH_REGISTRY_FILE"
+config="$Q_SSH_CONFIG_FILE"
+history_file="$Q_SSH_HISTORY_FILE"
 
 write_registry() {
     local content="$1" tmp

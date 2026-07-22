@@ -3,7 +3,7 @@
 
 export PATH="$PATH:/opt/homebrew/bin"
 
-registry="${Q_SSH_REGISTRY:-${0:A:h}/ssh-target-registry.zsh}"
+registry="${Q_SSH_REGISTRY_SCRIPT:-${0:A:h}/ssh-target-registry.zsh}"
 editor="${Q_SSH_EDITOR:-${0:A:h}/ssh-target-editor.zsh}"
 session_script="${0:A:h}/ssh-session.zsh"
 

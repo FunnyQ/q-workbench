@@ -5,6 +5,16 @@ export PATH="$PATH:/opt/homebrew/bin"
 
 source "${0:A:h}/config.zsh"
 
+# The popup is a plugin pane: Herdr launches it with the *plugin install dir* as
+# cwd, which is itself a git checkout — so a bare `git rev-parse` here resolves to
+# the plugin, not the workspace. Adopt the invoking pane's cwd before anything
+# reads $PWD (worktree discovery below, project_dir further down).
+if [[ -n "${HERDR_ACTIVE_PANE_ID:-}" ]]; then
+  origin_cwd=$(herdr pane get "$HERDR_ACTIVE_PANE_ID" 2>/dev/null | \
+    jq -r '.result.pane.cwd // empty')
+  [[ -n "$origin_cwd" && -d "$origin_cwd" ]] && cd "$origin_cwd"
+fi
+
 wt_mode="$1"
 popup_cols=${COLUMNS:-0}
 popup_lines=${LINES:-0}

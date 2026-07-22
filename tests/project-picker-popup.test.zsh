@@ -44,6 +44,7 @@ else
   cat >/dev/null
 fi
 print -r -- "${TEST_QUERY:-}"
+print -r -- "${TEST_KEY:-}"
 print -r -- "$TEST_PICK"
 EOF
 
@@ -78,6 +79,8 @@ rg -aFq -- "   $project" "$fzf_input"
 rg -aFq -- '   filesystem' "$fzf_input"
 rg -Fq -- 'ctrl-i:execute(' "$fzf_args"
 rg -Fq -- 'ctrl-i: edit' "$fzf_args"
+rg -Fq -- '--expect=alt-enter' "$fzf_args"
+rg -Fq -- 'alt-enter: plain' "$fzf_args"
 jq -e --arg project "$project" '.projects[$project].last_used_at | type == "number"' \
   "$registry" >/dev/null
 
@@ -92,6 +95,19 @@ rg -Fq -- 'tab rename w10:t1 󰧑  main' "$log_file"
 rg -Fq -- 'pane rename w10:p1 󱚟  agent' "$log_file"
 rg -Fq -- 'pane run w10:p1 ' "$log_file"
 rg -q '^workspace focus w10$' "$log_file"
+
+: > "$log_file"
+PATH="$mock_bin:/opt/homebrew/bin:/usr/bin:/bin" TEST_LOG="$log_file" \
+  TEST_PICK="$new_project" TEST_KEY='alt-enter' TEST_OPEN_PATH='' \
+  HERDR_BIN_PATH="$mock_bin/herdr" \
+  Q_PROJECT_REGISTRY_FILE="$registry" Q_PROJECTS_ROOT="$tmp_dir" "$picker"
+
+rg -Fq -- "workspace create --cwd $new_project --label gadget --env Q_NO_BANNER=1 --no-focus" "$log_file"
+rg -q '^workspace focus w10$' "$log_file"
+if rg -q '^(tab rename|pane rename|pane run) ' "$log_file"; then
+  print -u2 'plain workspace unexpectedly built the agent layout'
+  exit 1
+fi
 
 : > "$log_file"
 PATH="$mock_bin:/opt/homebrew/bin:/usr/bin:/bin" TEST_LOG="$log_file" \

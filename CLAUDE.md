@@ -32,20 +32,26 @@ Both build the same 3-pane layout (agent | yazi "Files" / term) but from opposit
 
 ### Configuration
 
-`scripts/config.zsh` is **sourced** by all three launchers — it must stay side-effect free (no output, no `set`, no `exit`). Precedence is user config → environment → built-in defaults, achieved by sourcing the user file *first* so its plain assignments survive the `:-` fallbacks.
+`scripts/config.zsh` is **sourced** by every script that reads a setting — the three launchers plus both registries and both pickers — so it must stay side-effect free (no output, no `set`, no `exit`). It owns *all* defaults; a script reads `$Q_FOO` bare rather than repeating a `:-` fallback, so there is one place to change a default and no way for two scripts to disagree.
 
-The user file lives at `$(herdr plugin config-dir q.workbench)/config.zsh`, resolved lazily (the CLI is only shelled out to when `Q_WORKBENCH_LOCAL_CONFIG` is unset) with a literal `~/.config/herdr/plugins/config/…` fallback. **Tests that invoke a launcher must pass `Q_WORKBENCH_LOCAL_CONFIG=/dev/null`** — otherwise the developer's real config leaks in and assertions about defaults pass or fail by machine.
+Precedence is user config → environment → built-in defaults, achieved by sourcing the user file *first* so its plain assignments survive the `:-` fallbacks.
 
-It owns the claude model menu (`Q_AGENT_MODEL_ORDER` / `Q_AGENT_MODELS` / `Q_AGENT_MODEL_ARGS`) so the two launchers can't drift apart, plus `Q_CLAUDE_EXTRA_ARGS` and `Q_UNSAFE_CODEX`.
+The user file lives at `$(herdr plugin config-dir q.workbench)/config.zsh`, resolved lazily (the CLI is only shelled out to when `Q_WORKBENCH_LOCAL_CONFIG` is unset) with a literal `~/.config/herdr/plugins/config/…` fallback. The resolved paths are **exported** so the pickers — which respawn their source script on every fzf reload — skip that shellout. **Tests that invoke any of these scripts must pass `Q_WORKBENCH_LOCAL_CONFIG=/dev/null`** — otherwise the developer's real config leaks in and assertions about defaults pass or fail by machine.
 
-Harness bypass flags (`--dangerously-bypass-approvals-and-sandbox`) are **opt-in**. Do not reintroduce them as unconditional defaults; `tests/new-agent-popup.test.zsh` asserts both states.
+`config.example.zsh` at the repo root documents every setting, fully commented out; keep it in step when adding one.
+
+**The model-menu typeset trap:** a user file overriding `Q_AGENT_MODELS` / `Q_AGENT_MODEL_ARGS` must declare them `typeset -gA` *before* assigning. Otherwise they are plain arrays when config.zsh's own `typeset -gA` runs, and zsh **silently empties** an array on that conversion — the `(( ${#…} )) ||` guard then sees 0 and restores the built-in menu, leaving the user's `Q_AGENT_MODEL_ORDER` labels resolving to nothing. `tests/config.test.zsh` pins this.
+
+Harness bypass flags (`--dangerously-bypass-approvals-and-sandbox`, `--dangerously-skip-permissions`) live in `Q_CODEX_EXTRA_ARGS` / `Q_CLAUDE_EXTRA_ARGS` and are **opt-in**. Do not reintroduce a dedicated boolean or an unconditional default; `tests/new-agent-popup.test.zsh` asserts both states.
 
 ### Registries
 
 Two JSON state files, both `version: 1`, both written atomically (`mktemp` → `jq '.'` → `mv`) via a local `write_registry`:
 
 - **Projects** — `~/.local/state/herdr-projects/registry.json` (override: `$Q_PROJECT_REGISTRY_FILE`). `project-registry.zsh {scan|rescan|update|use PATH|edit PATH}`. Discovery merges three sources: Claude sessions (`~/.claude/projects`), Codex rollouts (`~/.codex/sessions`), and a `.git` sweep of `$Q_PROJECTS_ROOT` (default `~/Projects`). `canonical_project()` resolves to the git toplevel and drops temp dirs — keep that filter intact.
-- **SSH targets** — `~/.local/state/ssh-targets/registry.json` (override: `$ZSSH_REGISTRY_FILE`). `ssh-target-registry.zsh {sync|list|get|use|remove}`. `sync` reconciles against `~/.config/ssh/config` (`$ZSSH_CONFIG_FILE`) using `ssh -G`; config-sourced entries are *hidden* on remove, manual ones deleted. Seeded once from `~/.zsh_history`.
+- **SSH targets** — `~/.local/state/ssh-targets/registry.json` (override: `$Q_SSH_REGISTRY_FILE`). `ssh-target-registry.zsh {sync|list|get|use|remove}`. `sync` reconciles against `~/.config/ssh/config` (`$Q_SSH_CONFIG_FILE`) using `ssh -G`; config-sourced entries are *hidden* on remove, manual ones deleted. Seeded once from `$Q_SSH_HISTORY_FILE`.
+
+Note `$Q_SSH_REGISTRY_FILE` (the JSON) is distinct from `$Q_SSH_REGISTRY_SCRIPT` (the path to `ssh-target-registry.zsh`, a test injection point alongside `$Q_SSH_EDITOR`) — those two are wiring, not user config, and stay out of `config.zsh`.
 
 `_source` fields accumulate; `use` stamps `last_used_at`, which drives picker sort order.
 

@@ -101,15 +101,19 @@ Machine-specific values go in Herdr's per-plugin config dir — outside this rep
 they survive a reinstall and can't be committed by accident:
 
 ```zsh
+cp config.example.zsh "$(herdr plugin config-dir q.workbench)/config.zsh"
 $EDITOR "$(herdr plugin config-dir q.workbench)/config.zsh"
 ```
 
-It is sourced by `scripts/config.zsh` ahead of every default, so plain assignments win:
+`config.example.zsh` in this repo documents every setting, fully commented out.
+
+It is sourced by `scripts/config.zsh` — which every script that reads a setting sources
+in turn — ahead of every default, so plain assignments win:
 
 ```zsh
 Q_DASHBOARD_WORKSPACE='my-workspace'
 Q_CLAUDE_EXTRA_ARGS='--dangerously-load-development-channels plugin:monitor@my-marketplace'
-Q_UNSAFE_CODEX=1
+Q_CODEX_EXTRA_ARGS='--dangerously-bypass-approvals-and-sandbox'
 ```
 
 Use the file rather than `~/.zshrc`: Herdr runs plugin actions detached, so an exported
@@ -119,15 +123,18 @@ variable may not reach them.
 | --- | --- | --- |
 | `Q_DASHBOARD_WORKSPACE` | `personal-assistant` | Workspace the dashboard tab opens in |
 | `Q_CLAUDE_EXTRA_ARGS` | *(empty)* | Appended to every `claude` launch |
-| `Q_UNSAFE_CODEX` | `0` | `1` adds Codex's sandbox/approval bypass |
-| `Q_AGENT_MODEL_ORDER` / `Q_AGENT_MODELS` | Opus, OpusPlan, CCR, Fable 5 | The claude model menu |
+| `Q_CODEX_EXTRA_ARGS` | *(empty)* | Appended to every `codex` launch |
+| `Q_AGENT_MODEL_ORDER` / `Q_AGENT_MODELS` / `Q_AGENT_MODEL_ARGS` | Opus, OpusPlan, CCR, Fable 5 | The claude model menu — declare the maps `typeset -gA` first, see the example file |
 | `Q_PROJECT_REGISTRY_FILE` | `~/.local/state/herdr-projects/registry.json` | |
-| `Q_PROJECTS_ROOT` | `~/Projects` | Filesystem discovery root |
-| `ZSSH_REGISTRY_FILE` | `~/.local/state/ssh-targets/registry.json` | |
-| `ZSSH_CONFIG_FILE` | `~/.config/ssh/config` | |
+| `Q_PROJECTS_ROOT` | `~/Projects` | Root of the `.git` discovery sweep |
+| `Q_SSH_REGISTRY_FILE` | `~/.local/state/ssh-targets/registry.json` | |
+| `Q_SSH_CONFIG_FILE` | `~/.config/ssh/config` | What `sync` reconciles against |
+| `Q_SSH_HISTORY_FILE` | `~/.zsh_history` | Seeds the SSH registry on first sync |
 
-**On the bypass flags:** `Q_UNSAFE_CODEX` is off by default because it hands the agent
-unrestricted execution on your host. Turn it on deliberately, per machine.
+**On the bypass flags:** `--dangerously-bypass-approvals-and-sandbox` (Codex) and
+`--dangerously-skip-permissions` (Claude) hand the agent unrestricted execution on your
+host. Nothing adds them for you — put them in the `*_EXTRA_ARGS` slot deliberately, per
+machine.
 
 ## Development
 

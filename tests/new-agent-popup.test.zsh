@@ -105,6 +105,20 @@ mkdir -p "$origin_dir"
 > "$log_file"
 trash "$tmp_dir/gum-count" 2>/dev/null || true
 (cd "$plugin_dir" && PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= \
+  HERDR_ACTIVE_PANE_ID= \
+  HERDR_PLUGIN_CONTEXT_JSON="{\"focused_pane_cwd\":\"$origin_dir\"}" \
+  TEST_TMP_DIR="$tmp_dir" TEST_LOG="$log_file" Q_WORKBENCH_LOCAL_CONFIG=/dev/null \
+  "$popup_script")
+grep -qxF "tab create --label review --cwd $origin_dir --env Q_NO_BANNER=1 --no-focus" "$log_file" || {
+  print -u2 'the tab did not inherit focused_pane_cwd from the plugin context'
+  cat "$log_file"
+  exit 1
+}
+
+# Keep HERDR_ACTIVE_PANE_ID as a fallback for older/custom popup invocation.
+> "$log_file"
+trash "$tmp_dir/gum-count" 2>/dev/null || true
+(cd "$plugin_dir" && PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= \
   HERDR_ACTIVE_PANE_ID='w1:p1' TEST_ORIGIN_CWD="$origin_dir" \
   TEST_TMP_DIR="$tmp_dir" TEST_LOG="$log_file" Q_WORKBENCH_LOCAL_CONFIG=/dev/null \
   "$popup_script")

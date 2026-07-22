@@ -9,11 +9,13 @@ source "${0:A:h}/config.zsh"
 # cwd, which is itself a git checkout — so a bare `git rev-parse` here resolves to
 # the plugin, not the workspace. Adopt the invoking pane's cwd before anything
 # reads $PWD (worktree discovery below, project_dir further down).
-if [[ -n "${HERDR_ACTIVE_PANE_ID:-}" ]]; then
+origin_cwd=$(print -r -- "${HERDR_PLUGIN_CONTEXT_JSON:-}" | \
+  jq -r '.focused_pane_cwd // empty' 2>/dev/null)
+if [[ ! -d "$origin_cwd" && -n "${HERDR_ACTIVE_PANE_ID:-}" ]]; then
   origin_cwd=$(herdr pane get "$HERDR_ACTIVE_PANE_ID" 2>/dev/null | \
     jq -r '.result.pane.cwd // empty')
-  [[ -n "$origin_cwd" && -d "$origin_cwd" ]] && cd "$origin_cwd"
 fi
+[[ -n "$origin_cwd" && -d "$origin_cwd" ]] && cd "$origin_cwd"
 
 wt_mode="$1"
 popup_cols=${COLUMNS:-0}

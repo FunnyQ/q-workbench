@@ -3,8 +3,8 @@
 
 export PATH="$PATH:/opt/homebrew/bin"
 
-registry="${Q_SSH_REGISTRY:-$HOME/.config/zsh/scripts/ssh-target-registry.zsh}"
-editor="${Q_SSH_EDITOR:-$HOME/.config/zsh/scripts/ssh-target-editor.zsh}"
+registry="${Q_SSH_REGISTRY:-${0:A:h}/ssh-target-registry.zsh}"
+editor="${Q_SSH_EDITOR:-${0:A:h}/ssh-target-editor.zsh}"
 session_script="${0:A:h}/ssh-session.zsh"
 
 result=$("$registry" | fzf --no-sort --print-query --prompt='SSH> ' \

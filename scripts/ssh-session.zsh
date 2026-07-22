@@ -5,7 +5,7 @@ export PATH="$PATH:/opt/homebrew/bin"
 
 target="$1"
 tab_id="$2"
-registry="${Q_SSH_REGISTRY:-$HOME/.config/zsh/scripts/ssh-target-registry.zsh}"
+registry="${Q_SSH_REGISTRY:-${0:A:h}/ssh-target-registry.zsh}"
 
 close_tab() {
   herdr tab close "$tab_id" >/dev/null 2>&1

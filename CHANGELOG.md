@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-07-22
+
+_tracks tag `v0.1.1`_
+
+### Fixed
+- New agent tabs now open in the current workspace instead of the plugin's install
+  directory. `alt+c` runs the "New agent" popup as a Herdr plugin pane, which Herdr
+  launches with the plugin's own install dir as cwd; since that directory is itself a
+  git checkout, the script's project-root detection resolved to the plugin instead of
+  the workspace you invoked it from. The popup now adopts the invoking pane's cwd
+  before doing worktree discovery, falling back to the previous behaviour if that
+  pane or its cwd is unavailable.
+
 ## [0.1.0] - 2026-07-22
 
 _tracks tag `v0.1.0`_

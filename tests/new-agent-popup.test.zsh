@@ -74,14 +74,26 @@ tab focus 1:2"
   exit 1
 }
 
-# The sandbox bypass must be opt-in, never a silent default.
+# The sandbox bypass must be opt-in, never a silent default — the assertion on
+# the sequence above already covers the off case (`pane run 1-1 codex`).
 > "$log_file"
 trash "$tmp_dir/gum-count" 2>/dev/null || true
 (cd "$tmp_dir" && PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= \
   TEST_TMP_DIR="$tmp_dir" TEST_LOG="$log_file" Q_WORKBENCH_LOCAL_CONFIG=/dev/null \
-  Q_UNSAFE_CODEX=1 "$popup_script")
+  Q_CODEX_EXTRA_ARGS='--dangerously-bypass-approvals-and-sandbox' "$popup_script")
 grep -qxF 'pane run 1-1 codex --dangerously-bypass-approvals-and-sandbox' "$log_file" || {
-  print -u2 'Q_UNSAFE_CODEX=1 did not add the bypass flag'
+  print -u2 'Q_CODEX_EXTRA_ARGS did not reach the codex launch'
+  exit 1
+}
+
+# Word-splitting: multiple flags must arrive as separate arguments.
+> "$log_file"
+trash "$tmp_dir/gum-count" 2>/dev/null || true
+(cd "$tmp_dir" && PATH="$mock_bin:/usr/bin:/bin" HERDR_WORKSPACE_ID= \
+  TEST_TMP_DIR="$tmp_dir" TEST_LOG="$log_file" Q_WORKBENCH_LOCAL_CONFIG=/dev/null \
+  Q_CODEX_EXTRA_ARGS='--search --profile work' "$popup_script")
+grep -qxF 'pane run 1-1 codex --search --profile work' "$log_file" || {
+  print -u2 'Q_CODEX_EXTRA_ARGS was not word-split'
   exit 1
 }
 

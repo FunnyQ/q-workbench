@@ -39,7 +39,7 @@ EOF
 chmod +x "$mock_bin/fzf" "$mock_bin/herdr" "$tmp_dir/registry"
 
 PATH="$mock_bin:/usr/bin:/bin" TEST_LOG="$log_file" \
-  Q_SSH_REGISTRY="$tmp_dir/registry" Q_SSH_EDITOR=/bin/true \
+  Q_SSH_REGISTRY_SCRIPT="$tmp_dir/registry" Q_SSH_EDITOR=/bin/true \
   HERDR_WORKSPACE_ID=w18 "$picker"
 
 actual=$(<"$log_file")

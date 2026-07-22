@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
-# The other ssh tests always inject Q_SSH_REGISTRY / Q_SSH_EDITOR, so the
+# The other ssh tests always inject Q_SSH_REGISTRY_SCRIPT / Q_SSH_EDITOR, so the
 # ${0:A:h} fallbacks never run there — a typo in one would keep them green and
 # only surface when the popup is opened. Eval the real assignment lines out of
 # the sources so a typo fails here.
@@ -17,7 +17,7 @@ check() {
   }
 
   # $0 is what ${0:A:h} resolves against inside the script under test
-  0="$src" Q_SSH_REGISTRY= Q_SSH_EDITOR= eval "$line"
+  0="$src" Q_SSH_REGISTRY_SCRIPT= Q_SSH_EDITOR= eval "$line"
   resolved=${(P)var}
 
   [[ -x "$resolved" ]] || {

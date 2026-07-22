@@ -29,7 +29,7 @@ EOF
 chmod +x "$mock_bin/ssh" "$mock_bin/herdr" "$tmp_dir/registry"
 
 PATH="$mock_bin:/usr/bin:/bin" HOME="$tmp_dir" TEST_LOG="$log_file" \
-  Q_SSH_REGISTRY="$tmp_dir/registry" "$session_script" example-host 1:3
+  Q_SSH_REGISTRY_SCRIPT="$tmp_dir/registry" "$session_script" example-host 1:3
 
 actual=$(<"$log_file")
 [[ "$actual" == $'ssh example-host\nregistry use example-host\nherdr tab close 1:3' ]]

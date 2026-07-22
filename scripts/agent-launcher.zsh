@@ -5,7 +5,7 @@
 #   <pane_id>     the agent pane; renamed to the chosen usage label.
 #   [tab_id]      when given, the tab is renamed to the label too.
 #   [fixed_usage] when set, skips the usage menu and uses this as the label
-#                 (ccc's pinned "main" tab).
+#                 (the project picker's pinned "main" tab).
 #   [wt_mode]     "worktree" (alt+shift+c) → prompt for a branch and start in a
 #                 fresh git worktree; empty (alt+c) → no worktree step.
 #   [layout_mode] "no-layout" → restart in place: skip the yazi/term split (they
@@ -16,6 +16,8 @@
 # panes' cwd directly via `herdr pane split --cwd`.
 
 export PATH="/opt/homebrew/bin:$PATH"
+
+source "${0:A:h}/config.zsh"
 
 pane_id="$1"
 tab_id="$2"
@@ -170,7 +172,8 @@ fi
 # menu — including claude's model picker below — renders before any resize.
 launch=()
 if [[ "$harness" == *"codex"* ]]; then
-  launch=(codex --dangerously-bypass-approvals-and-sandbox)
+  launch=(codex)
+  (( Q_UNSAFE_CODEX )) && launch+=(--dangerously-bypass-approvals-and-sandbox)
 elif [[ "$harness" == *"opencode"* ]]; then
   launch=(opencode)
 else
@@ -181,26 +184,23 @@ render_banner '󰧑 claude code' 'Choose a model.'
 echo
 
 mpad=$(printf '%*s' $(( (cols - 24) / 2 )) '')
+model_menu=()
+for menu_label in "${Q_AGENT_MODEL_ORDER[@]}"; do
+  model_menu+=("${mpad}${menu_label}")
+done
 selection=$(gum choose --height 6 --no-show-help --cursor "" --header "" \
-  "${mpad}Opus" \
-  "${mpad}OpusPlan (Sonnet)" \
-  "${mpad}CCR" \
-  "${mpad}Fable 5")
+  "${model_menu[@]}")
 [[ -z "$selection" ]] && exit 0
 label="${selection#"${selection%%[! ]*}"}"  # strip leading pad
 
-effort_args=()
-case "$label" in
-  "Opus")             model="claude-opus-4-8" ;;
-  "OpusPlan (Sonnet)") model="opusplan"; effort_args=(--effort medium) ;;
-  "CCR")              model="CCR" ;;
-  "Fable 5")          model="claude-fable-5" ;;
-esac
+model="${Q_AGENT_MODELS[$label]:-}"
+[[ -n "$model" ]] || exit 0
+effort_args=(${=Q_AGENT_MODEL_ARGS[$label]:-})
 
 if [[ "$model" == "CCR" ]]; then
   launch=(ccr code)
 else
-  launch=(claude --model "$model" "${effort_args[@]}" --dangerously-load-development-channels plugin:monitor@q-lab-marketplace)
+  launch=(claude --model "$model" "${effort_args[@]}" ${=Q_CLAUDE_EXTRA_ARGS})
 fi
 fi   # end harness → launch dispatch
 

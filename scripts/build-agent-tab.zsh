@@ -1,6 +1,7 @@
 #!/usr/bin/env zsh
 # Run the herdr agent launcher inside an existing tab's pane.
-# Used by ccc (zsh/functions/herdr.zsh).
+# Entry point for callers that already own a tab: the project picker, and any
+# external shell function that opens a project tab of its own.
 #
 # The launcher owns the whole in-pane flow: it shows the worktree + harness +
 # usage menus at the pane's full width, and only THEN splits the yazi + term
@@ -11,9 +12,9 @@
 # Usage: build-agent-tab.zsh <root_pane_id> [tab_id] [fixed_usage] [wt_mode]
 #   <root_pane_id> → the agent pane the launcher runs in
 #   [tab_id]       → forwarded to the launcher so it renames the TAB on selection
-#                    (omit for ccc's first tab so the project tab name is kept)
+#                    (omit to keep the caller's existing tab name)
 #   [fixed_usage]  → forwarded to the launcher; when set it skips the usage menu
-#                    and uses this label (ccc's first tab pins "main")
+#                    and uses this label (the project picker pins "main")
 #   [wt_mode]      → forwarded to the launcher; "worktree" starts in a git worktree
 export PATH="/opt/homebrew/bin:$PATH"
 herdr_bin="${HERDR_BIN_PATH:-herdr}"

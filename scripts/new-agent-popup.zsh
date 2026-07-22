@@ -3,6 +3,8 @@
 
 export PATH="$PATH:/opt/homebrew/bin"
 
+source "${0:A:h}/config.zsh"
+
 wt_mode="$1"
 popup_cols=${COLUMNS:-0}
 popup_lines=${LINES:-0}
@@ -87,22 +89,21 @@ harness=$(gum choose --height 8 --no-show-help --cursor '' --header '' \
 harness="${harness#"${harness%%[![:space:]]*}"}"
 
 model=''
+model_args=()
 if [[ "$harness" == *'claude code'* ]]; then
   render_menu '󰧑  claude code' 'Choose a model.'
+  model_menu=()
+  for menu_label in "${Q_AGENT_MODEL_ORDER[@]}"; do
+    model_menu+=("${choice_pad}${menu_label}")
+  done
   model_choice=$(gum choose --height 6 --no-show-help --cursor '' --header '' \
-    "${choice_pad}Opus" \
-    "${choice_pad}OpusPlan (Sonnet)" \
-    "${choice_pad}CCR" \
-    "${choice_pad}Fable 5") || exit 0
+    "${model_menu[@]}") || exit 0
   [[ -n "$model_choice" ]] || exit 0
   model_choice="${model_choice#"${model_choice%%[![:space:]]*}"}"
 
-  case "$model_choice" in
-    'Opus') model='claude-opus-4-8' ;;
-    'OpusPlan (Sonnet)') model='opusplan' ;;
-    'CCR') model='CCR' ;;
-    'Fable 5') model='claude-fable-5' ;;
-  esac
+  model="${Q_AGENT_MODELS[$model_choice]:-}"
+  [[ -n "$model" ]] || exit 0
+  model_args=(${=Q_AGENT_MODEL_ARGS[$model_choice]:-})
 fi
 
 render_menu '  Usage' 'What is this tab for?'
@@ -158,19 +159,22 @@ term_pane=$(print -r -- "$term_json" | jq -r '.result.pane.pane_id // empty')
 [[ -n "$term_pane" ]] || cleanup_tab
 herdr pane rename "$term_pane" '  term' >/dev/null 2>&1 || cleanup_tab
 
+launch_args=()
 case "$harness" in
-  *codex*) launch='codex --dangerously-bypass-approvals-and-sandbox' ;;
-  *opencode*) launch='opencode' ;;
+  *codex*)
+    launch_args=(codex)
+    (( Q_UNSAFE_CODEX )) && launch_args+=(--dangerously-bypass-approvals-and-sandbox)
+    ;;
+  *opencode*) launch_args=(opencode) ;;
   *)
     if [[ "$model" == 'CCR' ]]; then
-      launch='ccr code'
-    elif [[ "$model" == 'opusplan' ]]; then
-      launch="claude --model opusplan --effort medium --dangerously-load-development-channels plugin:monitor@q-lab-marketplace"
+      launch_args=(ccr code)
     else
-      launch="claude --model $model --dangerously-load-development-channels plugin:monitor@q-lab-marketplace"
+      launch_args=(claude --model "$model" "${model_args[@]}" ${=Q_CLAUDE_EXTRA_ARGS})
     fi
     ;;
 esac
+launch="${(j: :)launch_args}"
 
 herdr pane run "$agent_pane" "$launch" >/dev/null 2>&1 || cleanup_tab
 herdr tab focus "$tab_id" >/dev/null 2>&1 || cleanup_tab

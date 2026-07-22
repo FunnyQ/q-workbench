@@ -5,9 +5,11 @@
 # Ensure herdr, jq, and claude are reachable under a minimal detached PATH.
 export PATH="$HOME/.bun/bin:/opt/homebrew/bin:$PATH"
 
+source "${0:A:h}/config.zsh"
+
 readonly tab_label="  Dashboard Launcher"
 readonly prompt="/usage-dashboard and restart /cockpit server"
-readonly workspace_label="personal-assistant"
+readonly workspace_label="$Q_DASHBOARD_WORKSPACE"
 
 # Resolve the workspace every time because herdr workspace IDs are not durable.
 workspaces_json=$(herdr workspace list 2>/dev/null) || exit 1

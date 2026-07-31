@@ -8,19 +8,18 @@
 //! `scripts/bench-project-source.zsh` reproduces it.
 
 use std::cmp::Ordering;
-use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use serde_json::json;
 
 use crate::config::Config;
 use crate::flows::agent::{self, InjectOptions};
+use crate::flows::{FlowError, FlowResult, Outcome};
 use crate::herdr::HerdrClient;
-use crate::notify::notify;
 use crate::registry::project::{ProjectEntry, ProjectRegistry};
 use crate::registry::ssh;
 use crate::shell::shell_quote;
@@ -38,29 +37,49 @@ struct ProjectSelection {
     path: String,
 }
 
-#[derive(Debug)]
-pub struct ProjectPickerNotifiedError;
-
-impl fmt::Display for ProjectPickerNotifiedError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("project picker error was reported by notification")
-    }
-}
-
-impl std::error::Error for ProjectPickerNotifiedError {}
-
+/// Pick a project and open it, reporting every failure as a notification.
+///
+/// The two `project picker: …` messages below are the zsh script's wording, but they
+/// used to go to stderr and now travel as a notification body. That is a fix, not a
+/// drift: this flow runs inside a Herdr popup pane, which fzf owns for its whole life
+/// and Herdr tears down the moment the process exits. Anything written to stderr was
+/// painted under fzf's alternate screen and destroyed with the pane, so the user never
+/// saw it — the old code reported nothing at all in these two cases.
 pub fn project_pick(
     registry_path: &Path,
     projects_root: &Path,
     client: &dyn HerdrClient,
-) -> Result<()> {
+) -> FlowResult {
+    project_pick_with_fzf(registry_path, projects_root, client, Path::new("fzf"))
+}
+
+fn project_pick_with_fzf(
+    registry_path: &Path,
+    projects_root: &Path,
+    client: &dyn HerdrClient,
+    fzf: &Path,
+) -> FlowResult {
+    project_pick_inner(registry_path, projects_root, client, fzf).map_err(|error| {
+        if error.downcast_ref::<FlowError>().is_some() {
+            error
+        } else {
+            FlowError::titled(PROJECT_PICKER_TITLE, error).into()
+        }
+    })
+}
+
+fn project_pick_inner(
+    registry_path: &Path,
+    projects_root: &Path,
+    client: &dyn HerdrClient,
+    fzf: &Path,
+) -> FlowResult {
     if !registry_path.is_file() {
         let message = format!(
             "project picker: registry not found: {}",
             registry_path.display()
         );
-        notify(client, PROJECT_PICKER_TITLE, &message);
-        return Err(ProjectPickerNotifiedError.into());
+        return Err(FlowError::complete(PROJECT_PICKER_TITLE, message).into());
     }
 
     adopt_invoking_cwd(client)?;
@@ -69,13 +88,15 @@ pub fn project_pick(
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("HOME is required")?;
-    let source = source(registry_path, &home, "")?;
-    let mut child = Command::new("fzf")
+    let source =
+        source(registry_path, &home, "").context("project pick: reading project registry")?;
+    let mut child = Command::new(fzf)
         .args(project_fzf_args(&reload_binding, &edit_binding))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .context("project pick: start fzf")?;
+        .context("project pick: spawning fzf")
+        .map_err(|error| FlowError::titled(PROJECT_PICKER_TITLE, error))?;
     child
         .stdin
         .take()
@@ -86,7 +107,7 @@ pub fn project_pick(
         .wait_with_output()
         .context("project pick: wait for fzf")?;
     if !output.status.success() {
-        return Ok(());
+        return Ok(Outcome::Cancelled);
     }
 
     let output = String::from_utf8(output.stdout).context("project pick: parse fzf output")?;
@@ -100,8 +121,7 @@ pub fn project_pick(
                 &selection.query
             };
             let message = format!("project picker: project not found: {missing}");
-            notify(client, PROJECT_PICKER_TITLE, &message);
-            return Err(ProjectPickerNotifiedError.into());
+            return Err(FlowError::complete(PROJECT_PICKER_TITLE, message).into());
         }
     };
     focus_or_create_project(&path, &selection.key, registry_path, client)?;
@@ -110,7 +130,8 @@ pub fn project_pick(
         Some(&path),
         projects_root,
         &crate::registry::project::SystemClock,
-    )
+    )?;
+    Ok(Outcome::Done)
 }
 
 fn parse_project_selection(output: &str) -> ProjectSelection {
@@ -298,16 +319,43 @@ pub fn ssh_pick(
     config: &Path,
     history: &Path,
     client: &dyn HerdrClient,
-) -> Result<()> {
+) -> FlowResult {
+    ssh_pick_with_fzf(registry, config, history, client, Path::new("fzf"))
+}
+
+fn ssh_pick_with_fzf(
+    registry: &Path,
+    config: &Path,
+    history: &Path,
+    client: &dyn HerdrClient,
+    fzf: &Path,
+) -> FlowResult {
+    ssh_pick_inner(registry, config, history, client, fzf).map_err(|error| {
+        if error.downcast_ref::<FlowError>().is_some() {
+            error
+        } else {
+            FlowError::titled(SSH_PICKER_TITLE, error).into()
+        }
+    })
+}
+
+fn ssh_pick_inner(
+    registry: &Path,
+    config: &Path,
+    history: &Path,
+    client: &dyn HerdrClient,
+    fzf: &Path,
+) -> FlowResult {
     let entries = ssh::list(registry, config, history).context("ssh pick: list targets")?;
     let executable = std::env::current_exe().context("ssh pick: resolve current executable")?;
     let (edit_binding, remove_binding) = ssh_bindings(&executable);
-    let mut child = Command::new("fzf")
+    let mut child = Command::new(fzf)
         .args(ssh_fzf_args(&edit_binding, &remove_binding))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .context("ssh pick: start fzf")?;
+        .context("ssh pick: spawning fzf")
+        .map_err(|error| FlowError::titled(SSH_PICKER_TITLE, error))?;
     child
         .stdin
         .take()
@@ -316,14 +364,16 @@ pub fn ssh_pick(
         .context("ssh pick: write fzf input")?;
     let output = child.wait_with_output().context("ssh pick: wait for fzf")?;
     if !output.status.success() {
-        return Ok(());
+        return Ok(Outcome::Cancelled);
     }
 
     let output = String::from_utf8(output.stdout).context("ssh pick: parse fzf output")?;
     let Some(target) = parse_ssh_selection(&output) else {
-        return Ok(());
+        return Ok(Outcome::Cancelled);
     };
     connect_ssh_target(&target, &executable, client)
+        .map_err(|error| FlowError::titled(SSH_PICKER_TITLE, error))?;
+    Ok(Outcome::Done)
 }
 
 fn parse_ssh_selection(output: &str) -> Option<String> {
@@ -392,7 +442,7 @@ fn connect_ssh_target(target: &str, executable: &Path, client: &dyn HerdrClient)
         ssh_tab_create_params(target, std::env::var("HERDR_WORKSPACE_ID").ok().as_deref());
     let created = match client.tab_create(create_params) {
         Ok(created) => created,
-        Err(error) => return notify_ssh_error(client, error.context("ssh pick: tab.create")),
+        Err(error) => return Err(error).context("ssh pick: tab.create"),
     };
     let tab_id = created.tab.tab_id;
     let command = session_command(executable, target, &tab_id);
@@ -403,11 +453,11 @@ fn connect_ssh_target(target: &str, executable: &Path, client: &dyn HerdrClient)
         "keys": ["enter"],
     })) {
         close_failed_ssh_tab(client, &tab_id);
-        return notify_ssh_error(client, error.context("ssh pick: pane.send_input"));
+        return Err(error).context("ssh pick: pane.send_input");
     }
     if let Err(error) = client.tab_focus(json!({"tab_id": tab_id})) {
         close_failed_ssh_tab(client, &tab_id);
-        return notify_ssh_error(client, error.context("ssh pick: tab.focus"));
+        return Err(error).context("ssh pick: tab.focus");
     }
     Ok(())
 }
@@ -426,11 +476,6 @@ fn ssh_tab_create_params(target: &str, workspace_id: Option<&str>) -> serde_json
 
 fn close_failed_ssh_tab(client: &dyn HerdrClient, tab_id: &str) {
     let _ = client.tab_close(json!({"tab_id": tab_id}));
-}
-
-fn notify_ssh_error(client: &dyn HerdrClient, error: anyhow::Error) -> Result<()> {
-    notify(client, SSH_PICKER_TITLE, &format!("{error:#}"));
-    Err(anyhow!(error))
 }
 
 pub fn project_source(query: Option<&str>) -> Result<()> {
@@ -608,6 +653,7 @@ fn query_zoxide(query: &str) -> Result<Option<PathBuf>> {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -931,12 +977,7 @@ mod tests {
                 .into_iter()
                 .map(|(method, _)| method)
                 .collect::<Vec<_>>(),
-            [
-                "tab.create",
-                "pane.send_input",
-                "tab.close",
-                "notification.show"
-            ]
+            ["tab.create", "pane.send_input", "tab.close"]
         );
     }
 
@@ -956,13 +997,7 @@ mod tests {
                 .into_iter()
                 .map(|(method, _)| method)
                 .collect::<Vec<_>>(),
-            [
-                "tab.create",
-                "pane.send_input",
-                "tab.focus",
-                "tab.close",
-                "notification.show"
-            ]
+            ["tab.create", "pane.send_input", "tab.focus", "tab.close"]
         );
     }
 
@@ -1033,6 +1068,15 @@ mod tests {
             serde_json::to_vec(&registry).expect("serialize registry"),
         )
         .expect("write registry");
+        path
+    }
+
+    fn write_fzf(directory: &Path, body: &str) -> PathBuf {
+        let path = directory.join("fzf-test");
+        fs::write(&path, format!("#!/bin/sh\ncat >/dev/null\n{body}\n")).unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).unwrap();
         path
     }
 
@@ -1181,5 +1225,118 @@ mod tests {
             .expect_err("reject missing registry");
 
         assert!(error.to_string().contains("failed to read"));
+    }
+
+    #[test]
+    fn project_pick_missing_registry_has_exact_reporting_metadata() {
+        let directory = TestDirectory::new();
+        let missing = directory.0.join("missing.json");
+        let client = FakeClient::default();
+
+        let error =
+            project_pick(&missing, &directory.0, &client).expect_err("reject missing registry");
+        let flow_error = error.downcast_ref::<FlowError>().unwrap();
+        let expected = format!("project picker: registry not found: {}", missing.display());
+
+        assert_eq!(flow_error.title(), Some("Project picker"));
+        assert_eq!(flow_error.prefix(), Some(expected.as_str()));
+        assert_eq!(flow_error.chain(), expected);
+        assert!(client.calls.into_inner().is_empty());
+    }
+
+    /// `session.snapshot` is the project picker's first Herdr call, and the one a
+    /// failure has to name: everything before it is local.
+    #[test]
+    fn project_picker_snapshot_failure_has_exact_reporting_metadata() {
+        let directory = TestDirectory::new();
+        let project = directory.0.join("project");
+        fs::create_dir_all(&project).unwrap();
+        let registry = write_registry(
+            &directory.0,
+            BTreeMap::from([(
+                project.display().to_string(),
+                entry("project", &["manual"], &[], false, None),
+            )]),
+        );
+        // fzf prints the query, the expect key, then the selected payload.
+        let fzf = write_fzf(
+            &directory.0,
+            &format!("printf '\\n\\n%s\\n' '{}'", project.display()),
+        );
+        let client = FakeClient::default();
+        client.queue_error("session.snapshot", "unavailable", "socket closed");
+
+        let error = project_pick_with_fzf(&registry, &directory.0, &client, &fzf)
+            .expect_err("reject snapshot failure");
+        let flow_error = error.downcast_ref::<FlowError>().unwrap();
+
+        assert_eq!(flow_error.title(), Some("Project picker"));
+        assert_eq!(flow_error.prefix(), None);
+        assert_eq!(
+            flow_error.chain(),
+            "project pick: session.snapshot: Herdr error unavailable: socket closed"
+        );
+        assert_eq!(
+            client
+                .calls
+                .into_inner()
+                .into_iter()
+                .map(|(method, _)| method)
+                .collect::<Vec<_>>(),
+            ["session.snapshot"]
+        );
+    }
+
+    #[test]
+    fn both_pickers_return_cancelled_without_notifying() {
+        let directory = TestDirectory::new();
+        let registry = write_registry(&directory.0, BTreeMap::new());
+        let fzf = write_fzf(&directory.0, "exit 1");
+
+        let project_client = FakeClient::default();
+        assert_eq!(
+            project_pick_with_fzf(&registry, &directory.0, &project_client, &fzf).unwrap(),
+            Outcome::Cancelled
+        );
+        assert!(project_client.calls.into_inner().is_empty());
+
+        let ssh_client = FakeClient::default();
+        assert_eq!(
+            ssh_pick_with_fzf(
+                &directory.0.join("ssh.json"),
+                &directory.0.join("config"),
+                &directory.0.join("history"),
+                &ssh_client,
+                &fzf,
+            )
+            .unwrap(),
+            Outcome::Cancelled
+        );
+        assert!(ssh_client.calls.into_inner().is_empty());
+    }
+
+    #[test]
+    fn ssh_picker_tab_create_failure_has_exact_reporting_metadata() {
+        let directory = TestDirectory::new();
+        let fzf = write_fzf(&directory.0, "printf '\\nhost\\n'");
+        let client = FakeClient::default();
+        client.queue_error("tab.create", "unavailable", "socket closed");
+
+        let error = ssh_pick_with_fzf(
+            &directory.0.join("ssh.json"),
+            &directory.0.join("config"),
+            &directory.0.join("history"),
+            &client,
+            &fzf,
+        )
+        .expect_err("reject tab creation failure");
+        let flow_error = error.downcast_ref::<FlowError>().unwrap();
+
+        assert_eq!(flow_error.title(), Some("SSH picker"));
+        assert_eq!(flow_error.prefix(), None);
+        assert_eq!(
+            flow_error.chain(),
+            "ssh pick: tab.create: Herdr error unavailable: socket closed"
+        );
     }
 }

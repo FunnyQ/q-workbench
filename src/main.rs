@@ -203,12 +203,11 @@ impl Cli {
                     let config = config::Config::load()?;
                     let client =
                         client.context("Herdr client is required for the project picker")?;
-                    flows::picker::project_pick(
+                    return flows::picker::project_pick(
                         Path::new(&config.project_registry_file),
                         Path::new(&config.projects_root),
                         client,
-                    )?;
-                    return Ok(Outcome::Done);
+                    );
                 }
                 ProjectCommand::Source { query } => {
                     flows::picker::project_source(query.as_deref())?;
@@ -262,8 +261,7 @@ impl Cli {
                     SshCommand::Pick => {
                         let client =
                             client.context("Herdr client is required for the SSH picker")?;
-                        flows::picker::ssh_pick(registry, ssh_config, history, client)?;
-                        return Ok(Outcome::Done);
+                        return flows::picker::ssh_pick(registry, ssh_config, history, client);
                     }
                     SshCommand::Sync => {
                         registry::ssh::sync(registry, ssh_config, history)?;
@@ -303,16 +301,20 @@ impl Cli {
                         let history_file = home.join(".zsh_history");
                         let client =
                             client.context("Herdr client is required for an SSH session")?;
-                        flows::ssh::session(&target, &tab_id, registry, &history_file, client)?;
-                        return Ok(Outcome::Done);
+                        return flows::ssh::session(
+                            &target,
+                            &tab_id,
+                            registry,
+                            &history_file,
+                            client,
+                        );
                     }
                 }
             }
             Command::Dashboard => {
                 let config = config::Config::load().context("failed to load config")?;
                 let client = client.context("Herdr client is required for the dashboard")?;
-                flows::dashboard::run(client, &config)?;
-                return Ok(Outcome::Done);
+                return flows::dashboard::run(client, &config);
             }
             Command::Config { command } => match command {
                 ConfigCommand::Migrate { from, write, force } => {
@@ -384,7 +386,7 @@ impl Cli {
         )
     }
 
-    fn agent_notification_title(&self) -> Option<&'static str> {
+    fn notification_title(&self) -> Option<&'static str> {
         match &self.command {
             Command::Agent { command } => Some(match command {
                 AgentCommand::Popup { .. } => "Agent popup failed",
@@ -393,6 +395,16 @@ impl Cli {
                 AgentCommand::Restart => "Agent restart failed",
                 AgentCommand::RestartWorker { .. } => "Agent restart failed",
             }),
+            Command::Project {
+                command: ProjectCommand::Pick,
+            } => Some("Project picker"),
+            Command::Ssh {
+                command: SshCommand::Pick,
+            } => Some("SSH picker"),
+            Command::Ssh {
+                command: SshCommand::Session { .. },
+            } => Some("SSH session"),
+            Command::Dashboard => Some("Dashboard Launcher"),
             _ => None,
         }
     }
@@ -501,7 +513,7 @@ fn main() -> ExitCode {
     }
 
     let cli = Cli::parse();
-    let notification_title = cli.agent_notification_title();
+    let notification_title = cli.notification_title();
     let client = if cli.uses_herdr() {
         match SocketClient::new() {
             Ok(client) => Some(client),
@@ -526,7 +538,7 @@ fn main() -> ExitCode {
 
     let result = cli.run(client.as_ref().map(|client| client as &dyn HerdrClient));
     if let (Some(default_title), Some(client)) = (notification_title, &client) {
-        return handle_agent_result(client, default_title, result);
+        return handle_flow_result(client, default_title, result);
     }
 
     match result {
@@ -538,15 +550,13 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            if !error.is::<flows::picker::ProjectPickerNotifiedError>() {
-                eprintln!("{error:#}");
-            }
+            eprintln!("{error:#}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn handle_agent_result(
+fn handle_flow_result(
     client: &dyn HerdrClient,
     default_title: &str,
     result: FlowResult,
@@ -558,25 +568,41 @@ fn handle_agent_result(
             ExitCode::SUCCESS
         }
         Err(error) => {
-            report_agent_error(client, default_title, &error);
+            report_flow_error(client, default_title, &error);
             ExitCode::FAILURE
         }
     }
 }
 
-fn report_agent_error(client: &dyn HerdrClient, default_title: &str, error: &anyhow::Error) {
+fn report_flow_error(client: &dyn HerdrClient, default_title: &str, error: &anyhow::Error) {
     let metadata = error
         .chain()
         .find_map(|cause| cause.downcast_ref::<FlowError>());
     let title = metadata.and_then(FlowError::title).unwrap_or(default_title);
+    let body = notification_body(metadata, error);
+    notify::notify(client, title, &body.replace(['\r', '\n'], " "));
+}
+
+/// Build the one-line body a failed flow reports.
+///
+/// A `FlowError` prefix is a sentence the flow wants kept verbatim at the front of the
+/// body, with the chained cause after it — the agent popup's
+/// `The incomplete tab was closed.` describes the cleanup rather than the failure, so it
+/// needs the cause to say what went wrong.
+///
+/// `FlowError::complete` is the other shape, used by the dashboard's missing workspace
+/// and the project picker's two contract messages. Those sentences already name their
+/// concrete cause, so the flow stores the same sentence as both the prefix and the
+/// error; the equality below recognises that and prints it once instead of twice.
+fn notification_body(metadata: Option<&FlowError>, error: &anyhow::Error) -> String {
     let chain = metadata
         .map(FlowError::chain)
         .unwrap_or_else(|| format!("{error:#}"));
-    let body = metadata
-        .and_then(FlowError::prefix)
-        .map(|prefix| format!("{prefix} {chain}"))
-        .unwrap_or(chain);
-    notify::notify(client, title, &body.replace(['\r', '\n'], " "));
+    match metadata.and_then(FlowError::prefix) {
+        Some(prefix) if prefix == chain => chain,
+        Some(prefix) => format!("{prefix} {chain}"),
+        None => chain,
+    }
 }
 
 #[cfg(test)]
@@ -653,7 +679,7 @@ mod tests {
     fn agent_result_reports_notice_error_and_failed_delivery() {
         let notice = herdr::FakeClient::default();
         assert_eq!(
-            handle_agent_result(
+            handle_flow_result(
                 &notice,
                 "unused",
                 Ok(Outcome::Notice {
@@ -678,7 +704,7 @@ mod tests {
             anyhow!("pane.split failed: connection refused"),
         );
         assert_eq!(
-            handle_agent_result(&failure, "Agent popup failed", Err(error.into())),
+            handle_flow_result(&failure, "Agent popup failed", Err(error.into())),
             ExitCode::FAILURE
         );
         assert_eq!(failure.calls.borrow().len(), 1);
@@ -691,11 +717,95 @@ mod tests {
         assert!(!body.contains('\n'));
     }
 
+    /// The four non-agent notifying subcommands must carry the titles the parity
+    /// contract names, because `notification_title` is what a failure with no title of
+    /// its own falls back to.
+    #[test]
+    fn non_agent_notifying_subcommands_carry_their_contract_titles() {
+        let cases = [
+            (vec!["workbench", "project", "pick"], Some("Project picker")),
+            (vec!["workbench", "ssh", "pick"], Some("SSH picker")),
+            (
+                vec!["workbench", "ssh", "session", "host", "t1"],
+                Some("SSH session"),
+            ),
+            (vec!["workbench", "dashboard"], Some("Dashboard Launcher")),
+            // Terminal-facing subcommands report on stderr instead.
+            (vec!["workbench", "ssh", "list"], None),
+            (vec!["workbench", "project", "scan"], None),
+        ];
+
+        for (argv, expected) in cases {
+            let cli = Cli::try_parse_from(&argv).unwrap();
+            assert_eq!(cli.notification_title(), expected, "{argv:?}");
+        }
+    }
+
+    /// A body built by `FlowError::complete` reaches the notification whole, with no
+    /// chained cause appended — this is the dashboard's and the project picker's
+    /// contract, driven end to end rather than asserted on the metadata.
+    #[test]
+    fn a_complete_body_is_reported_verbatim_with_nothing_appended() {
+        let cases = [
+            (
+                "Dashboard Launcher",
+                "Workspace 'personal-assistant' was not found.",
+            ),
+            (
+                "Project picker",
+                "project picker: registry not found: /state/registry.json",
+            ),
+            (
+                "Project picker",
+                "project picker: project not found: nowhere",
+            ),
+        ];
+
+        for (title, body) in cases {
+            let client = herdr::FakeClient::default();
+            let error = FlowError::complete(title, body);
+            assert_eq!(
+                handle_flow_result(&client, "unused default", Err(error.into())),
+                ExitCode::FAILURE
+            );
+
+            let calls = client.calls.into_inner();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].0, "notification.show");
+            assert_eq!(calls[0].1["title"], title);
+            assert_eq!(calls[0].1["body"], body);
+        }
+    }
+
+    /// A failure with no preserved sentence reports the chained cause under the
+    /// subcommand's own title.
+    #[test]
+    fn a_titled_failure_reports_its_chain_under_its_own_title() {
+        let client = herdr::FakeClient::default();
+        let error = FlowError::titled(
+            "SSH picker",
+            anyhow!("ssh pick: tab.create").context("Herdr error unavailable: socket closed"),
+        );
+
+        assert_eq!(
+            handle_flow_result(&client, "unused default", Err(error.into())),
+            ExitCode::FAILURE
+        );
+
+        let calls = client.calls.into_inner();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1["title"], "SSH picker");
+        assert_eq!(
+            calls[0].1["body"],
+            "Herdr error unavailable: socket closed: ssh pick: tab.create"
+        );
+    }
+
     #[test]
     fn agent_cancellation_is_silent() {
         let client = herdr::FakeClient::default();
         assert_eq!(
-            handle_agent_result(&client, "Agent popup failed", Ok(Outcome::Cancelled)),
+            handle_flow_result(&client, "Agent popup failed", Ok(Outcome::Cancelled)),
             ExitCode::SUCCESS
         );
         assert!(client.calls.borrow().is_empty());
@@ -746,7 +856,7 @@ mod tests {
         for client in clients {
             let result = flows::restart::restart_worker(&client, "p1");
             assert_eq!(
-                handle_agent_result(&client, "Agent restart failed", result),
+                handle_flow_result(&client, "Agent restart failed", result),
                 ExitCode::FAILURE
             );
             let calls = client.calls.borrow();

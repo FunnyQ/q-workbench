@@ -6,7 +6,7 @@
 >
 > **Depends on**: polish/02, picker/02, picker/05, agent/05
 > **Blocks**: polish/04
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -73,28 +73,28 @@ outcome than a missing notification.
 
 ## Acceptance criteria
 
-- [ ] All four flows return `Result<Outcome>` and call `notify` nowhere.
-- [ ] Each carries the title from the table above. `dashboard` and `project pick` use
+- [x] All four flows return `Result<Outcome>` and call `notify` nowhere.
+- [x] Each carries the title from the table above. `dashboard` and `project pick` use
       their contract message as the **entire** body; nothing is appended to either.
-- [ ] `project pick`'s two contract messages appear as notification bodies, unchanged.
-- [ ] `project pick` and `ssh pick` return `Cancelled` on an empty fzf exit; the other
+- [x] `project pick`'s two contract messages appear as notification bodies, unchanged.
+- [x] `project pick` and `ssh pick` return `Cancelled` on an empty fzf exit; the other
       two never return `Cancelled`.
-- [ ] `ssh session` still closes its tab on every exit path before the error propagates.
-- [ ] Every listed boundary carries a `.context("…")` making the body specific.
-- [ ] None of the four writes to stdout or stderr.
+- [x] `ssh session` still closes its tab on every exit path before the error propagates.
+- [x] Every listed boundary carries a `.context("…")` making the body specific.
+- [x] None of the four writes to stdout or stderr.
 
 ## Verification
 
-- [ ] `cargo test` — for each of the four, inject a failure at its first Herdr call and
+- [x] `cargo test` — for each of the four, inject a failure at its first Herdr call and
       assert exactly one `notification.show`, with the expected title and a body naming
       the boundary
-- [ ] `cargo test` — `project pick` with a missing registry produces the contract
+- [x] `cargo test` — `project pick` with a missing registry produces the contract
       message verbatim as the body
-- [ ] `cargo test` — `dashboard` with no matching workspace produces a body equal to
+- [x] `cargo test` — `dashboard` with no matching workspace produces a body equal to
       `Workspace '<label>' was not found.` exactly, with nothing appended
-- [ ] `cargo test` — a cancelled fzf in each picker records zero notifications and exits 0
-- [ ] `cargo test` — `ssh session` failing mid-flow still issues `tab.close`
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo test` — a cancelled fzf in each picker records zero notifications and exits 0
+- [x] `cargo test` — `ssh session` failing mid-flow still issues `tab.close`
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

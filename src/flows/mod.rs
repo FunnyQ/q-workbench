@@ -44,6 +44,19 @@ impl FlowError {
         }
     }
 
+    /// A failure whose sentence is already the complete notification body.
+    ///
+    /// This adds no field: the sentence is stored as both the preserved prefix and the
+    /// error itself, so the chained cause the reporting path would append is that same
+    /// sentence and it prints once. Use it when the message already names its concrete
+    /// cause — `Workspace 'x' was not found.`, `project picker: registry not found: …`
+    /// — and `prefixed` when the sentence describes something else, such as the agent
+    /// popup's `The incomplete tab was closed.`, which needs the cause after it.
+    pub fn complete(title: impl Into<String>, body: impl Into<String>) -> Self {
+        let body = body.into();
+        Self::prefixed(title, body.clone(), anyhow::anyhow!(body))
+    }
+
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()
     }

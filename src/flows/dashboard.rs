@@ -1,45 +1,54 @@
-use anyhow::{bail, Result};
+use anyhow::Context;
 use serde_json::json;
 
 use crate::config::Config;
+use crate::flows::{FlowError, FlowResult, Outcome};
 use crate::herdr::HerdrClient;
-use crate::notify::notify;
 use crate::shell::shell_quote;
 
 const TITLE: &str = "Dashboard Launcher";
 const TAB_LABEL: &str = "\u{eacd}  Dashboard Launcher";
 const PROMPT: &str = "/usage-dashboard and restart /cockpit server";
 
-pub fn run(client: &dyn HerdrClient, config: &Config) -> Result<()> {
+pub fn run(client: &dyn HerdrClient, config: &Config) -> FlowResult {
     run_with(client, &config.dashboard_workspace)
 }
 
-fn run_with(client: &dyn HerdrClient, workspace_label: &str) -> Result<()> {
+fn run_with(client: &dyn HerdrClient, workspace_label: &str) -> FlowResult {
     // Resolve the workspace every time because Herdr workspace IDs are not durable.
     let workspace = client
-        .workspace_list(json!({}))?
+        .workspace_list(json!({}))
+        .context("dashboard: workspace.list")
+        .map_err(|error| FlowError::titled(TITLE, error))?
         .workspaces
         .into_iter()
         .find(|workspace| workspace.label.as_deref() == Some(workspace_label));
     let Some(workspace) = workspace else {
+        // The message already names the concrete cause, so it is the whole body and the
+        // reporting path appends nothing to it.
         let body = format!("Workspace '{workspace_label}' was not found.");
-        notify(client, TITLE, &body);
-        bail!("{body}");
+        return Err(FlowError::complete(TITLE, body).into());
     };
 
-    let created = client.tab_create(json!({
-        "label": TAB_LABEL,
-        "env": {"Q_NO_BANNER": "1"},
-        "focus": true,
-        "workspace_id": workspace.workspace_id,
-    }))?;
+    let created = client
+        .tab_create(json!({
+            "label": TAB_LABEL,
+            "env": {"Q_NO_BANNER": "1"},
+            "focus": true,
+            "workspace_id": workspace.workspace_id,
+        }))
+        .context("dashboard: tab.create")
+        .map_err(|error| FlowError::titled(TITLE, error))?;
     // Passing the prompt to `claude` starts processing immediately instead of leaving it staged.
-    client.pane_send_input(json!({
-        "pane_id": created.root_pane.pane_id,
-        "text": format!("claude --model sonnet {}", shell_quote(PROMPT)),
-        "keys": ["enter"],
-    }))?;
-    Ok(())
+    client
+        .pane_send_input(json!({
+            "pane_id": created.root_pane.pane_id,
+            "text": format!("claude --model sonnet {}", shell_quote(PROMPT)),
+            "keys": ["enter"],
+        }))
+        .context("dashboard: pane.send_input")
+        .map_err(|error| FlowError::titled(TITLE, error))?;
+    Ok(Outcome::Done)
 }
 
 #[cfg(test)]
@@ -72,7 +81,10 @@ mod tests {
             }),
         );
 
-        run_with(&client, "personal-assistant").expect("launch dashboard");
+        assert_eq!(
+            run_with(&client, "personal-assistant").expect("launch dashboard"),
+            crate::flows::Outcome::Done
+        );
 
         assert_eq!(
             client.calls.into_inner(),
@@ -100,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_workspace_notifies_and_does_not_create_a_tab() {
+    fn missing_workspace_preserves_message_and_does_not_create_a_tab() {
         let client = FakeClient::default();
         client.queue_response(
             "workspace.list",
@@ -109,24 +121,35 @@ mod tests {
 
         let error = run_with(&client, "personal-assistant").expect_err("reject missing workspace");
 
+        let flow_error = error.downcast_ref::<crate::flows::FlowError>().unwrap();
+        assert_eq!(flow_error.title(), Some("Dashboard Launcher"));
         assert_eq!(
-            error.to_string(),
+            flow_error.prefix(),
+            Some("Workspace 'personal-assistant' was not found.")
+        );
+        assert_eq!(
+            flow_error.chain(),
             "Workspace 'personal-assistant' was not found."
         );
         assert_eq!(
             client.calls.into_inner(),
-            vec![
-                ("workspace.list".to_owned(), json!({})),
-                (
-                    "notification.show".to_owned(),
-                    json!({
-                        "title": "Dashboard Launcher",
-                        "body": "Workspace 'personal-assistant' was not found.",
-                        "position": "bottom-right",
-                        "sound": "none",
-                    }),
-                ),
-            ]
+            vec![("workspace.list".to_owned(), json!({}))]
+        );
+    }
+
+    #[test]
+    fn workspace_list_failure_has_exact_reporting_metadata() {
+        let client = FakeClient::default();
+        client.queue_error("workspace.list", "unavailable", "socket closed");
+
+        let error = run_with(&client, "personal-assistant").expect_err("reject list failure");
+        let flow_error = error.downcast_ref::<crate::flows::FlowError>().unwrap();
+
+        assert_eq!(flow_error.title(), Some("Dashboard Launcher"));
+        assert_eq!(flow_error.prefix(), None);
+        assert_eq!(
+            flow_error.chain(),
+            "dashboard: workspace.list: Herdr error unavailable: socket closed"
         );
     }
 

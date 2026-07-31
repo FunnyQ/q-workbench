@@ -11,6 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use serde_json::json;
 
+use crate::flows::{FlowError, FlowResult};
 use crate::herdr::HerdrClient;
 use crate::registry;
 use crate::registry::ssh::SshSource;
@@ -460,16 +461,25 @@ impl Drop for SignalHandlers {
     }
 }
 
+/// Own one SSH connection, close its dedicated tab, then exit with ssh's own status.
+///
+/// On success this never returns: it ends the process with the status the connection
+/// ended on, mirroring `exit "$ssh_status"` in the zsh original, and `128 + signum`
+/// when a signal ended it instead. The status is the only thing this wrapper adds over
+/// bare `ssh`, so discarding it and returning `Outcome::Done` would make every session
+/// look successful. It still returns `FlowResult` so a failure *before* that point —
+/// the signal handlers, or the spawn — routes through the single reporting path in
+/// `main` and reaches the user as a notification.
 pub fn session(
     target: &str,
     tab_id: &str,
     registry_file: &Path,
     history_file: &Path,
     client: &dyn HerdrClient,
-) -> Result<()> {
+) -> FlowResult {
     let mut command = Command::new("ssh");
     command.arg(target);
-    let exit_code = run_session(
+    let exit_code = session_with_command(
         target,
         tab_id,
         registry_file,
@@ -477,7 +487,23 @@ pub fn session(
         client,
         &mut command,
     )?;
-    std::process::exit(exit_code);
+    // Nothing is buffered at this point: the child owned the terminal directly and the
+    // tab is already closed, so there is nothing left for a destructor to flush.
+    std::process::exit(exit_code)
+}
+
+/// The same session with the child command injected, returning the status instead of
+/// exiting so a test can assert both the status and the reporting metadata.
+fn session_with_command(
+    target: &str,
+    tab_id: &str,
+    registry_file: &Path,
+    history_file: &Path,
+    client: &dyn HerdrClient,
+    command: &mut Command,
+) -> Result<i32> {
+    run_session(target, tab_id, registry_file, history_file, client, command)
+        .map_err(|error| anyhow::Error::from(FlowError::titled("SSH session", error)))
 }
 
 fn run_session(
@@ -488,21 +514,26 @@ fn run_session(
     client: &dyn HerdrClient,
     command: &mut Command,
 ) -> Result<i32> {
-    let _handlers = SignalHandlers::install().context("failed to install SSH signal handlers")?;
+    let result = (|| {
+        let handlers = SignalHandlers::install().context("ssh session: install signal handlers")?;
 
-    // Agent launch uses exec because the harness replaces the launcher. SSH must
-    // remain a child because this process closes the dedicated tab after it exits.
-    let child = command
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .context("failed to start ssh")?;
-    let (status, caught_signal) = wait_for_child(child, _handlers.read_fd)?;
+        // Agent launch uses exec because the harness replaces the launcher. SSH must
+        // remain a child because this process closes the dedicated tab after it exits.
+        let child = command
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .context("ssh session: spawning ssh")?;
+        wait_for_child(child, handlers.read_fd)
+    })();
 
-    if let Err(error) = client.tab_close(json!({"id": tab_id})) {
-        eprintln!("failed to close SSH tab {tab_id}: {error:#}");
-    }
+    // The tab exists only to hold this connection, so it must close whether ssh exited,
+    // was signalled, or never started — a tab left open after a failed connection is a
+    // worse outcome than a missing notification. A close failure is deliberately
+    // swallowed so it cannot displace the real cause on its way to `main`.
+    let _ = client.tab_close(json!({"id": tab_id}));
+    let (status, caught_signal) = result?;
 
     let exit_code = if let Some(signal) = caught_signal {
         128 + signal
@@ -513,14 +544,12 @@ fn run_session(
     };
 
     if exit_code == 0 {
-        if let Err(error) =
-            registry::ssh::use_target(registry_file, Path::new("/dev/null"), history_file, target)
-        {
-            eprintln!("failed to stamp SSH target {target}: {error:#}");
-        }
-        if let Err(error) = append_history(history_file, target, unix_epoch()?) {
-            eprintln!("failed to append SSH history: {error:#}");
-        }
+        // Bookkeeping, and best-effort by design: the tab is already gone, so there is
+        // no pane left to print to and no notification worth raising for a stamp the
+        // user never asked for. Neither failure may change the status ssh exited with.
+        let _ =
+            registry::ssh::use_target(registry_file, Path::new("/dev/null"), history_file, target);
+        let _ = append_history(history_file, target, unix_epoch()?);
     }
 
     Ok(exit_code)
@@ -981,7 +1010,10 @@ mod tests {
         let _ = fs::remove_file(&history);
         let mut command = Command::new("/bin/sh");
         command.args(["-c", script]);
-        let code = run_session(
+        // `session_with_command` is the same flow `session` runs, minus the final
+        // `std::process::exit` — so the status these tests assert is the status the
+        // process leaves with.
+        let code = session_with_command(
             "test-host",
             "tab-id",
             &registry,
@@ -1026,6 +1058,31 @@ mod tests {
         assert_eq!(code, 23);
         assert_eq!(client.calls.borrow()[0].0, "tab.close");
         assert!(!registry.exists());
+    }
+
+    #[test]
+    fn spawn_failure_closes_tab_and_has_exact_reporting_metadata() {
+        let client = FakeClient::default();
+        let mut command = Command::new("/definitely/missing/ssh");
+
+        let error = session_with_command(
+            "test-host",
+            "tab-id",
+            Path::new("/unused/registry"),
+            Path::new("/unused/history"),
+            &client,
+            &mut command,
+        )
+        .expect_err("reject spawn failure");
+        let flow_error = error.downcast_ref::<FlowError>().unwrap();
+
+        assert_eq!(flow_error.title(), Some("SSH session"));
+        assert_eq!(flow_error.prefix(), None);
+        assert!(flow_error.chain().starts_with("ssh session: spawning ssh:"));
+        assert_eq!(
+            client.calls.into_inner(),
+            vec![("tab.close".to_owned(), json!({"id": "tab-id"}))]
+        );
     }
 
     fn assert_signal(signal: i32, script: &str) {

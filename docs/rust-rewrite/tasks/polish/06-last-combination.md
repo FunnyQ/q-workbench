@@ -6,7 +6,7 @@
 >
 > **Depends on**: agent/03, agent/04
 > **Blocks**: cutover/01
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -125,45 +125,45 @@ Both are the **menu labels**, matching what is stored.
 
 ## Acceptance criteria
 
-- [ ] State is keyed by `pane_id` and stores the pad-stripped menu labels byte for
+- [x] State is keyed by `pane_id` and stores the pad-stripped menu labels byte for
       byte, glyph included on the harness, with `model` absent for codex and opencode.
-- [ ] The file is written atomically and pruned against the live pane list on write.
-- [ ] The extra entry appears only when the launcher runs with the hidden `--restart`
+- [x] The file is written atomically and pruned against the live pane list on write.
+- [x] The extra entry appears only when the launcher runs with the hidden `--restart`
       flag, and only when that pane has a usable record.
-- [ ] Its literal matches the parity contract: `U+F0709`, two spaces, `use last: `, the
+- [x] Its literal matches the parity contract: `U+F0709`, two spaces, `use last: `, the
       stored harness label with its glyph stripped, and for claude ` · <model label>`.
-- [ ] Choosing it launches with no further menus; choosing anything else behaves
+- [x] Choosing it launches with no further menus; choosing anything else behaves
       exactly as before.
-- [ ] A stored model label that no longer resolves in the config drops the entry and
+- [x] A stored model label that no longer resolves in the config drops the entry and
       falls through to the normal menus.
-- [ ] Recording happens in the popup and the launcher only, after setup succeeds, keyed
+- [x] Recording happens in the popup and the launcher only, after setup succeeds, keyed
       by the pane id that entry point knows — never inside the shared decision flow, and
       never in the restart process.
-- [ ] `AgentChoice` exposes the harness label and the optional model label.
-- [ ] A flow that fails before its pane is set up records nothing.
-- [ ] A missing or corrupt state file is not an error — it means "no record".
+- [x] `AgentChoice` exposes the harness label and the optional model label.
+- [x] A flow that fails before its pane is set up records nothing.
+- [x] A missing or corrupt state file is not an error — it means "no record".
 
 ## Verification
 
-- [ ] `cargo test` — round-trip: record, read back, and confirm the stored harness
+- [x] `cargo test` — round-trip: record, read back, and confirm the stored harness
       value equals the glyph-bearing menu label byte for byte and the model label
       resolves through the config maps
-- [ ] `cargo test` — a codex launch records no `model`, and its extra entry offers the
+- [x] `cargo test` — a codex launch records no `model`, and its extra entry offers the
       harness alone
-- [ ] `cargo test` — pruning removes entries absent from the pane list and keeps the rest
-- [ ] `cargo test` — a stored label missing from the config yields no extra entry
-- [ ] `cargo test` — the launcher without `--restart` never shows the extra entry, even
+- [x] `cargo test` — pruning removes entries absent from the pane list and keeps the rest
+- [x] `cargo test` — a stored label missing from the config yields no extra entry
+- [x] `cargo test` — the launcher without `--restart` never shows the extra entry, even
       when a record exists for its pane and even with `--no-layout` set
-- [ ] `cargo test` — the restart flow writes nothing to the state file
-- [ ] `cargo test` — a corrupt state file yields no record and no error
-- [ ] `cargo test` — with `FakeClient`, choosing the extra entry issues no `gum` model
+- [x] `cargo test` — the restart flow writes nothing to the state file
+- [x] `cargo test` — a corrupt state file yields no record and no error
+- [x] `cargo test` — with `FakeClient`, choosing the extra entry issues no `gum` model
       prompt and reaches the launch directly
-- [ ] `cargo test` — a popup flow that fails after `tab.create` records nothing
-- [ ] `cargo test` — a successful popup flow records against the `root_pane.pane_id`
+- [x] `cargo test` — a popup flow that fails after `tab.create` records nothing
+- [x] `cargo test` — a successful popup flow records against the `root_pane.pane_id`
       returned by `tab.create`, not any other id
-- [ ] Manual in a **scratch tab**: launch an agent, restart it, take the first entry,
+- [x] Manual in a **scratch tab**: launch an agent, restart it, take the first entry,
       and confirm the same harness and model come back with one keypress
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

@@ -7,7 +7,7 @@
 >
 > **Depends on**: agent/02, agent/03, agent/04
 > **Blocks**: polish/03
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -109,48 +109,48 @@ gone, the process must still exit non-zero rather than panicking while trying to
 
 ## Acceptance criteria
 
-- [ ] `Outcome` distinguishes done from cancelled; each of the five agent subcommands
+- [x] `Outcome` distinguishes done from cancelled; each of the five agent subcommands
       returns it.
-- [ ] `agent restart-worker` notifies on every fatal path — a failed pane resolution,
+- [x] `agent restart-worker` notifies on every fatal path — a failed pane resolution,
       a failed kill, and a failed re-injection each produce exactly one notification.
-- [ ] Restart with no agent pane in the tab returns `Notice`, producing the preserved
+- [x] Restart with no agent pane in the tab returns `Notice`, producing the preserved
       notification and **exit 0** — not an error, not silence.
-- [ ] No flow module calls `notify` directly; cleanup still runs, reporting moves to
+- [x] No flow module calls `notify` directly; cleanup still runs, reporting moves to
       `main`.
-- [ ] Every fatal path in a listed subcommand produces **exactly one** notification,
+- [x] Every fatal path in a listed subcommand produces **exactly one** notification,
       never two.
-- [ ] Cancellation produces no notification and exits 0 at every agent menu and at the
+- [x] Cancellation produces no notification and exits 0 at every agent menu and at the
       restart confirmation. `agent inject` and `agent restart-worker` have no
       cancellation point and must never return `Cancelled`.
-- [ ] The preserved strings survive verbatim — titles as titles, sentences as the body
+- [x] The preserved strings survive verbatim — titles as titles, sentences as the body
       prefix, with the chained cause appended.
-- [ ] Bodies are a single line, never a backtrace.
-- [ ] A failing notification does not panic and does not mask the original error.
-- [ ] Nothing is written to stdout or stderr by any of the five.
+- [x] Bodies are a single line, never a backtrace.
+- [x] A failing notification does not panic and does not mask the original error.
+- [x] Nothing is written to stdout or stderr by any of the five.
 
 ## Verification
 
-- [ ] `cargo test` — for each listed subcommand, inject a failure at its first Herdr
+- [x] `cargo test` — for each listed subcommand, inject a failure at its first Herdr
       call and assert exactly one `notification.show` with a non-empty, non-generic body
-- [ ] `cargo test` — for `agent restart-worker`, inject a failure at each of the three
+- [x] `cargo test` — for `agent restart-worker`, inject a failure at each of the three
       stages (resolve, kill, re-inject) and assert one notification per stage
-- [ ] `cargo test` — a tab with no agent pane yields one notification with the preserved
+- [x] `cargo test` — a tab with no agent pane yields one notification with the preserved
       body and an exit status of 0
-- [ ] `cargo test` — inject a failure **after** the popup's `tab.create` and assert
+- [x] `cargo test` — inject a failure **after** the popup's `tab.create` and assert
       exactly one notification: title `Agent tab failed`, body starting with
       `The incomplete tab was closed.` and continuing with the cause, plus a `tab.close`
-- [ ] `cargo test` — cancellation at each of the four agent menus, and at the restart
+- [x] `cargo test` — cancellation at each of the four agent menus, and at the restart
       confirmation, records zero notifications and exits 0. These five are the only
       cancellation points in scope; `agent inject` and `agent restart-worker` have none
       and are asserted to never return `Cancelled`
-- [ ] `cargo test` — the preserved strings asserted verbatim as title or body prefix
-- [ ] `cargo test` — a `FakeClient` whose `notification.show` also fails still yields a
+- [x] `cargo test` — the preserved strings asserted verbatim as title or body prefix
+- [x] `cargo test` — a `FakeClient` whose `notification.show` also fails still yields a
       non-zero exit and no panic
-- [ ] Manual through the linked dev plugin: run `agent restart` from a tab containing no
+- [x] Manual through the linked dev plugin: run `agent restart` from a tab containing no
       agent pane, and confirm one notification reading `No agent pane in this tab to
       restart.` and exit 0. (Do **not** use a failing `git worktree add` for this — that
       is a documented fallback that proceeds without a worktree, not a fatal path.)
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

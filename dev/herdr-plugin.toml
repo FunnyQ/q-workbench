@@ -1,0 +1,72 @@
+id = "q.workbench-dev"
+name = "Q Workbench [dev]"
+version = "0.1.1"
+min_herdr_version = "0.7.4"
+description = "Q's Herdr workspace actions and launchers"
+platforms = ["macos"]
+
+[[actions]]
+id = "new-agent"
+title = "[dev] New agent"
+contexts = ["workspace"]
+command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench-dev", "--entrypoint", "agent", "--placement", "popup", "--width", "60%", "--height", "70%"]
+
+[[actions]]
+id = "new-worktree-agent"
+title = "[dev] New worktree agent"
+contexts = ["workspace"]
+command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench-dev", "--entrypoint", "worktree-agent", "--placement", "popup", "--width", "60%", "--height", "70%"]
+
+[[actions]]
+id = "dashboard"
+title = "[dev] Open dashboard launcher"
+contexts = ["workspace"]
+command = ["./run.zsh", "dashboard"]
+
+[[actions]]
+id = "project"
+title = "[dev] Open project picker"
+contexts = ["workspace"]
+command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench-dev", "--entrypoint", "project", "--placement", "popup", "--width", "70%", "--height", "70%"]
+
+[[actions]]
+id = "ssh"
+title = "[dev] Open SSH picker"
+contexts = ["workspace"]
+command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench-dev", "--entrypoint", "ssh", "--placement", "popup", "--width", "70%", "--height", "70%"]
+
+[[actions]]
+id = "restart-agent"
+title = "[dev] Restart agent"
+contexts = ["workspace"]
+command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench-dev", "--entrypoint", "restart-agent", "--placement", "popup", "--width", "72", "--height", "16"]
+
+[[panes]]
+id = "agent"
+title = "󱚟  new agent"
+placement = "popup"
+command = ["./run.zsh", "agent", "popup"]
+
+[[panes]]
+id = "worktree-agent"
+title = "󱚟  new worktree agent"
+placement = "popup"
+command = ["./run.zsh", "agent", "popup", "--worktree"]
+
+[[panes]]
+id = "project"
+title = "󰉋 project"
+placement = "popup"
+command = ["./run.zsh", "project", "popup"]
+
+[[panes]]
+id = "ssh"
+title = " ssh"
+placement = "popup"
+command = ["./run.zsh", "ssh", "popup"]
+
+[[panes]]
+id = "restart-agent"
+title = "󰜉  Restart Agent"
+placement = "popup"
+command = ["./run.zsh", "restart-agent", "popup"]

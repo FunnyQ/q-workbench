@@ -4,6 +4,8 @@ A Herdr plugin (`q.workbench`) that turns a terminal multiplexer into an agent w
 
 A Rust binary is committed to the repository, so installing requires no build. However, hacking on it requires a Rust toolchain.
 
+> **macOS only for now.** The committed `bin/workbench` is a single Mach-O **arm64** artifact, and `herdr-plugin.toml` declares `platforms = ["macos"]`. It will not run on Linux, and it will not run on an Intel Mac. Building from source on another platform is untested. Shipping a second artifact is out of scope for this release.
+
 ## What it does
 
 The plugin exposes six actions. Keys are yours to choose — see [Bind it](#bind-it).
@@ -65,7 +67,7 @@ prompts "use a worktree?".
 
 ### Requirements
 
-macOS, Herdr ≥ 0.7.4, and on `PATH`: `gum`, `fzf`, `zoxide`, `yazi`.
+macOS on Apple silicon, Herdr ≥ 0.7.4, and on `PATH`: `gum`, `fzf`, `zoxide`, `yazi`.
 
 ```zsh
 brew install gum fzf zoxide yazi

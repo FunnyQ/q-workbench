@@ -6,7 +6,7 @@
 >
 > **Depends on**: polish/04, foundation/04, registry/05, picker/04
 > **Blocks**: cutover/01
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -64,28 +64,28 @@ version differs between the two and this task is not the place to change that.
 
 ## Acceptance criteria
 
-- [ ] The channel match is extended, not duplicated or replaced by a heuristic.
-- [ ] Every `ssh edit` message in the parity contract's stderr table is reproduced
+- [x] The channel match is extended, not duplicated or replaced by a heuristic.
+- [x] Every `ssh edit` message in the parity contract's stderr table is reproduced
       verbatim with its exit code, including the stdout success line.
-- [ ] Fatal paths with no contract message use `<subcommand path>: <chained cause>` on
+- [x] Fatal paths with no contract message use `<subcommand path>: <chained cause>` on
       stderr, exit 1 — this covers `ssh sync|list|get|use|remove`, `config migrate` and
       `herdr ping`.
-- [ ] None of these subcommands ever issues a `notification.show`.
-- [ ] `herdr ping` prints a concrete reason when the socket is unreachable.
-- [ ] Cancelling an `ssh edit` prompt writes nothing and exits 0.
-- [ ] The old `Usage: …` line for the SSH registry is gone.
+- [x] None of these subcommands ever issues a `notification.show`.
+- [x] `herdr ping` prints a concrete reason when the socket is unreachable.
+- [x] Cancelling an `ssh edit` prompt writes nothing and exits 0.
+- [x] The old `Usage: …` line for the SSH registry is gone.
 
 ## Verification
 
-- [ ] `cargo test` — for each `ssh edit` row of the parity contract's stderr table,
+- [x] `cargo test` — for each `ssh edit` row of the parity contract's stderr table,
       assert the exact bytes on the right stream and the exact exit code
-- [ ] `cargo test` — for each of the eight subcommands, assert no `notification.show`
+- [x] `cargo test` — for each of the eight subcommands, assert no `notification.show`
       is issued on any failure path
-- [ ] `cargo test` — an unnamed failure in each of `ssh sync`, `config migrate` and
+- [x] `cargo test` — an unnamed failure in each of `ssh sync`, `config migrate` and
       `herdr ping` produces `<subcommand path>: <cause>` on stderr, exit 1
-- [ ] `cargo test` — cancelling an `ssh edit` prompt leaves the SSH config unchanged and
+- [x] `cargo test` — cancelling an `ssh edit` prompt leaves the SSH config unchanged and
       exits 0
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

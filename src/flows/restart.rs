@@ -238,10 +238,9 @@ fn injected_command(executable: &Path, pane_id: &str, label: &str) -> Result<Str
 }
 
 fn run_confirm() -> Result<bool> {
-    let cols = env::var("COLUMNS")
-        .ok()
-        .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(80);
+    // `COLUMNS` used to answer here, but zsh never exports it to this process, so the
+    // banner was always laid out for an 80-column pane.
+    let cols = super::terminal_size().map_or(80, |(cols, _lines)| cols);
     let content_width = 44_u16.min(cols.saturating_sub(4));
     let content_margin = cols.saturating_sub(content_width + 2) / 2;
     let subtitle = Command::new("gum")

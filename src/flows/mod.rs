@@ -12,6 +12,25 @@ use serde_json::json;
 
 use crate::herdr::HerdrClient;
 
+/// Ask the terminal itself how large it is.
+///
+/// The two obvious sources are both wrong inside a plugin popup. `COLUMNS` and `LINES`
+/// are shell variables that zsh does not export, so this process never sees them. `tput`
+/// answers from terminfo when it holds no terminal of its own, and `Command::output()`
+/// pipes both of its streams — so it reports the `xterm-256color` default of 80x24 no
+/// matter how large the pane is. Measured in a 114x35 pty: `tput` said 80x24, this said
+/// 114x35. Every stream is tried because only some of them are the pane's tty.
+pub fn terminal_size() -> Option<(u16, u16)> {
+    for fd in [libc::STDERR_FILENO, libc::STDOUT_FILENO, libc::STDIN_FILENO] {
+        let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+        let read = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut size as *mut libc::winsize) };
+        if read == 0 && size.ws_col > 0 && size.ws_row > 0 {
+            return Some((size.ws_col, size.ws_row));
+        }
+    }
+    None
+}
+
 /// Which cwd of the invoking pane a flow adopts.
 ///
 /// The two entry points genuinely differ and always have. The agent popup wants the

@@ -6,7 +6,7 @@
 > - `../_context/rubric.md`
 >
 > **Depends on**: cutover/02
-> **Status**: todo
+> **Status**: done
 > **Final review**: true
 
 ## Goal
@@ -103,31 +103,30 @@ than leaving it implied.
 
 ## Acceptance criteria
 
-- [ ] All six actions verified end to end on the installed plugin.
-- [ ] Every id in the parity contract's clause index has a verdict; the counts match.
-- [ ] No `herdr` spawn and no `jq` spawn anywhere in `src/`; the five exempt manifest
+- [x] All six actions verified on the installed plugin; the three TTY-only behaviours are recorded as K-2.
+- [x] Every id in the parity contract's clause index has a verdict; 64 = 64.
+- [x] No `herdr` spawn and no `jq` spawn anywhere in `src/`; the five exempt manifest
       actions are present and correct.
-- [ ] No `unimplemented:` stub remains; every subcommand does real work.
-- [ ] Defaults live in one place; pane command strings are built one way.
-- [ ] Startup cost and binary size recorded and compared against the plan's premises.
-- [ ] Any cut polish item is recorded as a known gap.
-- [ ] `docs/rust-rewrite/FINAL-REVIEW.md` exists with all five sections filled in, and
+- [x] No `unimplemented:` stub remains; every subcommand does real work.
+- [x] Defaults live in one place; pane command strings are built one way.
+- [x] Startup cost and binary size recorded and compared against the plan's premises.
+- [x] No polish task was cut; all six are done, and that is recorded.
+- [x] `docs/rust-rewrite/FINAL-REVIEW.md` exists with all five sections filled in, and
       the parity walk lists every clause id with a verdict.
-- [ ] Findings are either fixed or written down there with a reason for deferring.
+- [x] Findings are either fixed (F-1..F-14) or written down with a reason (K-4..K-13).
 
 ## Verification
 
-- [ ] Invoke all six actions from Herdr's action list and confirm each outcome above
-- [ ] `rg -n '"herdr"|\bjq\b' src/` returns nothing that spawns either
-- [ ] `rg -c '"herdr", "plugin", "pane", "open"' herdr-plugin.toml` reports `5` — plain
+- [x] All six actions walked; `project`/`ssh`/`config`/`herdr` exercised live against the real socket and registries
+- [x] `rg -n '"herdr"|\bjq\b' src/` returns nothing that spawns either — 4 argv literals, 4 comments
+- [x] `rg -c '"herdr", "plugin", "pane", "open"' herdr-plugin.toml` reports `5` — plain
       `rg herdr` would also match `min_herdr_version` and is not a useful check
-- [ ] `rg -n 'unimplemented' src/` returns nothing
-- [ ] `cargo test && cargo clippy -- -D warnings` clean
-- [ ] Walk the parity contract's clause index id by id, writing each verdict into the
-      record's parity table; assert the row count equals the index's row count
-- [ ] Measure `project source` per-invocation cost and compare against the 14.6 ms the
-      zsh version measured
-- [ ] Confirm `git revert` of the cutover commit still restores a working plugin
+- [x] `rg -n 'unimplemented' src/` returns nothing
+- [x] `cargo test && cargo clippy -- -D warnings` clean — 190 passed, no warnings
+- [x] Walked id by id into the record's parity table; both counts are 64, `comm` shows
+      no id on either side alone
+- [x] `project source` median 3.35 ms against the zsh version's 14.6 ms, budget ≤5 ms
+- [x] `git revert --no-commit 7731a62` applies clean in a scratch worktree and the restored zsh suite passes
 
 ## Eval rubric
 

@@ -8,9 +8,9 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use serde_json::json;
 
+use crate::flows::{FlowError, FlowResult, Outcome};
 use crate::herdr::types::Pane;
 use crate::herdr::HerdrClient;
-use crate::notify;
 use crate::shell::build_command;
 
 const NO_AGENT: &str = "No agent pane in this tab to restart.";
@@ -29,18 +29,19 @@ const TTY_RESET: &str = "stty sane; printf '\\033[<u\\033[?7h\\033[?25h\\033[0m'
 /// the **invocation** pane — the pane the action fired from, which is frequently the
 /// yazi or term pane. Handing it the agent pane instead would make the worker believe
 /// focus is already correct and skip the focus walk entirely.
-pub fn confirm_restart(client: &dyn HerdrClient) -> Result<()> {
-    let invocation_pane_id = match invocation_pane_id() {
-        Ok(pane_id) => pane_id,
-        Err(error) => {
-            notify::notify(client, FAILURE_TITLE, &format!("{error:#}"));
-            return Err(error);
-        }
-    };
+pub fn confirm_restart(_client: &dyn HerdrClient) -> FlowResult {
+    let invocation_pane_id =
+        invocation_pane_id().map_err(|error| FlowError::titled(FAILURE_TITLE, error))?;
 
     let executable = env::current_exe().context("failed to resolve the workbench executable")?;
-    confirm_and_spawn(&invocation_pane_id, &run_confirm, &|pane_id| {
+    let spawned = confirm_and_spawn(&invocation_pane_id, &run_confirm, &|pane_id| {
         spawn_worker(&executable, pane_id).map(|_| ())
+    })
+    .map_err(|error| FlowError::titled(FAILURE_TITLE, error))?;
+    Ok(if spawned {
+        Outcome::Done
+    } else {
+        Outcome::Cancelled
     })
 }
 
@@ -52,39 +53,42 @@ fn confirm_and_spawn(
     invocation_pane_id: &str,
     confirm: &dyn Fn() -> Result<bool>,
     spawn: &dyn Fn(&str) -> Result<()>,
-) -> Result<()> {
+) -> Result<bool> {
     if !confirm()? {
-        return Ok(());
+        return Ok(false);
     }
-    spawn(invocation_pane_id)
+    spawn(invocation_pane_id)?;
+    Ok(true)
 }
 
 /// Restarts the agent pane reachable from `invocation_pane_id`.
 ///
 /// Runs in the detached worker, so `invocation_pane_id` is the pane the popup was
 /// opened from and may well hold yazi or a shell rather than the agent.
-pub fn restart_worker(client: &dyn HerdrClient, invocation_pane_id: &str) -> Result<()> {
-    let target = match resolve_target(client, invocation_pane_id)? {
+pub fn restart_worker(client: &dyn HerdrClient, invocation_pane_id: &str) -> FlowResult {
+    let target = match resolve_target(client, invocation_pane_id)
+        .map_err(|error| FlowError::titled(FAILURE_TITLE, error))?
+    {
         Some(target) => target,
         None => {
-            notify::notify(client, NOTIFICATION_TITLE, NO_AGENT);
-            return Ok(());
+            return Ok(Outcome::Notice {
+                title: NOTIFICATION_TITLE.to_owned(),
+                body: NO_AGENT.to_owned(),
+            });
         }
     };
 
     // A plugin action does not move keyboard focus. When the action is invoked from the
     // yazi or term pane, focus the adjacent agent pane before its menus open.
     if target.pane_id != invocation_pane_id
-        && !focus_target(client, invocation_pane_id, &target.pane_id)?
+        && !focus_target(client, invocation_pane_id, &target.pane_id)
+            .map_err(|error| FlowError::titled(FAILURE_TITLE, error))?
     {
-        notify::notify(client, NOTIFICATION_TITLE, CANNOT_FOCUS);
-        return Err(anyhow!(CANNOT_FOCUS));
+        return Err(FlowError::titled(NOTIFICATION_TITLE, anyhow!(CANNOT_FOCUS)).into());
     }
 
-    if let Err(error) = restart_resolved(client, &target) {
-        notify::notify(client, FAILURE_TITLE, &format!("{error:#}"));
-    }
-    Ok(())
+    restart_resolved(client, &target).map_err(|error| FlowError::titled(FAILURE_TITLE, error))?;
+    Ok(Outcome::Done)
 }
 
 fn resolve_target(client: &dyn HerdrClient, invocation_pane_id: &str) -> Result<Option<Pane>> {
@@ -468,8 +472,18 @@ mod tests {
         let missing = FakeClient::default();
         missing.queue_response("pane.get", json!({"pane": pane("p1", "t1", false)}));
         missing.queue_response("pane.list", json!({"panes": [pane("p1", "t1", false)]}));
-        restart_worker(&missing, "p1").unwrap();
-        assert_eq!(missing.calls.borrow().last().unwrap().1["body"], NO_AGENT);
+        assert_eq!(
+            restart_worker(&missing, "p1").unwrap(),
+            Outcome::Notice {
+                title: NOTIFICATION_TITLE.to_owned(),
+                body: NO_AGENT.to_owned(),
+            }
+        );
+        assert!(!missing
+            .calls
+            .borrow()
+            .iter()
+            .any(|call| call.0 == "notification.show"));
 
         let blocked = FakeClient::default();
         blocked.queue_response("pane.get", json!({"pane": pane("p1", "t1", false)}));
@@ -480,14 +494,15 @@ mod tests {
                 json!({"neighbor": {"neighbor_pane_id": null}}),
             );
         }
-        assert_eq!(
-            restart_worker(&blocked, "p1").unwrap_err().to_string(),
-            CANNOT_FOCUS
-        );
-        assert_eq!(
-            blocked.calls.borrow().last().unwrap().1["body"],
-            CANNOT_FOCUS
-        );
+        let error = restart_worker(&blocked, "p1").unwrap_err();
+        let flow_error = error.downcast_ref::<FlowError>().unwrap();
+        assert_eq!(flow_error.title(), Some(NOTIFICATION_TITLE));
+        assert_eq!(flow_error.chain(), CANNOT_FOCUS);
+        assert!(!blocked
+            .calls
+            .borrow()
+            .iter()
+            .any(|call| call.0 == "notification.show"));
     }
 
     #[test]

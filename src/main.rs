@@ -16,7 +16,9 @@ mod notify;
 mod registry;
 #[allow(dead_code)]
 mod shell;
+mod state;
 
+use flows::{FlowError, FlowResult, Outcome};
 use herdr::{check_protocol, HerdrClient, ProtocolGuardError, SocketClient};
 
 #[derive(Debug, Parser)]
@@ -151,27 +153,15 @@ enum HerdrCommand {
 
 impl Cli {
     #[allow(clippy::needless_return)]
-    fn run(self) -> Result<()> {
-        let client = if self.uses_herdr() {
-            let client = SocketClient::new()?;
-            self.guard_protocol(&client)?;
-            Some(client)
-        } else {
-            None
-        };
-
+    fn run(self, client: Option<&dyn HerdrClient>) -> FlowResult {
         match self.command {
             Command::Agent { command } => match command {
                 AgentCommand::Popup { worktree } => {
-                    let client = client
-                        .as_ref()
-                        .context("Herdr client is required for agent popup")?;
+                    let client = client.context("Herdr client is required for agent popup")?;
                     return flows::agent::popup(client, worktree);
                 }
                 AgentCommand::Launch(args) => {
-                    let client = client
-                        .as_ref()
-                        .context("Herdr client is required for agent launch")?;
+                    let client = client.context("Herdr client is required for agent launch")?;
                     let config = config::Config::load().context("failed to load config")?;
                     return flows::agent::launch(
                         client,
@@ -182,13 +172,12 @@ impl Cli {
                             usage: args.usage,
                             worktree: args.worktree,
                             no_layout: args.no_layout,
+                            restart: args.restart,
                         },
                     );
                 }
                 AgentCommand::Inject(args) => {
-                    let client = client
-                        .as_ref()
-                        .context("Herdr client is required for agent inject")?;
+                    let client = client.context("Herdr client is required for agent inject")?;
                     return flows::agent::inject(
                         client,
                         &flows::agent::InjectOptions {
@@ -200,43 +189,40 @@ impl Cli {
                     );
                 }
                 AgentCommand::Restart => {
-                    let client = client
-                        .as_ref()
-                        .context("Herdr client is required for agent restart")?;
+                    let client = client.context("Herdr client is required for agent restart")?;
                     return flows::restart::confirm_restart(client);
                 }
                 AgentCommand::RestartWorker { pane } => {
-                    let client = client
-                        .as_ref()
-                        .context("Herdr client is required for agent restart worker")?;
+                    let client =
+                        client.context("Herdr client is required for agent restart worker")?;
                     return flows::restart::restart_worker(client, &pane);
                 }
             },
             Command::Project { command } => match command {
                 ProjectCommand::Pick => {
                     let config = config::Config::load()?;
-                    let client = client
-                        .as_ref()
-                        .context("Herdr client is required for the project picker")?;
-                    return flows::picker::project_pick(
+                    let client =
+                        client.context("Herdr client is required for the project picker")?;
+                    flows::picker::project_pick(
                         Path::new(&config.project_registry_file),
                         Path::new(&config.projects_root),
                         client,
-                    );
+                    )?;
+                    return Ok(Outcome::Done);
                 }
                 ProjectCommand::Source { query } => {
                     flows::picker::project_source(query.as_deref())?;
-                    return Ok(());
+                    return Ok(Outcome::Done);
                 }
                 ProjectCommand::Scan => {
                     let config = config::Config::load()?;
                     registry::project::scan(Path::new(&config.project_registry_file))?;
-                    return Ok(());
+                    return Ok(Outcome::Done);
                 }
                 ProjectCommand::Rescan => {
                     let config = config::Config::load()?;
                     registry::project::rescan(Path::new(&config.project_registry_file))?;
-                    return Ok(());
+                    return Ok(Outcome::Done);
                 }
                 ProjectCommand::Update => {
                     let config = config::Config::load()?;
@@ -249,7 +235,7 @@ impl Cli {
                         Path::new(&config.projects_root),
                         &registry::project::SystemClock,
                     )?;
-                    return Ok(());
+                    return Ok(Outcome::Done);
                 }
                 ProjectCommand::Use { path } => {
                     let config = config::Config::load()?;
@@ -259,12 +245,12 @@ impl Cli {
                         Path::new(&config.projects_root),
                         &registry::project::SystemClock,
                     )?;
-                    return Ok(());
+                    return Ok(Outcome::Done);
                 }
                 ProjectCommand::Edit { path } => {
                     let config = config::Config::load()?;
                     registry::project::edit(Path::new(&config.project_registry_file), &path)?;
-                    return Ok(());
+                    return Ok(Outcome::Done);
                 }
             },
             Command::Ssh { command } => {
@@ -274,40 +260,39 @@ impl Cli {
                 let history = Path::new(&config.ssh_history_file);
                 match command {
                     SshCommand::Pick => {
-                        let client = client
-                            .as_ref()
-                            .context("Herdr client is required for the SSH picker")?;
+                        let client =
+                            client.context("Herdr client is required for the SSH picker")?;
                         flows::picker::ssh_pick(registry, ssh_config, history, client)?;
-                        return Ok(());
+                        return Ok(Outcome::Done);
                     }
                     SshCommand::Sync => {
                         registry::ssh::sync(registry, ssh_config, history)?;
-                        return Ok(());
+                        return Ok(Outcome::Done);
                     }
                     SshCommand::List => {
                         use std::io::Write;
                         std::io::stdout()
                             .write_all(&registry::ssh::list(registry, ssh_config, history)?)?;
-                        return Ok(());
+                        return Ok(Outcome::Done);
                     }
                     SshCommand::Get { target } => {
                         print!(
                             "{}",
                             registry::ssh::get(registry, ssh_config, history, &target)?
                         );
-                        return Ok(());
+                        return Ok(Outcome::Done);
                     }
                     SshCommand::Use { target } => {
                         registry::ssh::use_target(registry, ssh_config, history, &target)?;
-                        return Ok(());
+                        return Ok(Outcome::Done);
                     }
                     SshCommand::Remove { target } => {
                         registry::ssh::remove(registry, ssh_config, history, &target)?;
-                        return Ok(());
+                        return Ok(Outcome::Done);
                     }
                     SshCommand::Edit { target } => {
                         flows::ssh::edit(target.as_deref(), ssh_config, registry, history)?;
-                        return Ok(());
+                        return Ok(Outcome::Done);
                     }
                     SshCommand::Session { target, tab_id } => {
                         let config = config::Config::load()?;
@@ -316,23 +301,18 @@ impl Cli {
                             .context("HOME is required")?;
                         let registry = Path::new(&config.ssh_registry_file);
                         let history_file = home.join(".zsh_history");
-                        let client = client
-                            .as_ref()
-                            .context("Herdr client is required for an SSH session")?;
-                        return flows::ssh::session(
-                            &target,
-                            &tab_id,
-                            registry,
-                            &history_file,
-                            client,
-                        );
+                        let client =
+                            client.context("Herdr client is required for an SSH session")?;
+                        flows::ssh::session(&target, &tab_id, registry, &history_file, client)?;
+                        return Ok(Outcome::Done);
                     }
                 }
             }
             Command::Dashboard => {
                 let config = config::Config::load().context("failed to load config")?;
-                let client = SocketClient::new()?;
-                return flows::dashboard::run(&client, &config);
+                let client = client.context("Herdr client is required for the dashboard")?;
+                flows::dashboard::run(client, &config)?;
+                return Ok(Outcome::Done);
             }
             Command::Config { command } => match command {
                 ConfigCommand::Migrate { from, write, force } => {
@@ -346,7 +326,7 @@ impl Cli {
                         .context("failed to create TOML config")?;
                     if !write {
                         print!("{toml}");
-                        return Ok(());
+                        return Ok(Outcome::Done);
                     }
 
                     let destination = config::resolved_config_path()
@@ -364,15 +344,17 @@ impl Cli {
 
                     write_atomically(&destination, toml.as_bytes())?;
                     println!("{}", destination.display());
-                    return Ok(());
+                    return Ok(Outcome::Done);
                 }
             },
             Command::Herdr { command } => {
                 return match command {
                     HerdrCommand::Ping => {
-                        let response = SocketClient::new()?.ping()?;
+                        let response = client
+                            .context("Herdr client is required for ping")?
+                            .ping()?;
                         println!("herdr {}, protocol {}", response.version, response.protocol);
-                        Ok(())
+                        Ok(Outcome::Done)
                     }
                 };
             }
@@ -400,6 +382,19 @@ impl Cli {
                 command: ConfigCommand::Migrate { .. },
             }
         )
+    }
+
+    fn agent_notification_title(&self) -> Option<&'static str> {
+        match &self.command {
+            Command::Agent { command } => Some(match command {
+                AgentCommand::Popup { .. } => "Agent popup failed",
+                AgentCommand::Launch(_) => "Agent launch failed",
+                AgentCommand::Inject(_) => "Agent inject failed",
+                AgentCommand::Restart => "Agent restart failed",
+                AgentCommand::RestartWorker { .. } => "Agent restart failed",
+            }),
+            _ => None,
+        }
     }
 
     fn guard_protocol(&self, client: &dyn HerdrClient) -> Result<()> {
@@ -505,18 +500,83 @@ fn main() -> ExitCode {
         return code;
     }
 
-    match Cli::parse().run() {
-        Ok(()) => ExitCode::SUCCESS,
+    let cli = Cli::parse();
+    let notification_title = cli.agent_notification_title();
+    let client = if cli.uses_herdr() {
+        match SocketClient::new() {
+            Ok(client) => Some(client),
+            Err(error) => {
+                if notification_title.is_none() {
+                    eprintln!("{error:#}");
+                }
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(client) = &client {
+        if let Err(error) = cli.guard_protocol(client) {
+            if notification_title.is_none() {
+                eprintln!("{error:#}");
+            }
+            return ExitCode::FAILURE;
+        }
+    }
+
+    let result = cli.run(client.as_ref().map(|client| client as &dyn HerdrClient));
+    if let (Some(default_title), Some(client)) = (notification_title, &client) {
+        return handle_agent_result(client, default_title, result);
+    }
+
+    match result {
+        Ok(Outcome::Done | Outcome::Cancelled) => ExitCode::SUCCESS,
+        Ok(Outcome::Notice { title, body }) => {
+            if let Some(client) = &client {
+                notify::notify(client, &title, &body);
+            }
+            ExitCode::SUCCESS
+        }
         Err(error) => {
-            // `{error:#}` prints the whole `.context()` chain on one line. Plain
-            // `{error}` shows only the outermost message, which drops the concrete
-            // cause every fatal path is required to report.
             if !error.is::<flows::picker::ProjectPickerNotifiedError>() {
                 eprintln!("{error:#}");
             }
             ExitCode::FAILURE
         }
     }
+}
+
+fn handle_agent_result(
+    client: &dyn HerdrClient,
+    default_title: &str,
+    result: FlowResult,
+) -> ExitCode {
+    match result {
+        Ok(Outcome::Done | Outcome::Cancelled) => ExitCode::SUCCESS,
+        Ok(Outcome::Notice { title, body }) => {
+            notify::notify(client, &title, &body);
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            report_agent_error(client, default_title, &error);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn report_agent_error(client: &dyn HerdrClient, default_title: &str, error: &anyhow::Error) {
+    let metadata = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<FlowError>());
+    let title = metadata.and_then(FlowError::title).unwrap_or(default_title);
+    let chain = metadata
+        .map(FlowError::chain)
+        .unwrap_or_else(|| format!("{error:#}"));
+    let body = metadata
+        .and_then(FlowError::prefix)
+        .map(|prefix| format!("{prefix} {chain}"))
+        .unwrap_or(chain);
+    notify::notify(client, title, &body.replace(['\r', '\n'], " "));
 }
 
 #[cfg(test)]
@@ -586,6 +646,118 @@ mod tests {
                 Cli::try_parse_from(&argv).is_ok(),
                 "failed to parse {argv:?}"
             );
+        }
+    }
+
+    #[test]
+    fn agent_result_reports_notice_error_and_failed_delivery() {
+        let notice = herdr::FakeClient::default();
+        assert_eq!(
+            handle_agent_result(
+                &notice,
+                "unused",
+                Ok(Outcome::Notice {
+                    title: "Restart agent".to_owned(),
+                    body: "No agent pane in this tab to restart.".to_owned(),
+                }),
+            ),
+            ExitCode::SUCCESS
+        );
+        assert_eq!(notice.calls.borrow().len(), 1);
+        assert_eq!(notice.calls.borrow()[0].1["title"], "Restart agent");
+        assert_eq!(
+            notice.calls.borrow()[0].1["body"],
+            "No agent pane in this tab to restart."
+        );
+
+        let failure = herdr::FakeClient::default();
+        failure.queue_error("notification.show", "unavailable", "socket gone");
+        let error = FlowError::prefixed(
+            "Agent tab failed",
+            "The incomplete tab was closed.",
+            anyhow!("pane.split failed: connection refused"),
+        );
+        assert_eq!(
+            handle_agent_result(&failure, "Agent popup failed", Err(error.into())),
+            ExitCode::FAILURE
+        );
+        assert_eq!(failure.calls.borrow().len(), 1);
+        let body = failure.calls.borrow()[0].1["body"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(body.starts_with("The incomplete tab was closed."));
+        assert!(body.contains("pane.split failed: connection refused"));
+        assert!(!body.contains('\n'));
+    }
+
+    #[test]
+    fn agent_cancellation_is_silent() {
+        let client = herdr::FakeClient::default();
+        assert_eq!(
+            handle_agent_result(&client, "Agent popup failed", Ok(Outcome::Cancelled)),
+            ExitCode::SUCCESS
+        );
+        assert!(client.calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn restart_worker_reports_resolve_kill_and_reinject_failures_once() {
+        let clients = [
+            {
+                let client = herdr::FakeClient::default();
+                client.queue_error("pane.get", "unavailable", "resolve failed");
+                client
+            },
+            {
+                let client = herdr::FakeClient::default();
+                client.queue_response(
+                    "pane.get",
+                    serde_json::json!({"pane": {
+                        "pane_id": "p1", "tab_id": "t1", "agent": {}, "label": "review"
+                    }}),
+                );
+                client.queue_response(
+                    "pane.process_info",
+                    serde_json::json!({"process_info": {
+                        "foreground_process_group_id": i32::MAX,
+                        "shell_pid": 1
+                    }}),
+                );
+                client
+            },
+            {
+                let client = herdr::FakeClient::default();
+                client.queue_response(
+                    "pane.get",
+                    serde_json::json!({"pane": {
+                        "pane_id": "p1", "tab_id": "t1", "agent": {}, "label": "review"
+                    }}),
+                );
+                client.queue_response(
+                    "pane.process_info",
+                    serde_json::json!({"process_info": null}),
+                );
+                client.queue_error("pane.send_input", "unavailable", "reinject failed");
+                client
+            },
+        ];
+
+        for client in clients {
+            let result = flows::restart::restart_worker(&client, "p1");
+            assert_eq!(
+                handle_agent_result(&client, "Agent restart failed", result),
+                ExitCode::FAILURE
+            );
+            let calls = client.calls.borrow();
+            let notifications = calls
+                .iter()
+                .filter(|call| call.0 == "notification.show")
+                .collect::<Vec<_>>();
+            assert_eq!(notifications.len(), 1);
+            let body = notifications[0].1["body"].as_str().unwrap();
+            assert!(!body.is_empty());
+            assert_ne!(body, "error");
         }
     }
 

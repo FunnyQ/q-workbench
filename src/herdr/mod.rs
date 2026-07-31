@@ -6,6 +6,7 @@ use std::env;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::{error, fmt};
 
 use anyhow::{anyhow, Context, Result};
 use serde::de::DeserializeOwned;
@@ -16,6 +17,46 @@ use self::types::{
     PaneProcessInfoResponse, PaneResponse, PingResponse, Request, SessionSnapshotResponse,
     TabCreateResponse, WorkspaceCreateResponse, WorkspaceListResponse,
 };
+
+pub const EXPECTED_PROTOCOL: u64 = 17;
+
+#[derive(Debug)]
+pub enum ProtocolGuardError {
+    Connection(anyhow::Error),
+    Mismatch { expected: u64, actual: u64 },
+}
+
+impl fmt::Display for ProtocolGuardError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Connection(error) => write!(formatter, "failed to ping Herdr: {error:#}"),
+            Self::Mismatch { expected, actual } => write!(
+                formatter,
+                "Herdr protocol mismatch: expected {expected}, received {actual}"
+            ),
+        }
+    }
+}
+
+impl error::Error for ProtocolGuardError {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        match self {
+            Self::Connection(error) => Some(error.as_ref()),
+            Self::Mismatch { .. } => None,
+        }
+    }
+}
+
+pub fn check_protocol(client: &dyn HerdrClient) -> Result<(), ProtocolGuardError> {
+    let response = client.ping().map_err(ProtocolGuardError::Connection)?;
+    if response.protocol != EXPECTED_PROTOCOL {
+        return Err(ProtocolGuardError::Mismatch {
+            expected: EXPECTED_PROTOCOL,
+            actual: response.protocol,
+        });
+    }
+    Ok(())
+}
 
 pub trait HerdrClient {
     fn call(&self, method: &str, params: Value) -> Result<Value>;
@@ -250,5 +291,58 @@ mod tests {
         let error = client.call("tab.focus", json!({})).unwrap_err().to_string();
         assert!(error.contains("not_found"));
         assert!(error.contains("missing tab"));
+    }
+
+    #[test]
+    fn protocol_guard_only_pings_when_protocol_matches() {
+        let client = FakeClient::default();
+        client.queue_response(
+            "ping",
+            json!({
+                "type": "ping",
+                "version": "1.0.0",
+                "protocol": EXPECTED_PROTOCOL,
+            }),
+        );
+
+        check_protocol(&client).unwrap();
+
+        assert_eq!(
+            client.calls.into_inner(),
+            vec![("ping".to_owned(), json!({}))]
+        );
+    }
+
+    #[test]
+    fn protocol_guard_reports_both_protocols_on_mismatch() {
+        let client = FakeClient::default();
+        client.queue_response(
+            "ping",
+            json!({"type": "ping", "version": "2.0.0", "protocol": 18}),
+        );
+
+        let error = check_protocol(&client).unwrap_err();
+
+        assert!(matches!(
+            error,
+            ProtocolGuardError::Mismatch {
+                expected: 17,
+                actual: 18,
+            }
+        ));
+        assert!(error.to_string().contains("17"));
+        assert!(error.to_string().contains("18"));
+    }
+
+    #[test]
+    fn protocol_guard_reports_ping_failures_as_connection_errors() {
+        let client = FakeClient::default();
+        client.queue_error("ping", "unavailable", "socket unavailable");
+
+        let error = check_protocol(&client).unwrap_err();
+
+        assert!(matches!(error, ProtocolGuardError::Connection(_)));
+        assert!(error.to_string().contains("failed to ping Herdr"));
+        assert!(error.to_string().contains("socket unavailable"));
     }
 }

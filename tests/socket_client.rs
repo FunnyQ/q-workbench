@@ -1,7 +1,3 @@
-#[path = "../src/herdr/mod.rs"]
-#[allow(dead_code)]
-mod herdr;
-
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
@@ -11,7 +7,7 @@ use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use herdr::{HerdrClient, SocketClient};
+use workbench::herdr::{HerdrClient, SocketClient};
 use serde_json::json;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());

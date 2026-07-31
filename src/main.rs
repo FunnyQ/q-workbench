@@ -5,21 +5,12 @@ use std::process::ExitCode;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 
-#[allow(dead_code)]
-mod config;
-#[allow(dead_code)]
-mod flows;
-#[allow(dead_code)]
-mod herdr;
-#[allow(dead_code)]
-mod notify;
-mod registry;
-#[allow(dead_code)]
-mod shell;
-mod state;
-
-use flows::{FlowError, FlowResult, Outcome};
-use herdr::{check_protocol, HerdrClient, ProtocolGuardError, SocketClient};
+// The binary is a thin shell over the library target: declaring the modules here too
+// would compile every one of them a second time and force a blanket dead-code allow,
+// because each copy sees only the callers in its own target.
+use workbench::flows::{FlowError, FlowResult, Outcome};
+use workbench::herdr::{check_protocol, HerdrClient, ProtocolGuardError, SocketClient};
+use workbench::{config, flows, notify, registry};
 
 /// Routes failures either to a durable terminal or to a popup notification.
 /// The route also records whether the command needs Herdr, so setup cannot drift.
@@ -390,11 +381,11 @@ impl Cli {
                         return Ok(Outcome::Done);
                     }
                     SshCommand::Session { target, tab_id } => {
-                        let config = config::Config::load()?;
+                        // The zsh session script appended to `$HOME/.zsh_history`
+                        // literally, not to `$Q_SSH_HISTORY_FILE`; parity keeps that.
                         let home = std::env::var_os("HOME")
                             .map(PathBuf::from)
                             .context("HOME is required")?;
-                        let registry = Path::new(&config.ssh_registry_file);
                         let history_file = home.join(".zsh_history");
                         let client =
                             client.context("Herdr client is required for an SSH session")?;
@@ -402,6 +393,7 @@ impl Cli {
                             &target,
                             &tab_id,
                             registry,
+                            ssh_config,
                             &history_file,
                             client,
                         );
@@ -610,11 +602,10 @@ fn main() -> ExitCode {
 
     let result = cli.run(client.as_ref().map(|client| client as &dyn HerdrClient));
     if matches!(channel, Channel::Notification(_)) {
+        // No second connect attempt: `Channel::Notification` implies `uses_herdr`, so a
+        // client was either built above or the run already returned FAILURE.
         if let (Some(default_title), Some(client)) = (notification_title, &client) {
             return handle_flow_result(client, default_title, result);
-        }
-        if let (Some(default_title), Ok(client)) = (notification_title, SocketClient::new()) {
-            return handle_flow_result(&client, default_title, result);
         }
     }
 
@@ -710,6 +701,7 @@ fn notification_body(metadata: Option<&FlowError>, error: &anyhow::Error) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use workbench::herdr;
 
     #[test]
     fn every_leaf_parses_with_all_supported_arguments() {

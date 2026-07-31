@@ -7,7 +7,7 @@
 >
 > **Depends on**: agent/03
 > **Blocks**: polish/02, polish/06
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -102,33 +102,33 @@ codes: "no agent pane in this tab" exits 0, "could not focus" exits 1.
 
 ## Acceptance criteria
 
-- [ ] The confirm popup uses the parity contract's exact banner, `--affirmative
+- [x] The confirm popup uses the parity contract's exact banner, `--affirmative
       "Restart"`, `--negative "Cancel"`, and the four colour flags with the same values;
       rejecting exits 0 with no side effect.
-- [ ] `agent restart-worker --pane <id>` exists as a hidden subcommand and receives the
+- [x] `agent restart-worker --pane <id>` exists as a hidden subcommand and receives the
       pane id as an argument rather than re-reading the plugin context.
-- [ ] The worker is spawned with `setsid()` in `pre_exec` and all three streams
+- [x] The worker is spawned with `setsid()` in `pre_exec` and all three streams
       redirected to `/dev/null`; `agent restart` exits immediately after spawning it.
-- [ ] The target pane is the focused pane when it has an agent, otherwise the first
+- [x] The target pane is the focused pane when it has an agent, otherwise the first
       agent pane in the same tab.
-- [ ] No agent pane in the tab → notify and exit 0. No matching neighbour direction →
+- [x] No agent pane in the tab → notify and exit 0. No matching neighbour direction →
       notify and exit 1. Both message strings preserved.
-- [ ] The kill guard holds: only when the foreground process group is present,
+- [x] The kill guard holds: only when the foreground process group is present,
       non-zero, and different from the shell pid.
-- [ ] TERM, then up to 50 polls at 100 ms, then KILL, then a 300 ms settle.
-- [ ] The injected command carries the unquoted `stty sane; printf …;` prefix followed
+- [x] TERM, then up to 50 polls at 100 ms, then KILL, then a 300 ms settle.
+- [x] The injected command carries the unquoted `stty sane; printf …;` prefix followed
       by the quoted launcher invocation.
-- [ ] Re-injection passes no tab id, the current label as fixed usage, no worktree,
+- [x] Re-injection passes no tab id, the current label as fixed usage, no worktree,
       layout skipped, and the hidden `--restart` flag.
-- [ ] The pane survives: after restart, the yazi and term panes are still present.
+- [x] The pane survives: after restart, the yazi and term panes are still present.
 
 ## Verification
 
-- [ ] `cargo test` — with `FakeClient`, assert target resolution for both cases and
+- [x] `cargo test` — with `FakeClient`, assert target resolution for both cases and
       both failure paths, including exit codes and message strings
-- [ ] `cargo test` — assert the injected command string: prefix literal, launcher path
+- [x] `cargo test` — assert the injected command string: prefix literal, launcher path
       and arguments quoted, `keys: ["enter"]`
-- [ ] **Live test in a scratch tab** — this is the critical one, and what the `exec`
+- [x] **Live test in a scratch tab** — this is the critical one, and what the `exec`
       semantics exist for:
       1. build an agent tab in a scratch tab, let the harness start
       2. run `agent restart` against it
@@ -137,13 +137,13 @@ codes: "no agent pane in this tab" exits 0, "could not focus" exits 1.
       4. repeat with codex specifically, and confirm arrow keys work in the new menus
          (this is what the Kitty reset is for)
       5. close the scratch tab
-- [ ] `cargo test` — an automated survival test: spawn the worker entry point with a
+- [x] `cargo test` — an automated survival test: spawn the worker entry point with a
       long-running stand-in for its body, send `SIGTERM` to the **parent's** process
       group, then assert the worker is still alive and its session id differs from the
       parent's (`getsid`)
-- [ ] Manual: confirm the worker survives the real restart — it must not die with the
+- [x] Manual: confirm the worker survives the real restart — it must not die with the
       pane's foreground group or when the popup closes
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

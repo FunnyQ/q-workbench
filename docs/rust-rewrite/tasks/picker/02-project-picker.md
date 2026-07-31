@@ -7,7 +7,7 @@
 >
 > **Depends on**: picker/01, agent/03
 > **Blocks**: polish/03
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -72,18 +72,18 @@ tab is built and the registry is still stamped.
 
 ## Acceptance criteria
 
-- [ ] The fzf invocation matches the parity contract: every flag, the prompt, the
+- [x] The fzf invocation matches the parity contract: every flag, the prompt, the
       pointer, the border label, and all three bindings.
-- [ ] Bindings are built from the running executable's own path, shell-quoted.
-- [ ] Cancelling fzf exits 0 with no side effect.
-- [ ] A query with no selection falls back to a directory, then to zoxide; failing
+- [x] Bindings are built from the running executable's own path, shell-quoted.
+- [x] Cancelling fzf exits 0 with no side effect.
+- [x] A query with no selection falls back to a directory, then to zoxide; failing
       both, it reports and exits non-zero.
-- [ ] An existing workspace is focused; no tab is built; the registry is still stamped.
-- [ ] A new workspace gets the agent tab on enter and stays plain on alt-enter.
-- [ ] The workspace, tab and root-pane ids all come from the single `workspace.create`
+- [x] An existing workspace is focused; no tab is built; the registry is still stamped.
+- [x] A new workspace gets the agent tab on enter and stays plain on alt-enter.
+- [x] The workspace, tab and root-pane ids all come from the single `workspace.create`
       response; no follow-up lookup call is made to find them.
-- [ ] The new tab is renamed to the pinned main label before the launcher is injected.
-- [ ] A missing registry notifies with title `Project picker` and body
+- [x] The new tab is renamed to the pinned main label before the launcher is injected.
+- [x] A missing registry notifies with title `Project picker` and body
       `project picker: registry not found: <path>`, then exits 1; a query resolving to
       nothing notifies with body `project picker: project not found: <query or path>`
       and exits 1. Both are notifications, not stderr: this runs inside a popup pane,
@@ -91,18 +91,18 @@ tab is built and the registry is still stamped.
 
 ## Verification
 
-- [ ] `cargo test` — result parsing for all four combinations of query present/absent
+- [x] `cargo test` — result parsing for all four combinations of query present/absent
       and key pressed/not
-- [ ] `cargo test` — binding strings contain the current executable path, correctly
+- [x] `cargo test` — binding strings contain the current executable path, correctly
       quoted for a path containing a space
-- [ ] `cargo test` — with `FakeClient`: existing-workspace path issues only
+- [x] `cargo test` — with `FakeClient`: existing-workspace path issues only
       `session.snapshot` and `workspace.focus`; new-workspace enter path issues
       `workspace.create`, `tab.rename`, the inject calls, then `workspace.focus`
-- [ ] `cargo test` — alt-enter on a new workspace issues no rename and no inject
-- [ ] Manual through the linked dev plugin: pick an existing project, pick an
+- [x] `cargo test` — alt-enter on a new workspace issues no rename and no inject
+- [x] Manual through the linked dev plugin: pick an existing project, pick an
       unregistered directory via zoxide, and use `ctrl-i` to edit an entry — confirm
       fzf redraws cleanly after the editor exits
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

@@ -550,6 +550,44 @@ mod tests {
     }
 
     #[test]
+    fn focus_walk_tries_every_direction_until_one_matches() {
+        let client = FakeClient::default();
+        // No neighbour left, a different pane right, none up, the target below. A
+        // non-matching neighbour must not end the walk.
+        client.queue_response("pane.neighbor", json!({}));
+        client.queue_response(
+            "pane.neighbor",
+            json!({"neighbor": {"neighbor_pane_id": "p9"}}),
+        );
+        client.queue_response("pane.neighbor", json!({}));
+        client.queue_response(
+            "pane.neighbor",
+            json!({"neighbor": {"neighbor_pane_id": "p2"}}),
+        );
+        client.queue_response("pane.focus_direction", json!({"type": "ok"}));
+
+        assert!(focus_target(&client, "p1", "p2").unwrap());
+        assert_eq!(
+            client
+                .calls
+                .borrow()
+                .iter()
+                .map(|(method, params)| (
+                    method.as_str(),
+                    params["direction"].as_str().expect("a direction")
+                ))
+                .collect::<Vec<_>>(),
+            [
+                ("pane.neighbor", "left"),
+                ("pane.neighbor", "right"),
+                ("pane.neighbor", "up"),
+                ("pane.neighbor", "down"),
+                ("pane.focus_direction", "down"),
+            ]
+        );
+    }
+
+    #[test]
     fn process_info_uses_the_nested_response_shape() {
         let response: crate::herdr::types::PaneProcessInfoResponse =
             serde_json::from_value(json!({

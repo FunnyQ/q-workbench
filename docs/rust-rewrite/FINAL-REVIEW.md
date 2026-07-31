@@ -83,7 +83,7 @@ table has **64** rows.
 | MSG-6 | holds | Verified live: a failing `project source` produced zero bytes on both channels. |
 | RST-1 | holds | Banner, labels and four colour flags pinned by the restart confirm tests. |
 | RST-2 | holds | `target_is_focused_agent_or_first_agent_in_tab`. |
-| RST-3 | holds | `focus_walk_uses_nested_neighbor_and_directional_focus` walks `left right up down`. |
+| RST-3 | holds | `focus_walk_tries_every_direction_until_one_matches` asserts the full `left right up down` order, including that a non-matching neighbour does not end the walk. `focus_walk_uses_nested_neighbor_and_directional_focus` covers the immediate `left` hit and the nested response shape. |
 | RST-4 | holds | Kill guard requires a present, non-zero pgid distinct from the shell pid. |
 | RST-5 | holds | TERM, 50 polls at 100 ms, KILL, 300 ms settle. |
 | RST-6 | holds | `TTY_RESET` is a literal unquoted prefix; `restart_command_keeps_reset_unquoted_and_quotes_launcher_arguments`. |
@@ -246,7 +246,7 @@ $ for t in tests/*.test.zsh; do zsh "$t"; done → all pass
 
 | id | Lens | What was wrong | Fix |
 |---|---|---|---|
-| F-1 | cross-vendor (codex) | `flows/ssh.rs` sent `tab.close` as `{"id": tab_id}`. Protocol 17 requires `tab_id`; the request was rejected and the error swallowed by design, so **every SSH tab stayed open after disconnect** (SSH-3). | Send `{"tab_id": …}`. Confirmed against live Herdr 0.7.5: `{"id"}` returns `missing field tab_id`, `{"tab_id"}` returns `ok`. Both call-site tests updated. |
+| F-1 | cross-vendor (codex) | `flows/ssh.rs` sent `tab.close` as `{"id": tab_id}`. Protocol 17 requires `tab_id`; the request was rejected and the error swallowed by design, so **every SSH tab stayed open after disconnect** (SSH-3). | Send `{"tab_id": …}`. Confirmed against live Herdr 0.7.5: `{"id"}` returns `missing field tab_id`, `{"tab_id"}` returns `ok`. All three call sites (`flows/agent.rs`, `flows/picker.rs`, `flows/ssh.rs`) send `tab_id`, and each has a test asserting the parameter, not just the method name. |
 | F-2 | cross-vendor (codex) | The clean-exit stamp called `use_target(registry, /dev/null, history, target)`. `use_target` opens with a reconciling `sync`, and an empty config means **every `source: "config"` target was deleted from the registry** on each successful SSH session (SSH-4, RGS-2). | Thread the real `ssh_config_file` through `session`. `zero_exit_closes_tab_and_stamps_registry` now writes a real config, and asserts the config-sourced entry and its hostname survive the stamp. |
 | F-3 | integration (found in this review) | On a machine that ran the zsh version, `Q_WORKBENCH_LOCAL_CONFIG` is still exported pointing at `config.zsh`. It overrides the resolved TOML path, so **every subcommand died** with a TOML syntax error on `typeset -gA`. Reproduced on Q's own machine. | `Config::load` refuses a `.zsh` path with a message naming `workbench config migrate --write` and the stale variable. New test; README section added. Still needs Q to act — K-1. |
 | F-4 | simplification | `state.rs` shelled out to `mktemp` for every agent-state write, a third atomic-write implementation. | Reuse `registry::project::write_json_atomically`; the subprocess is gone. |

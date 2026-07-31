@@ -960,14 +960,19 @@ mod tests {
         connect_ssh_target("host", Path::new("/bin/workbench"), &client)
             .expect_err("reject send failure");
 
+        let calls = client.calls.into_inner();
         assert_eq!(
-            client
-                .calls
-                .into_inner()
-                .into_iter()
-                .map(|(method, _)| method)
+            calls
+                .iter()
+                .map(|(method, _)| method.as_str())
                 .collect::<Vec<_>>(),
             ["tab.create", "pane.send_input", "tab.close"]
+        );
+        // Protocol 17 rejects `id`, and the close error is swallowed by design, so a
+        // regression here would leave every tab open in silence.
+        assert_eq!(
+            calls.last().expect("a close call").1,
+            json!({"tab_id": "t-ssh"})
         );
     }
 
@@ -980,14 +985,17 @@ mod tests {
         connect_ssh_target("host", Path::new("/bin/workbench"), &client)
             .expect_err("reject focus failure");
 
+        let calls = client.calls.into_inner();
         assert_eq!(
-            client
-                .calls
-                .into_inner()
-                .into_iter()
-                .map(|(method, _)| method)
+            calls
+                .iter()
+                .map(|(method, _)| method.as_str())
                 .collect::<Vec<_>>(),
             ["tab.create", "pane.send_input", "tab.focus", "tab.close"]
+        );
+        assert_eq!(
+            calls.last().expect("a close call").1,
+            json!({"tab_id": "t-ssh"})
         );
     }
 

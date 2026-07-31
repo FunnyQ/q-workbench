@@ -15,3 +15,12 @@ toml       = "0.8"
 anyhow     = "1"
 libc       = "0.2"
 time       = { version = "0.3", features = ["formatting"] }
+
+# `project source` runs once per keystroke in the picker, so process startup is the
+# dominant cost. A single fat-LTO codegen unit with symbols stripped keeps the binary
+# small enough that dyld has little to map before `main` runs.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true

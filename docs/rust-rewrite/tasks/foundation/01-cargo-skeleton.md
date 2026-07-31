@@ -5,7 +5,7 @@
 >
 > **Depends on**: none — foundation task
 > **Blocks**: foundation/02, foundation/03, foundation/06, registry/01, registry/04, agent/01
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -98,32 +98,32 @@ around.
 
 ## Acceptance criteria
 
-- [ ] `cargo build --release` succeeds with no warnings.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] `workbench --help` lists the `agent`, `project`, `ssh`, `dashboard`, `config`
+- [x] `cargo build --release` succeeds with no warnings.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] `workbench --help` lists the `agent`, `project`, `ssh`, `dashboard`, `config`
       and `herdr` groups.
-- [ ] Every leaf subcommand in the shared context's surface parses, including every
+- [x] Every leaf subcommand in the shared context's surface parses, including every
       flag listed there; an unknown one fails with a clap error, not a panic.
-- [ ] `zsh scripts/build.zsh` produces `bin/workbench` and prints its size.
-- [ ] `target/` is gitignored; `bin/workbench` is not.
-- [ ] Measured per-invocation cost and binary size are recorded.
+- [x] `zsh scripts/build.zsh` produces `bin/workbench` and prints its size.
+- [x] `target/` is gitignored; `bin/workbench` is not.
+- [x] Measured per-invocation cost and binary size are recorded.
 
 ## Verification
 
-- [ ] `cargo build --release && cargo clippy -- -D warnings`
-- [ ] `zsh scripts/build.zsh && ./bin/workbench --help`
-- [ ] `cargo test` — a **table-driven parse test** with one row per leaf in the shared
+- [x] `cargo build --release && cargo clippy -- -D warnings`
+- [x] `zsh scripts/build.zsh && ./bin/workbench --help`
+- [x] `cargo test` — a **table-driven parse test** with one row per leaf in the shared
       context's surface, each row an argv vector exercising that leaf with all of its
       flags set. Every row must parse. Add rows for an unknown subcommand, an unknown
       flag on a known leaf, and a missing required positional; each must produce a clap
       error rather than a panic. `--help` alone does not verify nested leaves, so this
       table is the criterion's only real check.
-- [ ] `./bin/workbench agent launch w1:p1 --usage test` prints
+- [x] `./bin/workbench agent launch w1:p1 --usage test` prints
       `unimplemented: agent launch` to stderr and exits 1
-- [ ] `./bin/workbench ssh edit` (no target) parses rather than failing with a clap
+- [x] `./bin/workbench ssh edit` (no target) parses rather than failing with a clap
       missing-argument error
-- [ ] `time (repeat 50 ./bin/workbench --version >/dev/null)` — record the per-call figure
-- [ ] `git status --short` shows `bin/workbench` as an added file and no `target/` entries
+- [x] `time (repeat 50 ./bin/workbench --version >/dev/null)` — record the per-call figure
+- [x] `git status --short` shows `bin/workbench` as an added file and no `target/` entries
 
 ## Eval rubric
 

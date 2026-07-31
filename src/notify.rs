@@ -12,11 +12,6 @@ pub fn notify(client: &dyn HerdrClient, title: &str, body: &str) {
     }));
 }
 
-pub fn notify_and_exit(client: &dyn HerdrClient, title: &str, body: &str) -> ! {
-    notify(client, title, body);
-    std::process::exit(1);
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;

@@ -114,32 +114,3 @@ fn a_missing_zoxide_binary_is_not_an_error() {
     assert_eq!(output.stderr, Vec::<u8>::new());
     fs::remove_dir_all(&directory).expect("remove temporary directory");
 }
-
-/// Byte parity with the script being replaced, NULs included. The zsh source is
-/// deleted at cutover, so the test skips itself once it is gone rather than failing.
-#[test]
-fn matches_the_zsh_source_script_byte_for_byte() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/project-picker-source.zsh");
-    if !script.exists() {
-        return;
-    }
-
-    let directory = temporary_directory();
-    let home = directory.join("home");
-    let registry = write_fixture_registry(&directory, &home);
-
-    // `/dev/null` is how the zsh suite opts out of the developer's own config file.
-    let zsh = Command::new("zsh")
-        .arg(&script)
-        .env("HOME", &home)
-        .env("Q_WORKBENCH_LOCAL_CONFIG", "/dev/null")
-        .env("Q_PROJECT_REGISTRY_FILE", &registry)
-        .output()
-        .expect("run the zsh source script");
-    let rust = run(&registry, &home, None);
-
-    assert!(zsh.status.success());
-    assert!(rust.status.success());
-    assert_eq!(rust.stdout, zsh.stdout);
-    fs::remove_dir_all(&directory).expect("remove temporary directory");
-}

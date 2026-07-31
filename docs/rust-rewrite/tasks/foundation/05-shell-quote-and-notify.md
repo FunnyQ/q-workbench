@@ -6,7 +6,7 @@
 >
 > **Depends on**: foundation/02
 > **Blocks**: picker/05, agent/02, agent/03, agent/05, polish/01
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -71,22 +71,22 @@ call sites stay one line.
 
 ## Acceptance criteria
 
-- [ ] `shell_quote` produces a string a POSIX shell reads back as one literal argument
+- [x] `shell_quote` produces a string a POSIX shell reads back as one literal argument
       for: spaces, single quotes, double quotes, `$`, backticks, `\`, `*`, `?`, `~`,
       newlines, and the empty string.
-- [ ] `shell_quote("")` returns `''`.
-- [ ] `build_command` joins quoted parts with single spaces.
-- [ ] `notify` sends `notification.show` and never propagates its own failure.
-- [ ] Neither helper writes to stdout or stderr.
+- [x] `shell_quote("")` returns `''`.
+- [x] `build_command` joins quoted parts with single spaces.
+- [x] `notify` sends `notification.show` and never propagates its own failure.
+- [x] Neither helper writes to stdout or stderr.
 
 ## Verification
 
-- [ ] `cargo test` — a table-driven test over every character class listed above
-- [ ] `cargo test` — a round-trip test that runs `zsh -c "printf '%s' <quoted>"` and
+- [x] `cargo test` — a table-driven test over every character class listed above
+- [x] `cargo test` — a round-trip test that runs `zsh -c "printf '%s' <quoted>"` and
       asserts the output equals the original string, for each case
-- [ ] `cargo test` — `notify` against `FakeClient` records one `notification.show`
+- [x] `cargo test` — `notify` against `FakeClient` records one `notification.show`
       call with the expected params, and a failing fake still returns without panicking
-- [ ] Live smoke test in a scratch tab: send a command containing a space, a single
+- [x] Live smoke test in a scratch tab: send a command containing a space, a single
       quote and a `$` through `pane.send_input`, and confirm the pane received it
       literally. Close the tab afterwards.
 

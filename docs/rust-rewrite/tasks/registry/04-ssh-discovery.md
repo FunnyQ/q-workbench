@@ -6,7 +6,7 @@
 >
 > **Depends on**: foundation/03
 > **Blocks**: registry/05
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -74,33 +74,33 @@ pub fn history_targets(history: &Path) -> Vec<String>
 
 ## Acceptance criteria
 
-- [ ] `Host` lines are matched case-insensitively; aliases containing `*`, `!` or `?`
+- [x] `Host` lines are matched case-insensitively; aliases containing `*`, `!` or `?`
       are excluded, and a group left with none is skipped.
-- [ ] Groups are deduplicated and sorted; the first alias is the key and the full group
+- [x] Groups are deduplicated and sorted; the first alias is the key and the full group
       is kept in file order.
-- [ ] `hostname` and `user` come from the first matching line of `ssh -G` output.
-- [ ] The `ssh -G` invocation sits behind an injectable runner, so config parsing is
+- [x] `hostname` and `user` come from the first matching line of `ssh -G` output.
+- [x] The `ssh -G` invocation sits behind an injectable runner, so config parsing is
       testable without a real `ssh` binary.
-- [ ] An alias `ssh -G` cannot resolve is skipped, not fatal.
-- [ ] History parsing handles the `TERM=…` prefix, flags before the target, and
+- [x] An alias `ssh -G` cannot resolve is skipped, not fatal.
+- [x] History parsing handles the `TERM=…` prefix, flags before the target, and
       duplicates, keeping the most recent and rejecting targets outside the character
       class.
-- [ ] A missing config or history file yields an empty list, not an error.
+- [x] A missing config or history file yields an empty list, not an error.
 
 ## Verification
 
-- [ ] `cargo test` — a fixture SSH config with a `Host *` block, a multi-alias group, a
+- [x] `cargo test` — a fixture SSH config with a `Host *` block, a multi-alias group, a
       `Host !prod` negation, and a group of only wildcards; assert exactly which groups
       survive and in what order
-- [ ] `cargo test` — `ssh -G` output containing a repeated `hostname` key yields the
+- [x] `cargo test` — `ssh -G` output containing a repeated `hostname` key yields the
       first value
-- [ ] `cargo test` — with a stubbed runner (no real `ssh` involved), an alias whose
+- [x] `cargo test` — with a stubbed runner (no real `ssh` involved), an alias whose
       resolution exits non-zero is skipped and the others survive
-- [ ] `cargo test` — a fixture history file with a `TERM=…` prefix, `ssh -p 22 host`,
+- [x] `cargo test` — a fixture history file with a `TERM=…` prefix, `ssh -p 22 host`,
       duplicates at different timestamps, and one target containing a space; assert the
       order and the rejections
-- [ ] `cargo test` — both functions return empty for a missing file
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo test` — both functions return empty for a missing file
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

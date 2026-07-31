@@ -6,7 +6,7 @@
 >
 > **Depends on**: foundation/03
 > **Blocks**: cutover/01
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -82,41 +82,41 @@ silently pin a value that should track future changes.
 
 ## Acceptance criteria
 
-- [ ] `workbench config migrate` reads the default `config.zsh` path and prints TOML
+- [x] `workbench config migrate` reads the default `config.zsh` path and prints TOML
       to stdout.
-- [ ] `--from <path>` overrides the source; a missing source is a clear error.
-- [ ] `--write` writes to the resolved `config.toml` path and refuses to overwrite
+- [x] `--from <path>` overrides the source; a missing source is a clear error.
+- [x] `--write` writes to the resolved `config.toml` path and refuses to overwrite
       without `--force`.
-- [ ] Model labels containing spaces and parentheses survive as quoted TOML keys.
-- [ ] Extra-args strings become arrays split on whitespace.
-- [ ] Settings absent from the source are omitted, not defaulted — including a setting
+- [x] Model labels containing spaces and parentheses survive as quoted TOML keys.
+- [x] Extra-args strings become arrays split on whitespace.
+- [x] Settings absent from the source are omitted, not defaulted — including a setting
       whose value happens to equal the built-in default.
-- [ ] Migration parses into an all-`Option` partial type, never into the loader's
+- [x] Migration parses into an all-`Option` partial type, never into the loader's
       resolved config struct.
-- [ ] The child shell unsets every migrated setting before sourcing, so a value
+- [x] The child shell unsets every migrated setting before sourcing, so a value
       inherited from the environment is never mistaken for one the file set.
-- [ ] The command's help text states that the source file is executed by zsh.
+- [x] The command's help text states that the source file is executed by zsh.
 
 ## Verification
 
-- [ ] `cargo test` — a fixture `config.zsh` covering all scalars, both maps, the order
+- [x] `cargo test` — a fixture `config.zsh` covering all scalars, both maps, the order
       array, a multi-flag extra-args string, one omitted setting, and one setting
       explicitly assigned its own default value, round-trips through migrate and then
       through the config loader to the expected values
-- [ ] `cargo test` — the emitted TOML contains a key for the explicitly-set default and
+- [x] `cargo test` — the emitted TOML contains a key for the explicitly-set default and
       no key for the omitted setting
-- [ ] `cargo test` — with a setting **exported in the migrator's own environment** but
+- [x] `cargo test` — with a setting **exported in the migrator's own environment** but
       absent from the source file, the emitted TOML contains no key for it
-- [ ] Commit a **sanitised fixture** at `tests/fixtures/config.zsh` — modelled on Q's
+- [x] Commit a **sanitised fixture** at `tests/fixtures/config.zsh` — modelled on Q's
       real 4.1 KB file but with no machine-specific paths — together with the expected
       resolved values, and make that the authoritative acceptance test. It must pass on
       any machine, with no file outside the repo.
-- [ ] Optional smoke test, when the file happens to exist: run against
+- [x] Optional smoke test, when the file happens to exist: run against
       `~/.config/herdr/plugins/config/q.workbench/config.zsh` and compare the loaded
       values field by field against sourcing the original in zsh. Skip cleanly when it
       is absent — do not fail
-- [ ] `--write` twice: the second run refuses; with `--force` it succeeds
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `--write` twice: the second run refuses; with `--force` it succeeds
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

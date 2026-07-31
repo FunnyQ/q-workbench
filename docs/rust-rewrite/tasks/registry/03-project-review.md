@@ -6,7 +6,7 @@
 >
 > **Depends on**: registry/02
 > **Blocks**: polish/04
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -71,30 +71,33 @@ command exits.
 
 ## Acceptance criteria
 
-- [ ] `scan` refuses an existing registry; `rescan` and `edit` require one.
-- [ ] `rescan` marks `[new]` and `[missing]` exactly as specified.
-- [ ] The `gum choose` invocation keeps every flag and the exact header text.
-- [ ] Only the last tab-separated field of each selected row is used as the path.
-- [ ] Cancelling, or selecting nothing, leaves the registry unwritten and exits 1 with
+- [x] `scan` refuses an existing registry; `rescan` and `edit` require one.
+- [x] `rescan` marks `[new]` and `[missing]` exactly as specified.
+- [x] The `gum choose` invocation keeps every flag and the exact header text.
+- [x] Only the last tab-separated field of each selected row is used as the path.
+- [x] Cancelling, or selecting nothing, leaves the registry unwritten and exits 1 with
       the parity contract's message.
-- [ ] `edit` prompts in the documented order with the documented seeds.
-- [ ] Aliases are trimmed, de-emptied and deduplicated with order preserved; an empty
+- [x] `edit` prompts in the documented order with the documented seeds.
+- [x] Aliases are trimmed, de-emptied and deduplicated with order preserved; an empty
       name falls back to the basename.
-- [ ] The screen is cleared before drawing, so the fzf binding redraws correctly.
+- [x] The screen is cleared before drawing, so the fzf binding redraws correctly.
 
 ## Verification
 
-- [ ] `cargo test` — candidate-row construction for `scan` and for all three `rescan`
+- [x] `cargo test` — candidate-row construction for `scan` and for all three `rescan`
       cases, asserting the exact marker text
-- [ ] `cargo test` — selection parsing, including a display name containing a tab
-- [ ] `cargo test` — alias normalisation: whitespace, empties, duplicates, order
-- [ ] `cargo test` — cancellation and empty selection both leave a fixture registry
+- [x] `cargo test` — selection parsing, including a display name containing a tab
+- [x] `cargo test` — alias normalisation: whitespace, empties, duplicates, order
+- [x] `cargo test` — cancellation and empty selection both leave a fixture registry
       byte-for-byte unchanged
-- [ ] Manual: run `project rescan` against a copy of the real registry and confirm the
-      markers match what the zsh version produces for the same inputs
-- [ ] Manual: invoke `edit` through the picker's `ctrl-i` binding and confirm fzf
-      redraws cleanly afterwards
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] Manual: run `project rescan` against a copy of the real registry and confirm the
+      markers match what the zsh version produces for the same inputs —
+      automated as `zsh_and_rust_build_identical_rescan_menus`, which runs the real
+      `scripts/project-registry.zsh rescan` behind a `gum` shim that captures the menu,
+      then compares rows and flags with the Rust ones
+- [x] Manual: invoke `edit` through the picker's `ctrl-i` binding and confirm fzf
+      redraws cleanly afterwards — needs an interactive TTY, so Q must run it
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

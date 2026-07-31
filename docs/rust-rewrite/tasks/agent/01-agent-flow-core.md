@@ -6,7 +6,7 @@
 >
 > **Depends on**: foundation/03
 > **Blocks**: agent/02, agent/03
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -62,8 +62,16 @@ fallback behaviour.
 
 ### Rendering
 
-Menus shell out to `gum`. `Command::output()` captures the selection from stdout while
-`gum` draws on the TTY; a non-zero exit means cancelled.
+Menus shell out to `gum`. Capture the selection from stdout; a non-zero exit means
+cancelled.
+
+**`gum` draws its UI on stderr, not on the TTY, whenever stdout is not a terminal** —
+which is always the case here, since we capture the selection. So stderr must be
+inherited or the menu renders nowhere and the user chooses blind. A bare
+`Command::output()` pipes *both* streams and breaks this; set
+`.stderr(Stdio::inherit())` explicitly. Verified under a pty: with both streams piped
+the terminal received 0 bytes of the `gum choose` frame; with stderr inherited it
+received all of it.
 
 The centering machinery must survive: a banner drawn with `gum style --border rounded
 --padding '1 3' --width <w>`, then each of its lines printed at a computed left
@@ -130,43 +138,43 @@ is what keeps parallel worktree tabs distinguishable.
 
 ## Acceptance criteria
 
-- [ ] The flow runs worktree (optional) → harness → model (claude only) → usage and
+- [x] The flow runs worktree (optional) → harness → model (claude only) → usage and
       returns one `AgentChoice`.
-- [ ] Cancelling at any menu returns "no choice" with no side effect and no
+- [x] Cancelling at any menu returns "no choice" with no side effect and no
       notification — specifically, **no worktree directory or branch is created**.
-- [ ] The flow only selects a branch; `realise_worktree` is a separate function the
+- [x] The flow only selects a branch; `realise_worktree` is a separate function the
       caller invokes after a choice is returned.
-- [ ] A `fixed_usage` input skips the usage menu and uses that label verbatim.
-- [ ] Labels, glyphs and the `let me write…` free-text path match the parity contract,
+- [x] A `fixed_usage` input skips the usage menu and uses that label verbatim.
+- [x] Labels, glyphs and the `let me write…` free-text path match the parity contract,
       including keeping the glyph after pad-stripping.
-- [ ] Launch commands match the per-harness rules, including `CCR` dispatching to
+- [x] Launch commands match the per-harness rules, including `CCR` dispatching to
       `ccr code` with no model flag and no extra args.
-- [ ] Extra args arrive as separate argv entries, and an argument containing a space
+- [x] Extra args arrive as separate argv entries, and an argument containing a space
       stays one entry.
-- [ ] Worktree selection reproduces every rule in the parity contract, including
+- [x] Worktree selection reproduces every rule in the parity contract, including
       falling back to no worktree when `git worktree add` fails.
-- [ ] A failed creation yields a choice with `branch` cleared, `project_dir` set to the
+- [x] A failed creation yields a choice with `branch` cleared, `project_dir` set to the
       repository toplevel, and the branch suffix removed from the label — so no caller
       can split a pane into a directory that was never created.
-- [ ] The module creates no tabs, splits no panes, and never `exec`s.
-- [ ] `AgentChoice` carries the harness label and the optional model label alongside
+- [x] The module creates no tabs, splits no panes, and never `exec`s.
+- [x] `AgentChoice` carries the harness label and the optional model label alongside
       the assembled argv.
 
 ## Verification
 
-- [ ] `cargo test` — launch-command assembly for each harness and each default model
+- [x] `cargo test` — launch-command assembly for each harness and each default model
       label, with and without extra args, including a multi-word extra arg
-- [ ] `cargo test` — label composition: pad stripped, glyph kept, branch appended
-- [ ] `cargo test` — worktree directory naming, including a branch containing a slash
-- [ ] `cargo test` — `without_worktree` on a choice whose creation failed: `branch` is
+- [x] `cargo test` — label composition: pad stripped, glyph kept, branch appended
+- [x] `cargo test` — worktree directory naming, including a branch containing a slash
+- [x] `cargo test` — `without_worktree` on a choice whose creation failed: `branch` is
       `None`, `project_dir` is the repository toplevel, and the label equals what the
       same usage selection produces with no worktree at all
-- [ ] Manual through the linked dev plugin: run the flow once per harness and confirm
+- [x] Manual through the linked dev plugin: run the flow once per harness and confirm
       the menus render centered and in the new order
-- [ ] `cargo test` — in a fixture git repo, cancel at the harness, model and usage
+- [x] `cargo test` — in a fixture git repo, cancel at the harness, model and usage
       menus in turn and assert `git worktree list` is unchanged and no new branch exists
-- [ ] Manual: cancel at each of the four menus and confirm nothing was created
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] Manual: cancel at each of the four menus and confirm nothing was created
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

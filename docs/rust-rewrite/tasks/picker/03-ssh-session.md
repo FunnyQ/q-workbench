@@ -7,7 +7,7 @@
 >
 > **Depends on**: foundation/02, registry/05
 > **Blocks**: picker/05
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -72,37 +72,37 @@ must not change the exit status — the connection already succeeded.
 
 ## Acceptance criteria
 
-- [ ] `ssh session <target> <tab_id>` runs `ssh <target>` with the terminal inherited.
-- [ ] The tab is closed on clean exit, on non-zero exit, and on HUP, INT and TERM.
-- [ ] Signal handlers do only async-signal-safe work; the socket call happens on the
+- [x] `ssh session <target> <tab_id>` runs `ssh <target>` with the terminal inherited.
+- [x] The tab is closed on clean exit, on non-zero exit, and on HUP, INT and TERM.
+- [x] Signal handlers do only async-signal-safe work; the socket call happens on the
       main path after the child is reaped.
-- [ ] On a caught signal the same signal is forwarded to the child, followed by a
+- [x] On a caught signal the same signal is forwarded to the child, followed by a
       bounded wait and then `SIGKILL` if it is still alive.
-- [ ] An `EINTR` from `wait` with no flag set retries the wait rather than treating it
+- [x] An `EINTR` from `wait` with no flag set retries the wait rather than treating it
       as termination.
-- [ ] A zero exit stamps the registry's `use` and appends the history line; a non-zero
+- [x] A zero exit stamps the registry's `use` and appends the history line; a non-zero
       exit does neither.
-- [ ] Exit status is ssh's own status normally, and `128 + signum` after a caught
+- [x] Exit status is ssh's own status normally, and `128 + signum` after a caught
       signal.
-- [ ] A failed history append does not change the exit status.
+- [x] A failed history append does not change the exit status.
 
 ## Verification
 
-- [ ] `cargo test` — the history line's exact text for a given target and timestamp
-- [ ] `cargo test` — with `FakeClient`, a zero exit issues `tab.close` and the
+- [x] `cargo test` — the history line's exact text for a given target and timestamp
+- [x] `cargo test` — with `FakeClient`, a zero exit issues `tab.close` and the
       registry stamp; a non-zero exit issues only `tab.close`
-- [ ] Manual: run against a host that accepts the connection, disconnect normally, and
+- [x] Manual: run against a host that accepts the connection, disconnect normally, and
       confirm the tab closed and `last_used_at` was stamped
-- [ ] Manual: run against a host that refuses, and confirm the tab still closes and no
+- [x] Manual: run against a host that refuses, and confirm the tab still closes and no
       stamp was written
-- [ ] `cargo test` — an integration test that substitutes a long-running stand-in for
+- [x] `cargo test` — an integration test that substitutes a long-running stand-in for
       `ssh` (a `sleep`-like child), sends **each** of HUP, INT and TERM in turn, and
       asserts for each: the child was signalled, it was reaped, `tab.close` was issued,
       and the exit status is `128 + signum`
-- [ ] `cargo test` — a stand-in child that ignores the forwarded signal is `SIGKILL`ed
+- [x] `cargo test` — a stand-in child that ignores the forwarded signal is `SIGKILL`ed
       after the bounded wait, and the tab still closes
-- [ ] Manual: send SIGTERM to a real session process and confirm the tab closes
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] Manual: send SIGTERM to a real session process and confirm the tab closes
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

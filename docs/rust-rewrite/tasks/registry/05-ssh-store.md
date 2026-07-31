@@ -6,7 +6,7 @@
 >
 > **Depends on**: registry/04
 > **Blocks**: picker/03, picker/04, polish/05
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -74,31 +74,31 @@ comparison needs no normalisation.
 
 ## Acceptance criteria
 
-- [ ] `sync` drops config-sourced entries no longer in the config and leaves manual
+- [x] `sync` drops config-sourced entries no longer in the config and leaves manual
       entries alone.
-- [ ] Seeding happens only when the registry is absent or invalid.
-- [ ] `remove` hides a config-sourced entry and deletes a manual one.
-- [ ] `use` stamps `last_used_at`, clears `hidden`, resolves aliases, and collapses a
+- [x] Seeding happens only when the registry is absent or invalid.
+- [x] `remove` hides a config-sourced entry and deletes a manual one.
+- [x] `use` stamps `last_used_at`, clears `hidden`, resolves aliases, and collapses a
       matching `user@hostname` manual entry into its config entry.
-- [ ] `list` emits NUL-delimited multi-line records in the documented sort order, with
+- [x] `list` emits NUL-delimited multi-line records in the documented sort order, with
       config aliases joined by two spaces.
-- [ ] Reconciliation is a pure function that touches no filesystem.
-- [ ] Writes are atomic, two-space indented, with a trailing newline.
+- [x] Reconciliation is a pure function that touches no filesystem.
+- [x] Writes are atomic, two-space indented, with a trailing newline.
 
 ## Verification
 
-- [ ] `cargo test` — reconciliation over a fixture registry and fixture config records:
+- [x] `cargo test` — reconciliation over a fixture registry and fixture config records:
       entry removed from config, entry added, manual entry untouched
-- [ ] `cargo test` — seeding runs for an absent registry and for an invalid one, and
+- [x] `cargo test` — seeding runs for an absent registry and for an invalid one, and
       does **not** run for a valid one
-- [ ] `cargo test` — `use` collapsing a `user@hostname` manual entry into a config entry,
+- [x] `cargo test` — `use` collapsing a `user@hostname` manual entry into a config entry,
       and leaving it alone when two config entries match
-- [ ] `cargo test` — `remove` hides a config entry and deletes a manual one
-- [ ] **Byte-identical check**: run the zsh `scripts/ssh-target-registry.zsh sync` and
+- [x] `cargo test` — `remove` hides a config entry and deletes a manual one
+- [x] **Byte-identical check**: run the zsh `scripts/ssh-target-registry.zsh sync` and
       the Rust `ssh sync` against the same fixture config and registry copy, then `diff`
       the JSON and `cmp` the `list` output — the latter contains NUL bytes, so `diff`
       is not enough
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

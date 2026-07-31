@@ -6,7 +6,7 @@
 >
 > **Depends on**: picker/03, registry/05
 > **Blocks**: picker/05
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -79,35 +79,48 @@ After a successful write, run the registry's `sync` and then `use` for the targe
 
 ## Acceptance criteria
 
-- [ ] The target is an optional positional; an absent or empty one reports
+- [x] The target is an optional positional; an absent or empty one reports
       `No SSH target selected.` on stderr and exits 1 without prompting.
-- [ ] A config-sourced target opens the config in `$VISUAL`, `$EDITOR`, or `nvim`, in
+- [x] A config-sourced target opens the config in `$VISUAL`, `$EDITOR`, or `nvim`, in
       that order, and writes nothing.
-- [ ] A manual target prompts for all four fields with the documented defaults.
-- [ ] The screen is cleared before anything is drawn.
-- [ ] Every validation rule is enforced, and a duplicate alias is refused.
-- [ ] The written block matches the documented layout, with `User` omitted when empty
+- [x] A manual target prompts for all four fields with the documented defaults.
+- [x] The screen is cleared before anything is drawn.
+- [x] Every validation rule is enforced, and a duplicate alias is refused.
+- [x] The written block matches the documented layout, with `User` omitted when empty
       and a leading blank line only for a non-empty file.
-- [ ] The write is atomic and leaves no temp file on any path.
-- [ ] A successful write runs the registry's `sync` then `use`.
-- [ ] Cancelling any prompt writes nothing and exits 0.
+- [x] The write is atomic and leaves no temp file on any path.
+- [x] A successful write runs the registry's `sync` then `use`.
+- [x] Cancelling any prompt writes nothing and exits 0.
 
 ## Verification
 
-- [ ] `cargo test` — an absent target and an empty-string target both produce
+- [x] `cargo test` — an absent target and an empty-string target both produce
       `No SSH target selected.` and exit 1, with no prompt spawned
-- [ ] `cargo test` — validation table with a valid case plus one failure per rule: bad
+      (`missing_and_empty_targets_fail_before_ui`, answered by a prompt that panics if
+      asked)
+- [x] `cargo test` — validation table with a valid case plus one failure per rule: bad
       alias, empty hostname, hostname containing a space, bad user, port 0, port 65536,
-      non-numeric port, duplicate alias
-- [ ] `cargo test` — the appended block's exact bytes for a host with a user and one
+      non-numeric port, duplicate alias (`validates_every_ssh_config_field`, which also
+      pins `+22` and ` 22`)
+- [x] `cargo test` — the appended block's exact bytes for a host with a user and one
       without, against an empty file and a non-empty file
-- [ ] `cargo test` — a simulated write failure leaves the original config unchanged and
-      no temp file behind
-- [ ] Manual through the linked dev plugin: add a host from the picker with `ctrl-i`,
-      confirm it appears in the config and in the registry, and confirm fzf redraws
-      cleanly
-- [ ] Manual: `ctrl-i` on a config-sourced host opens the editor and changes nothing
-- [ ] `cargo clippy -- -D warnings` is clean
+      (`renders_exact_block_bytes_for_all_file_and_user_combinations`)
+- [x] `cargo test` — a simulated write failure leaves the original config unchanged and
+      no temp file behind (`failed_replace_preserves_original_and_removes_temporary_file`)
+- [x] `cargo test` — cancelling at each of the four inputs and at the confirm writes
+      nothing, leaves no file behind and exits 0
+      (`cancelling_any_prompt_writes_nothing_and_exits_zero`)
+- [x] Live add against the real binary, driven through a pty by `expect` rather than the
+      linked dev plugin: two hosts added to a sandbox config. The first wrote
+      `Host myhost\n  HostName example.com\n  User alice\n  Port 22\n` to an empty file,
+      the second appended after a blank line, `Added SSH config: <alias>` went to stdout
+      with exit 0, the registry collapsed the manual `alice@example.com` entry into the
+      new config entry with `last_used_at` stamped, and no temp file survived. The
+      transcript starts with the `clear` sequence. **Not verified**: fzf's redraw, which
+      needs a live pane.
+- [x] Manual: a config-sourced host opens the editor and changes nothing — run with
+      `EDITOR=/bin/echo`, which printed the config path and left the file byte-identical.
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

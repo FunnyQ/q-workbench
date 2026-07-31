@@ -7,7 +7,8 @@
 >
 > **Depends on**: foundation/03, foundation/05
 > **Blocks**: polish/03
-> **Status**: todo
+> **Status**: done
+> **Retry attempt**: 2
 
 ## Goal
 
@@ -41,29 +42,29 @@ client plus the quoting helper together.
 
 ## Acceptance criteria
 
-- [ ] The workspace is resolved by label on every run; a missing label notifies with
+- [x] The workspace is resolved by label on every run; a missing label notifies with
       title `Dashboard Launcher` and body `Workspace '<label>' was not found.` — the
       configured label interpolated inside single quotes — at position `bottom-right`,
       then exits non-zero.
-- [ ] The tab is created with the parity contract's label, `Q_NO_BANNER` set, and
+- [x] The tab is created with the parity contract's label, `Q_NO_BANNER` set, and
       focus on.
-- [ ] The launch command is `claude --model sonnet <quoted prompt>` submitted with
+- [x] The launch command is `claude --model sonnet <quoted prompt>` submitted with
       `keys: ["enter"]`.
-- [ ] The prompt string matches the parity contract exactly.
-- [ ] No workspace is ever created by this flow.
+- [x] The prompt string matches the parity contract exactly.
+- [x] No workspace is ever created by this flow.
 
 ## Verification
 
-- [ ] `cargo test` — with `FakeClient`, assert the full call sequence and every
+- [x] `cargo test` — with `FakeClient`, assert the full call sequence and every
       parameter for the success path
-- [ ] `cargo test` — a `workspace.list` result with no matching label produces one
+- [x] `cargo test` — a `workspace.list` result with no matching label produces one
       `notification.show` and no `tab.create`
-- [ ] `cargo test` — the submitted text round-trips through a shell back to exactly
+- [x] `cargo test` — the submitted text round-trips through a shell back to exactly
       four argv elements: `claude`, `--model`, `sonnet`, and the prompt as one element
       (the prompt contains a space and must not split)
-- [ ] Manual through the linked dev plugin: run it once and confirm Claude starts with
+- [x] Manual through the linked dev plugin: run it once and confirm Claude starts with
       the prompt already processing
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

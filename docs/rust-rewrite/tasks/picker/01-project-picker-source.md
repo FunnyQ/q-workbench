@@ -6,7 +6,7 @@
 >
 > **Depends on**: registry/02
 > **Blocks**: picker/02, polish/04
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -68,31 +68,54 @@ missing registry.
 
 ## Acceptance criteria
 
-- [ ] Records match the format above exactly: three display lines, the payload appended
+- [x] Records match the format above exactly: three display lines, the payload appended
       to the third, the leading three spaces, the middle-dot source separator, and the
       NUL terminator.
-- [ ] Hidden entries are excluded.
-- [ ] Sort is most-recently-used first, then never-used by display name.
-- [ ] `$HOME` is collapsed to `~` in the displayed path but the payload stays absolute.
-- [ ] The zoxide row appears only for a query of two or more characters, only for an
+- [x] Hidden entries are excluded.
+- [x] Sort is most-recently-used first, then never-used by display name.
+- [x] `$HOME` is collapsed to `~` in the displayed path but the payload stays absolute.
+- [x] The zoxide row appears only for a query of two or more characters, only for an
       existing directory, and only when that directory is not already registered.
-- [ ] A missing `zoxide` binary is not an error.
-- [ ] A missing registry exits non-zero with no output.
+- [x] A missing `zoxide` binary is not an error.
+- [x] A missing registry exits non-zero with no output.
 
 ## Verification
 
-- [ ] `cargo test` — golden-output test against a fixture registry with a hidden
+- [x] `cargo test` — golden-output test against a fixture registry with a hidden
       entry, an aliased entry, a used and an unused entry; compare bytes including NULs
-- [ ] `cargo test` — the `~` collapse applies to the display line only
-- [ ] `cargo test` — zoxide fallback suppressed for a one-character query, for a
+- [x] `cargo test` — the `~` collapse applies to the display line only
+- [x] `cargo test` — zoxide fallback suppressed for a one-character query, for a
       nonexistent path, and for an already-registered path
-- [ ] **Byte-identical check**: run the zsh `scripts/project-picker-source.zsh` and the
+- [x] **Byte-identical check**: run the zsh `scripts/project-picker-source.zsh` and the
       Rust `project source` against the same fixture registry and compare with `cmp`
-- [ ] Measure per-invocation cost against the real registry: run 50 warm invocations,
+- [x] Measure per-invocation cost against the real registry: run 50 warm invocations,
       take the **median** wall time, and require **≤ 5 ms**. The zsh version measured
       14.6 ms; anything at or above that means the rewrite lost its main motivation on
       this path and should be raised rather than absorbed
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo clippy -- -D warnings` is clean
+
+### Measured cost
+
+Run `zsh scripts/bench-project-source.zsh`. It builds the release binary and takes the
+median of 50 warm invocations against the real registry, timing each one with zsh's
+`EPOCHREALTIME` builtin. **Measure the release binary, and use a harness that spawns
+nothing per sample**: a `python`, `date` or `time` wrapper adds 2-3 ms of its own
+fork+exec to every sample, which is most of the budget.
+
+Measured on the target machine, 60-entry registry (2026-07-31):
+
+| Command | Median |
+|---|---|
+| `/usr/bin/true` — the harness's own fork+exec floor | 2.8 ms |
+| `workbench project source` | **3.9 ms** |
+| `zsh scripts/project-picker-source.zsh` | 15.5 ms |
+| `workbench project source <query>` | 12.0 ms |
+| `zsh scripts/project-picker-source.zsh <query>` | 31.8 ms |
+
+So the subcommand costs about 1.2 ms beyond the fork+exec every process pays, and a
+bare Rust binary that does nothing at all costs 0.7 ms of that. With a query of two or
+more characters both versions shell out to `zoxide query`, which is 8 ms on its own and
+dominates the number; that call is required for parity.
 
 ## Eval rubric
 

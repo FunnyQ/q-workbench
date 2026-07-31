@@ -7,7 +7,7 @@
 >
 > **Depends on**: picker/03, picker/04, foundation/05
 > **Blocks**: polish/03
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -49,32 +49,32 @@ this reason.
 
 ## Acceptance criteria
 
-- [ ] The fzf invocation matches the parity contract, including `--no-sort`, `--gap`,
+- [x] The fzf invocation matches the parity contract, including `--no-sort`, `--gap`,
       `--gap-line`, the prompt, the pointer, the border label and both bindings.
-- [ ] Bindings are built from the running executable's own path, shell-quoted.
-- [ ] Cancelling fzf exits 0 with no side effect.
-- [ ] A typed but unlisted target still connects.
-- [ ] The tab is created with the parity contract's label, `Q_NO_BANNER`, and focus off,
+- [x] Bindings are built from the running executable's own path, shell-quoted.
+- [x] Cancelling fzf exits 0 with no side effect.
+- [x] A typed but unlisted target still connects.
+- [x] The tab is created with the parity contract's label, `Q_NO_BANNER`, and focus off,
       then focused after the session command is sent.
-- [ ] All three parts of the session command are shell-quoted.
-- [ ] Any failure after `tab.create` closes the tab.
+- [x] All three parts of the session command are shell-quoted.
+- [x] Any failure after `tab.create` closes the tab.
 
 ## Verification
 
-- [ ] `cargo test` — result parsing for selection present, selection absent with a
+- [x] `cargo test` — result parsing for selection present, selection absent with a
       query, and both absent
-- [ ] `cargo test` — binding strings contain the current executable path, correctly
+- [x] `cargo test` — binding strings contain the current executable path, correctly
       quoted for a path containing a space
-- [ ] `cargo test` — with `FakeClient`, the success sequence is `tab.create`,
+- [x] `cargo test` — with `FakeClient`, the success sequence is `tab.create`,
       `pane.send_input`, `tab.focus`; a failure injected at either of the last two
       issues `tab.close`
-- [ ] `cargo test` — the session command text round-trips through a shell back to the
+- [x] `cargo test` — the session command text round-trips through a shell back to the
       intended argv, including a target containing a character needing quoting
-- [ ] Manual through the linked dev plugin: connect to a real host and confirm the tab
+- [x] Manual through the linked dev plugin: connect to a real host and confirm the tab
       label and that the connection works
-- [ ] Manual: `ctrl-x` on a config host hides it, on a manual host deletes it, and the
+- [x] Manual: `ctrl-x` on a config host hides it, on a manual host deletes it, and the
       list reloads cleanly in both cases
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

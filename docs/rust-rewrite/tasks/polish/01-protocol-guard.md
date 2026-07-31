@@ -7,7 +7,7 @@
 >
 > **Depends on**: foundation/05
 > **Blocks**: cutover/01
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -55,12 +55,12 @@ protocol change could break the CLI's own output shape too. Fail with a clear me
 
 ## Acceptance criteria
 
-- [ ] The expected protocol number is a single named constant.
-- [ ] A matching protocol produces no output of any kind.
-- [ ] A mismatch produces exactly one notification, naming both protocol numbers, and a
+- [x] The expected protocol number is a single named constant.
+- [x] A matching protocol produces no output of any kind.
+- [x] A mismatch produces exactly one notification, naming both protocol numbers, and a
       non-zero exit.
-- [ ] A `ping` failure is reported as a connection problem, not a protocol mismatch.
-- [ ] Subcommands that make no Herdr call do not ping. The complete list:
+- [x] A `ping` failure is reported as a connection problem, not a protocol mismatch.
+- [x] Subcommands that make no Herdr call do not ping. The complete list:
       `project source`, `project scan`, `project rescan`, `project update`,
       `project use`, `project edit`, `ssh sync`, `ssh list`, `ssh get`, `ssh use`,
       `ssh remove`, **`ssh edit`**, and `config migrate`.
@@ -69,15 +69,15 @@ protocol change could break the CLI's own output shape too. Fail with a clear me
 
 ## Verification
 
-- [ ] `cargo test` — with `FakeClient`, a matching protocol records only the `ping`
+- [x] `cargo test` — with `FakeClient`, a matching protocol records only the `ping`
       call and nothing else
-- [ ] `cargo test` — a mismatching protocol records exactly one `notification.show`
+- [x] `cargo test` — a mismatching protocol records exactly one `notification.show`
       whose body contains both numbers
-- [ ] `cargo test` — a failing `ping` produces a distinct error message
-- [ ] `cargo test` — every subcommand on the no-ping list above issues no `ping`,
+- [x] `cargo test` — a failing `ping` produces a distinct error message
+- [x] `cargo test` — every subcommand on the no-ping list above issues no `ping`,
       asserted one by one rather than as a sample
-- [ ] Manual: run `project source` and confirm no Herdr call is made
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] Manual: run `project source` and confirm no Herdr call is made
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

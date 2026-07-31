@@ -6,7 +6,7 @@
 >
 > **Depends on**: foundation/03
 > **Blocks**: registry/02
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -66,31 +66,31 @@ A missing source directory yields an empty list, not an error.
 
 ## Acceptance criteria
 
-- [ ] `canonical_project` resolves to the git toplevel, resolves symlinks, rejects `/`,
+- [x] `canonical_project` resolves to the git toplevel, resolves symlinks, rejects `/`,
       drops temp-directory paths, and keeps a temp-like path that is inside the
       projects root.
-- [ ] It takes the projects root as a parameter and reads no configuration itself.
-- [ ] Each of the three sources returns its paths tagged with the right source name.
-- [ ] Claude discovery reads both `sessions-index.json` entries and transcript `cwd`
+- [x] It takes the projects root as a parameter and reads no configuration itself.
+- [x] Each of the three sources returns its paths tagged with the right source name.
+- [x] Claude discovery reads both `sessions-index.json` entries and transcript `cwd`
       values, stopping at the first `cwd` per transcript.
-- [ ] Codex discovery reads only the first line of each rollout and handles both the
+- [x] Codex discovery reads only the first line of each rollout and handles both the
       `session_meta` and the plain `cwd` shapes.
-- [ ] Filesystem discovery prunes before descending.
-- [ ] A missing source directory yields an empty list.
+- [x] Filesystem discovery prunes before descending.
+- [x] A missing source directory yields an empty list.
 
 ## Verification
 
-- [ ] `cargo test` — `canonical_project` over a fixture tree: a git subdirectory
+- [x] `cargo test` — `canonical_project` over a fixture tree: a git subdirectory
       resolving to its toplevel, `/`, a `/tmp` path, a `/var/folders/.../T` path, a
       symlinked path, and a temp-like path inside the projects root (which must be kept)
-- [ ] `cargo test` — Claude discovery against a fixture with one `sessions-index.json`
+- [x] `cargo test` — Claude discovery against a fixture with one `sessions-index.json`
       and two transcripts, one of which has several `cwd` occurrences
-- [ ] `cargo test` — Codex discovery against a fixture with one `session_meta` rollout
+- [x] `cargo test` — Codex discovery against a fixture with one `session_meta` rollout
       and one plain-`cwd` rollout
-- [ ] `cargo test` — filesystem discovery against a fixture containing a `.git` inside
+- [x] `cargo test` — filesystem discovery against a fixture containing a `.git` inside
       a `node_modules`, asserting it is not returned
-- [ ] `cargo test` — all three return empty for a missing directory
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo test` — all three return empty for a missing directory
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

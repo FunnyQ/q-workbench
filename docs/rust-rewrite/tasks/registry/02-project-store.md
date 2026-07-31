@@ -6,7 +6,7 @@
 >
 > **Depends on**: registry/01
 > **Blocks**: registry/03, picker/01, polish/04
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -74,28 +74,28 @@ text and exit codes in the parity contract's message table.
 
 ## Acceptance criteria
 
-- [ ] The schema matches the parity contract, `version: 1`, keys in stable order.
-- [ ] Writes are atomic; a failure leaves the previous registry intact and no temp file
+- [x] The schema matches the parity contract, `version: 1`, keys in stable order.
+- [x] Writes are atomic; a failure leaves the previous registry intact and no temp file
       behind.
-- [ ] Output is two-space indented with a trailing newline.
-- [ ] The clock is injectable and the timestamp format is `%Y-%m-%dT%H:%M:%SZ` UTC.
-- [ ] `sources` accumulate, stay sorted-unique, and preserve `manual`.
-- [ ] The merge is a pure function that touches no filesystem.
-- [ ] `update` and `use` enforce their guards and emit the exact messages and exit codes
+- [x] Output is two-space indented with a trailing newline.
+- [x] The clock is injectable and the timestamp format is `%Y-%m-%dT%H:%M:%SZ` UTC.
+- [x] `sources` accumulate, stay sorted-unique, and preserve `manual`.
+- [x] The merge is a pure function that touches no filesystem.
+- [x] `update` and `use` enforce their guards and emit the exact messages and exit codes
       from the parity contract.
 
 ## Verification
 
-- [ ] `cargo test` — merge tests: a newly discovered project, a project that
+- [x] `cargo test` — merge tests: a newly discovered project, a project that
       disappeared from discovery, and a `manual` source surviving an `update`
-- [ ] `cargo test` — atomic write: a simulated serialisation failure leaves the original
+- [x] `cargo test` — atomic write: a simulated serialisation failure leaves the original
       file byte-for-byte unchanged and removes the temp file
-- [ ] `cargo test` — timestamp format, with a pinned clock
-- [ ] `cargo test` — every guard message and exit code for `update` and `use`
-- [ ] **Parity check**: run the zsh `scripts/project-registry.zsh update` and the Rust
+- [x] `cargo test` — timestamp format, with a pinned clock
+- [x] `cargo test` — every guard message and exit code for `update` and `use`
+- [x] **Parity check**: run the zsh `scripts/project-registry.zsh update` and the Rust
       `project update` against the same registry copy and the same fixture sources,
       replace `generated_at` in both with a constant, then `diff`. They must match.
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

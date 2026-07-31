@@ -482,12 +482,16 @@ impl Cli {
                     "Herdr was upgraded from protocol {expected} to protocol {actual}. \
                      Rebuild this plugin for the new protocol."
                 );
-                notify::notify(client, "Workbench needs rebuilding", &message);
+                if matches!(self.channel(), Channel::Notification(_)) {
+                    notify::notify(client, "Workbench needs rebuilding", &message);
+                }
                 Err(anyhow!(message))
             }
             Err(error @ ProtocolGuardError::Connection(_)) => {
                 let message = format!("Could not connect to Herdr for the protocol check: {error}");
-                notify::notify(client, "Workbench could not reach Herdr", &message);
+                if matches!(self.channel(), Channel::Notification(_)) {
+                    notify::notify(client, "Workbench could not reach Herdr", &message);
+                }
                 Err(anyhow!(message))
             }
         }
@@ -633,8 +637,20 @@ fn report_stderr(subcommand_path: &str, error: &anyhow::Error, output: &mut impl
     let message = format!("{error:#}");
     // Contract messages already name their reporting surface. Other fatal errors use
     // the parsed clap path once, with chained causes from anyhow's `{:#}` format.
+    let is_contract_message = subcommand_path == "ssh edit"
+        && [
+            "No SSH target selected.",
+            "Invalid SSH alias: ",
+            "Invalid HostName: ",
+            "Invalid SSH user: ",
+            "Invalid SSH port: ",
+            "SSH alias already exists: ",
+        ]
+        .iter()
+        .any(|prefix| message.starts_with(prefix));
     if message.starts_with(&format!("{subcommand_path}: "))
         || message.starts_with("project-registry: ")
+        || is_contract_message
     {
         let _ = writeln!(output, "{message}");
     } else {
@@ -859,6 +875,26 @@ mod tests {
                 Channel::Stderr { uses_herdr: false },
             ),
             (
+                vec!["workbench", "ssh", "sync"],
+                Channel::Stderr { uses_herdr: false },
+            ),
+            (
+                vec!["workbench", "ssh", "list"],
+                Channel::Stderr { uses_herdr: false },
+            ),
+            (
+                vec!["workbench", "ssh", "get", "host"],
+                Channel::Stderr { uses_herdr: false },
+            ),
+            (
+                vec!["workbench", "ssh", "use", "host"],
+                Channel::Stderr { uses_herdr: false },
+            ),
+            (
+                vec!["workbench", "ssh", "remove", "host"],
+                Channel::Stderr { uses_herdr: false },
+            ),
+            (
                 vec!["workbench", "ssh", "edit"],
                 Channel::Stderr { uses_herdr: false },
             ),
@@ -901,6 +937,25 @@ mod tests {
             unnamed,
             b"project update: failed to write registry: disk full\n"
         );
+
+        for message in [
+            "No SSH target selected.",
+            "Invalid SSH alias: bad alias",
+            "Invalid HostName: bad host",
+            "Invalid SSH user: bad user",
+            "Invalid SSH port: 0",
+            "SSH alias already exists: host",
+        ] {
+            let mut output = Vec::new();
+            report_stderr("ssh edit", &anyhow!(message), &mut output);
+            assert_eq!(output, format!("{message}\n").as_bytes());
+        }
+
+        for subcommand in ["ssh sync", "config migrate", "herdr ping"] {
+            let mut output = Vec::new();
+            report_stderr(subcommand, &anyhow!("disk full"), &mut output);
+            assert_eq!(output, format!("{subcommand}: disk full\n").as_bytes());
+        }
     }
 
     /// A body built by `FlowError::complete` reaches the notification whole, with no
@@ -1092,6 +1147,18 @@ mod tests {
     }
 
     #[test]
+    fn herdr_ping_protocol_failure_never_notifies() {
+        let cli = Cli::try_parse_from(["workbench", "herdr", "ping"]).unwrap();
+        let client = herdr::FakeClient::default();
+        client.queue_error("ping", "unavailable", "socket unavailable");
+
+        cli.guard_protocol(&client).unwrap_err();
+
+        assert_eq!(client.calls.borrow().len(), 1);
+        assert_eq!(client.calls.borrow()[0].0, "ping");
+    }
+
+    #[test]
     fn project_subcommands_never_call_notification_show() {
         let cases = [
             vec!["workbench", "project", "source", "query"],
@@ -1108,6 +1175,39 @@ mod tests {
 
             if cli.uses_herdr() {
                 cli.guard_protocol(&client).unwrap();
+            }
+
+            assert!(
+                client
+                    .calls
+                    .borrow()
+                    .iter()
+                    .all(|call| call.0 != "notification.show"),
+                "{argv:?} unexpectedly issued notification.show"
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_subcommands_never_call_notification_show() {
+        let cases = [
+            vec!["workbench", "ssh", "sync"],
+            vec!["workbench", "ssh", "list"],
+            vec!["workbench", "ssh", "get", "host"],
+            vec!["workbench", "ssh", "use", "host"],
+            vec!["workbench", "ssh", "remove", "host"],
+            vec!["workbench", "ssh", "edit", "host"],
+            vec!["workbench", "config", "migrate"],
+            vec!["workbench", "herdr", "ping"],
+        ];
+
+        for argv in cases {
+            let cli = Cli::try_parse_from(&argv).unwrap();
+            let client = herdr::FakeClient::default();
+            client.queue_error("ping", "unavailable", "socket unavailable");
+
+            if cli.uses_herdr() {
+                let _ = cli.guard_protocol(&client);
             }
 
             assert!(

@@ -79,11 +79,11 @@ pub fn sync(registry: &Path, config: &Path, history: &Path) -> Result<SshRegistr
     let existing = read_valid_registry(registry);
     let targets = match existing {
         Some(registry) => registry.targets,
-        None => seed_targets(history_targets(history)),
+        None => seed_targets(history_targets(history)?),
     };
     let registry_data = SshRegistry {
         version: REGISTRY_VERSION,
-        targets: reconcile(targets, config_records(config)),
+        targets: reconcile(targets, config_records(config)?),
     };
     write_registry(registry, &registry_data)?;
     Ok(registry_data)
@@ -297,8 +297,8 @@ impl SshRunner for CommandSshRunner {
     }
 }
 
-pub fn config_records(config: &Path) -> Vec<ConfigRecord> {
-    config_records_with_runner(config, &CommandSshRunner).unwrap_or_default()
+pub fn config_records(config: &Path) -> Result<Vec<ConfigRecord>> {
+    config_records_with_runner(config, &CommandSshRunner)
 }
 
 fn config_records_with_runner(config: &Path, runner: &impl SshRunner) -> Result<Vec<ConfigRecord>> {
@@ -358,11 +358,7 @@ fn first_value(output: &str, expected_key: &str) -> Option<String> {
     })
 }
 
-pub fn history_targets(history: &Path) -> Vec<String> {
-    try_history_targets(history).unwrap_or_default()
-}
-
-fn try_history_targets(history: &Path) -> Result<Vec<String>> {
+pub fn history_targets(history: &Path) -> Result<Vec<String>> {
     let contents = match fs::read_to_string(history) {
         Ok(contents) => contents,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -572,7 +568,7 @@ plain ssh ignored
         );
 
         assert_eq!(
-            history_targets(&history),
+            history_targets(&history).unwrap(),
             vec!["admin@[server]", "old", "web", "deploy@example.com"]
         );
     }
@@ -582,8 +578,8 @@ plain ssh ignored
         let fixture = Fixture::new();
         let missing = fixture.directory.join("missing");
 
-        assert!(config_records(&missing).is_empty());
-        assert!(history_targets(&missing).is_empty());
+        assert!(config_records(&missing).unwrap().is_empty());
+        assert!(history_targets(&missing).unwrap().is_empty());
     }
 
     fn manual(last_used_at: Option<u64>) -> SshTarget {

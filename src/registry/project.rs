@@ -9,7 +9,7 @@
 //! `Result` and letting the caller `unwrap_or_default()` would instead collapse a
 //! whole source to empty the first time one file failed to read.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Component, Path, PathBuf};
@@ -106,8 +106,17 @@ pub fn discover_claude_projects(home: &Path) -> Vec<(PathBuf, Source)> {
     }
 
     let mut results = Vec::new();
+    // One recursive walk feeding both buckets. Two walks read every directory in
+    // `~/.claude/projects` twice for no extra information; filtering the single sorted
+    // list keeps each bucket in exactly the order a separate walk produced.
+    let files = collect_files(&projects, &|path| {
+        file_name(path) == "sessions-index.json" || extension(path) == "jsonl"
+    });
+    let (indexes, transcripts): (Vec<_>, Vec<_>) = files
+        .into_iter()
+        .partition(|path| file_name(path) == "sessions-index.json");
 
-    for index in collect_files(&projects, &|path| file_name(path) == "sessions-index.json") {
+    for index in indexes {
         let Ok(contents) = fs::read_to_string(&index) else {
             continue;
         };
@@ -125,7 +134,7 @@ pub fn discover_claude_projects(home: &Path) -> Vec<(PathBuf, Source)> {
         }));
     }
 
-    for transcript in collect_files(&projects, &|path| extension(path) == "jsonl") {
+    for transcript in transcripts {
         if let Some(cwd) = first_transcript_cwd(&transcript) {
             results.push((PathBuf::from(cwd), Source::Claude));
         }
@@ -184,7 +193,9 @@ pub fn discover_filesystem_projects(projects_root: &Path) -> Vec<(PathBuf, Sourc
     results
 }
 
-fn git_toplevel(path: &Path) -> Option<PathBuf> {
+/// `git rev-parse --show-toplevel`, the one implementation. Discovery and the agent
+/// launcher both need it, and a second copy drifted on how it treats empty output.
+pub fn git_toplevel(path: &Path) -> Option<PathBuf> {
     let output = Command::new("git")
         .arg("-C")
         .arg(path)
@@ -406,8 +417,16 @@ pub fn discovered_projects(home: &Path, projects_root: &Path) -> BTreeMap<String
         .chain(discover_codex_projects(home))
         .chain(discover_filesystem_projects(projects_root));
 
+    // Hundreds of Claude transcripts and Codex rollouts collapse onto a handful of
+    // repositories, and every `canonical_project` costs a `git rev-parse` plus a
+    // `canonicalize`. The zsh original ran its candidates through `sort -u` first; this
+    // cache is the same saving without changing the order sources accumulate in.
+    let mut resolved = HashMap::<PathBuf, Option<PathBuf>>::new();
     for (candidate, source) in records {
-        if let Some(project) = canonical_project(&candidate, projects_root) {
+        let project = resolved
+            .entry(candidate)
+            .or_insert_with_key(|candidate| canonical_project(candidate, projects_root));
+        if let Some(project) = project {
             projects
                 .entry(project.to_string_lossy().into_owned())
                 .or_default()

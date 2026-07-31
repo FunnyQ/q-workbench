@@ -155,7 +155,9 @@ fn edit_with(
     validate_edit_fields(&fields).map_err(anyhow::Error::msg)?;
     validate_alias_available(&config_contents, &fields.alias).map_err(anyhow::Error::msg)?;
     write_config_atomically(config, &config_contents, &fields)?;
-    registry::ssh::sync(registry_file, config, history_file).context("ssh edit")?;
+    // `use_target` opens with the same reconciling `sync`, so calling it separately
+    // first would run the `ssh -G` sweep over every Host group and rewrite the registry
+    // twice for one edit. The zsh original did exactly that; nothing observed it.
     registry::ssh::use_target(registry_file, config, history_file, target).context("ssh edit")?;
     println!("Added SSH config: {}", fields.alias);
     Ok(())
@@ -474,6 +476,7 @@ pub fn session(
     target: &str,
     tab_id: &str,
     registry_file: &Path,
+    config_file: &Path,
     history_file: &Path,
     client: &dyn HerdrClient,
 ) -> FlowResult {
@@ -483,6 +486,7 @@ pub fn session(
         target,
         tab_id,
         registry_file,
+        config_file,
         history_file,
         client,
         &mut command,
@@ -498,18 +502,28 @@ fn session_with_command(
     target: &str,
     tab_id: &str,
     registry_file: &Path,
+    config_file: &Path,
     history_file: &Path,
     client: &dyn HerdrClient,
     command: &mut Command,
 ) -> Result<i32> {
-    run_session(target, tab_id, registry_file, history_file, client, command)
-        .map_err(|error| anyhow::Error::from(FlowError::titled("SSH session", error)))
+    run_session(
+        target,
+        tab_id,
+        registry_file,
+        config_file,
+        history_file,
+        client,
+        command,
+    )
+    .map_err(|error| anyhow::Error::from(FlowError::titled("SSH session", error)))
 }
 
 fn run_session(
     target: &str,
     tab_id: &str,
     registry_file: &Path,
+    config_file: &Path,
     history_file: &Path,
     client: &dyn HerdrClient,
     command: &mut Command,
@@ -532,7 +546,7 @@ fn run_session(
     // was signalled, or never started — a tab left open after a failed connection is a
     // worse outcome than a missing notification. A close failure is deliberately
     // swallowed so it cannot displace the real cause on its way to `main`.
-    let _ = client.tab_close(json!({"id": tab_id}));
+    let _ = client.tab_close(json!({"tab_id": tab_id}));
     let (status, caught_signal) = result?;
 
     let exit_code = if let Some(signal) = caught_signal {
@@ -547,8 +561,10 @@ fn run_session(
         // Bookkeeping, and best-effort by design: the tab is already gone, so there is
         // no pane left to print to and no notification worth raising for a stamp the
         // user never asked for. Neither failure may change the status ssh exited with.
-        let _ =
-            registry::ssh::use_target(registry_file, Path::new("/dev/null"), history_file, target);
+        // The real config file has to reach `use_target`: its `sync` drops every
+        // `source: "config"` entry the given file no longer names, so passing a stub
+        // here would wipe the whole configured half of the registry on each session.
+        let _ = registry::ssh::use_target(registry_file, config_file, history_file, target);
         let _ = append_history(history_file, target, unix_epoch()?);
     }
 
@@ -1006,8 +1022,16 @@ mod tests {
     fn run_shell(script: &str, client: &FakeClient) -> (i32, std::path::PathBuf) {
         let registry = temp_path("registry.json");
         let history = temp_path("history");
+        // A real config naming the target, so the stamp exercises the same
+        // config-reconciling `sync` a live session runs rather than an empty stub.
+        let config = temp_path("ssh-config");
         let _ = fs::remove_file(&registry);
         let _ = fs::remove_file(&history);
+        fs::write(
+            &config,
+            "Host test-host\n  HostName example.invalid\n  User q\n",
+        )
+        .unwrap();
         let mut command = Command::new("/bin/sh");
         command.args(["-c", script]);
         // `session_with_command` is the same flow `session` runs, minus the final
@@ -1017,6 +1041,7 @@ mod tests {
             "test-host",
             "tab-id",
             &registry,
+            &config,
             &history,
             client,
             &mut command,
@@ -1042,11 +1067,15 @@ mod tests {
         assert_eq!(code, 0);
         assert_eq!(
             client.calls.borrow().as_slice(),
-            &[("tab.close".to_owned(), json!({"id": "tab-id"}))]
+            &[("tab.close".to_owned(), json!({"tab_id": "tab-id"}))]
         );
-        assert!(fs::read_to_string(registry)
-            .unwrap()
-            .contains("\"last_used_at\":"));
+        let stamped = fs::read_to_string(registry).unwrap();
+        assert!(stamped.contains("\"last_used_at\":"));
+        // The stamp must not cost the configured half of the registry: `use_target`
+        // syncs first, so a session handed the wrong config file would drop every
+        // `source: "config"` entry it wrote a moment earlier.
+        assert!(stamped.contains("\"source\": \"config\""));
+        assert!(stamped.contains("example.invalid"));
     }
 
     #[test]
@@ -1069,6 +1098,7 @@ mod tests {
             "test-host",
             "tab-id",
             Path::new("/unused/registry"),
+            Path::new("/unused/config"),
             Path::new("/unused/history"),
             &client,
             &mut command,
@@ -1081,7 +1111,7 @@ mod tests {
         assert!(flow_error.chain().starts_with("ssh session: spawning ssh:"));
         assert_eq!(
             client.calls.into_inner(),
-            vec![("tab.close".to_owned(), json!({"id": "tab-id"}))]
+            vec![("tab.close".to_owned(), json!({"tab_id": "tab-id"}))]
         );
     }
 

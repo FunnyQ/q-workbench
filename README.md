@@ -111,6 +111,11 @@ Existing users can preview a migration from zsh to TOML, then write it after rev
 ./bin/workbench config migrate --write
 ```
 
+The zsh version exported `Q_WORKBENCH_LOCAL_CONFIG` pointing at `config.zsh`, and that
+export still overrides the resolved path. Unset it, or point it at the new
+`config.toml`, in every shell that has it. Until you do, the binary refuses to run and
+names this step.
+
 TOML arrays preserve argument boundaries. Put each flag and value in its own entry:
 
 ```toml

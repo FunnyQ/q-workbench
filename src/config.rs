@@ -9,6 +9,9 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+// Tests only: production code must reach a Config through `load`, which is the one
+// place the documented defaults live.
+#[cfg_attr(test, derive(Default))]
 pub struct Config {
     pub dashboard_workspace: String,
     pub claude_extra_args: Vec<String>,
@@ -337,6 +340,17 @@ impl Config {
     pub fn load() -> Result<Self> {
         let home = required_env("HOME")?;
         let path = config_path(&home);
+        // The zsh implementation exported `Q_WORKBENCH_LOCAL_CONFIG` pointing at
+        // config.zsh, and that export outlives the cutover in any shell already running.
+        // Parsing a zsh file as TOML fails on its first line, which reads as a corrupt
+        // config rather than an unfinished migration — so name the real problem.
+        if path.extension().is_some_and(|extension| extension == "zsh") {
+            bail!(
+                "config file {} is zsh, not TOML. Run `workbench config migrate --write`, \
+                 then unset Q_WORKBENCH_LOCAL_CONFIG or point it at the config.toml",
+                path.display()
+            );
+        }
         let file = match fs::read_to_string(&path) {
             Ok(contents) => toml::from_str(&contents)
                 .with_context(|| format!("failed to parse config file {}", path.display()))?,
@@ -600,6 +614,23 @@ mod tests {
             }
             fs::remove_dir_all(&self.directory).expect("remove temporary directory");
         }
+    }
+
+    /// A shell started before the cutover still exports the zsh-era override. The
+    /// binary must name the unfinished migration instead of reporting a TOML syntax
+    /// error on `typeset -gA`, which is what every action showed on the first run.
+    #[test]
+    fn a_zsh_override_names_the_migration_instead_of_failing_to_parse_toml() {
+        let environment = TestEnvironment::new();
+        let legacy = environment.directory.join("config.zsh");
+        fs::write(&legacy, "typeset -gA Q_AGENT_MODELS\n").expect("write legacy config");
+        env::set_var("Q_WORKBENCH_LOCAL_CONFIG", &legacy);
+
+        let error = format!("{:#}", Config::load().expect_err("reject a zsh config"));
+
+        assert!(error.contains("is zsh, not TOML"), "{error}");
+        assert!(error.contains("workbench config migrate --write"), "{error}");
+        assert!(error.contains("Q_WORKBENCH_LOCAL_CONFIG"), "{error}");
     }
 
     #[test]

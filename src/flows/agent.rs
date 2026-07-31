@@ -226,12 +226,13 @@ fn pane_viewport(client: &dyn HerdrClient, pane_id: &str) -> (u16, u16) {
         .and_then(Value::as_array)
         .and_then(|panes| panes.iter().find(|pane| pane["pane_id"] == pane_id))
         .and_then(|pane| pane.get("rect"));
+    let (fallback_cols, fallback_lines) = popup_viewport();
     let cols = rect
         .and_then(|rect| positive_dimension(rect.get("width")))
-        .unwrap_or_else(|| viewport_dimension("COLUMNS", "cols"));
+        .unwrap_or(fallback_cols);
     let lines = rect
         .and_then(|rect| positive_dimension(rect.get("height")))
-        .unwrap_or_else(|| viewport_dimension("LINES", "lines"));
+        .unwrap_or(fallback_lines);
     (cols, lines)
 }
 
@@ -283,10 +284,12 @@ fn nonempty_env(name: &str) -> Option<String> {
 }
 
 fn popup_viewport() -> (u16, u16) {
-    (
-        viewport_dimension("COLUMNS", "cols"),
-        viewport_dimension("LINES", "lines"),
-    )
+    super::terminal_size().unwrap_or_else(|| {
+        (
+            viewport_dimension("COLUMNS", "cols"),
+            viewport_dimension("LINES", "lines"),
+        )
+    })
 }
 
 fn viewport_dimension(variable: &str, tput_capability: &str) -> u16 {
@@ -465,7 +468,7 @@ trait Menu {
 /// rather than tidied away.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InputIndent {
-    ChoiceMargin,
+    Centered,
     None,
 }
 
@@ -667,7 +670,7 @@ fn select_worktree(
             WORKTREE_SUBTITLE,
             "new branch name…",
             44,
-            InputIndent::ChoiceMargin,
+            InputIndent::Centered,
         )?
     } else {
         menu.filter(
@@ -852,6 +855,41 @@ fn strip_pad(value: &str) -> String {
     value.trim_start().to_owned()
 }
 
+/// The width of `value` in terminal columns.
+///
+/// Centering pads have to agree with what `gum` draws, so this mirrors how `gum` measures
+/// text. Verified with `gum style --border rounded`: `中文分支` renders 8 columns and
+/// `こんにちは` 10, while the Nerd Font glyph in `\u{f15ce}  claude code` renders 1, so
+/// that label measures 14. Only the East Asian wide blocks and emoji count double; the
+/// private-use planes the Nerd Font glyphs live in do not.
+fn display_width(value: &str) -> u16 {
+    value.chars().fold(0, |total, character| {
+        let width = match u32::from(character) {
+            0x1100..=0x115F
+            | 0x2E80..=0x303E
+            | 0x3041..=0x33FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xA000..=0xA4CF
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+            | 0xFE30..=0xFE6F
+            | 0xFF00..=0xFF60
+            | 0xFFE0..=0xFFE6
+            | 0x1F300..=0x1F64F
+            | 0x1F900..=0x1F9FF
+            | 0x20000..=0x3FFFD => 2,
+            _ => 1,
+        };
+        total.saturating_add(width)
+    })
+}
+
+/// Rows `gum filter` occupies, as both the flag value and the number vertical centering
+/// has to reserve.
+const FILTER_HEIGHT_ARG: &str = "12";
+const FILTER_HEIGHT: u16 = 12;
+
 struct GumMenu {
     cols: u16,
     lines: u16,
@@ -868,6 +906,10 @@ impl GumMenu {
     }
 
     /// The left margin that centers the banner box.
+    ///
+    /// The box draws two columns wider than `--width`: `gum style` counts the padding
+    /// inside the width and adds one border column on each side. Measured at 80 columns,
+    /// `--width 44` renders 46 and leaves 17 either side.
     fn content_margin(&self) -> u16 {
         self.cols
             .saturating_sub(self.content_width())
@@ -875,10 +917,14 @@ impl GumMenu {
             / 2
     }
 
-    /// The left margin that centers a menu option or an input field. Menu items are
-    /// treated as 24 columns wide, which is what the zsh version assumes.
-    fn choice_margin(&self) -> u16 {
-        self.cols.saturating_sub(24) / 2
+    /// The left margin that centers a block `width` columns wide.
+    fn block_margin(&self, width: u16) -> u16 {
+        self.cols.saturating_sub(width) / 2
+    }
+
+    /// The blank rows that center a block `height` rows tall.
+    fn vertical_padding(&self, height: u16) -> u16 {
+        self.lines.saturating_sub(height) / 2
     }
 
     /// Draw the centered banner: title, blank line, dim subtitle.
@@ -888,12 +934,10 @@ impl GumMenu {
     /// `gum style` offsets its border lines, because the outer call measures the ANSI
     /// escapes as visible width and pads each line differently — the box comes out
     /// ragged. Printing the lines here keeps the border square.
-    fn render_banner(&self, title: &str, subtitle: &str) -> Result<()> {
+    fn render_banner(&self, title: &str, subtitle: &str, body_lines: u16) -> Result<()> {
         if io::stdout().is_terminal() {
             print!("\x1b[2J\x1b[H");
         }
-        let vertical_padding = self.lines.saturating_sub(14) / 2;
-        print!("{}", "\n".repeat(vertical_padding.into()));
         let width = self.content_width();
         let subtitle = gum_output(["style", "--foreground", "240", subtitle])?.unwrap_or_default();
         let banner = gum_output([
@@ -910,6 +954,11 @@ impl GumMenu {
             subtitle.trim_end(),
         ])?
         .unwrap_or_default();
+        // The banner is measured rather than assumed: a narrow viewport wraps the subtitle
+        // and adds rows. `+ 1` is the blank line this prints between banner and body.
+        let banner_lines = u16::try_from(banner.lines().count()).unwrap_or(u16::MAX);
+        let block = banner_lines.saturating_add(1).saturating_add(body_lines);
+        print!("{}", "\n".repeat(self.vertical_padding(block).into()));
         let margin = usize::from(self.content_margin());
         for line in banner.lines() {
             println!("{:margin$}{line}", "");
@@ -918,8 +967,12 @@ impl GumMenu {
         io::stdout().flush().context("failed to draw menu banner")
     }
 
+    /// Indent every option by one shared margin so the block is centered and its glyphs
+    /// stay in a single column. `gum choose` runs with an empty `--cursor`, so it adds no
+    /// prefix of its own and an option starts exactly at this margin.
     fn padded(&self, options: &[String]) -> Vec<String> {
-        let pad = " ".repeat(usize::from(self.choice_margin()));
+        let widest = options.iter().map(|option| display_width(option)).max();
+        let pad = " ".repeat(usize::from(self.block_margin(widest.unwrap_or(0))));
         options
             .iter()
             .map(|option| format!("{pad}{option}"))
@@ -935,7 +988,9 @@ impl Menu for GumMenu {
         options: &[String],
         height: u8,
     ) -> Result<Option<String>> {
-        self.render_banner(title, subtitle)?;
+        // `gum choose` draws one row per option and never pads out to `--height`.
+        let rows = u16::try_from(options.len()).unwrap_or(u16::MAX);
+        self.render_banner(title, subtitle, rows.min(u16::from(height)))?;
         let mut args = vec![
             "choose".to_owned(),
             "--height".to_owned(),
@@ -957,7 +1012,9 @@ impl Menu for GumMenu {
         options: &[String],
         placeholder: &str,
     ) -> Result<Option<String>> {
-        self.render_banner(title, subtitle)?;
+        // Unlike `choose`, `gum filter`'s `--height` is the whole frame: the query line,
+        // the list, and the help line. It always occupies that many rows.
+        self.render_banner(title, subtitle, FILTER_HEIGHT)?;
         // --no-strict returns the typed text when it matches no branch, so the same field
         // both picks an existing branch and names a new one.
         gum_with_input(
@@ -965,7 +1022,7 @@ impl Menu for GumMenu {
                 "filter",
                 "--no-strict",
                 "--height",
-                "12",
+                FILTER_HEIGHT_ARG,
                 "--placeholder",
                 placeholder,
             ],
@@ -981,9 +1038,9 @@ impl Menu for GumMenu {
         width: u16,
         indent: InputIndent,
     ) -> Result<Option<String>> {
-        self.render_banner(title, subtitle)?;
-        if indent == InputIndent::ChoiceMargin {
-            print!("{}", " ".repeat(usize::from(self.choice_margin())));
+        self.render_banner(title, subtitle, 1)?;
+        if indent == InputIndent::Centered {
+            print!("{}", " ".repeat(usize::from(self.block_margin(width))));
             io::stdout().flush().context("failed to indent gum input")?;
         }
         gum_output([
@@ -2022,18 +2079,68 @@ mod popup {
     fn the_centering_geometry_matches_the_popup() {
         let menu = GumMenu::new(80, 40);
         assert_eq!(menu.content_width(), 44);
+        // `--width 44` draws 46 columns, so 17 either side of an 80-column viewport.
         assert_eq!(menu.content_margin(), 17);
-        assert_eq!(menu.choice_margin(), 28);
+        assert_eq!(80 - menu.content_margin() - (menu.content_width() + 2), 17);
+        // A 24-column block leaves 28 either side; the old fixed choice margin.
+        assert_eq!(menu.block_margin(24), 28);
         assert_eq!(
             menu.padded(&[USAGE_DEBUG.to_owned()]),
-            [format!("{}{USAGE_DEBUG}", " ".repeat(28))]
+            [format!("{}{USAGE_DEBUG}", " ".repeat(36))]
         );
 
         // A viewport too narrow for the banner narrows the box and floors both margins.
         let menu = GumMenu::new(20, 8);
         assert_eq!(menu.content_width(), 16);
         assert_eq!(menu.content_margin(), 1);
-        assert_eq!(menu.choice_margin(), 0);
+        assert_eq!(menu.block_margin(24), 0);
+    }
+
+    #[test]
+    fn the_block_is_centered_on_the_rows_it_occupies() {
+        // The banner is 7 rows, plus the blank line, plus the menu body.
+        let menu = GumMenu::new(80, 40);
+        assert_eq!(menu.vertical_padding(7 + 1 + 3), 14);
+        assert_eq!(40 - menu.vertical_padding(11) - 11, 15);
+        // The worktree filter reserves its whole frame, so it sits higher.
+        assert_eq!(menu.vertical_padding(7 + 1 + FILTER_HEIGHT), 10);
+
+        // A viewport shorter than the block floors the padding instead of scrolling.
+        assert_eq!(GumMenu::new(80, 10).vertical_padding(11), 0);
+    }
+
+    #[test]
+    fn the_option_block_is_centered_on_its_widest_option() {
+        let menu = GumMenu::new(80, 40);
+        let options = [
+            HARNESS_CLAUDE.to_owned(),
+            HARNESS_CODEX.to_owned(),
+            HARNESS_OPENCODE.to_owned(),
+        ];
+        // The widest option is 14 columns, so the block starts at 33 and ends at 47.
+        let padded = menu.padded(&options);
+        let pad = " ".repeat(33);
+        assert!(
+            padded.iter().all(|option| option.starts_with(&pad)),
+            "every option shares one left edge so the glyphs line up: {padded:?}"
+        );
+        assert_eq!(display_width(&padded[0]), 47);
+        assert_eq!(80 - display_width(&padded[0]), 33);
+
+        // A narrower option set moves further right; the old fixed 24 could not.
+        let model = menu.padded(&["Fable 5".to_owned()]);
+        assert_eq!(display_width(&model[0]) - 7, 36);
+    }
+
+    #[test]
+    fn a_wide_character_counts_as_two_columns() {
+        // Measured against `gum style --border rounded`, which draws the same widths.
+        assert_eq!(display_width("中文分支"), 8);
+        assert_eq!(display_width("こんにちは"), 10);
+        assert_eq!(display_width("feat/中文"), 9);
+        // A Nerd Font glyph is one column, so these labels measure as plain text.
+        assert_eq!(display_width(HARNESS_CLAUDE), 14);
+        assert_eq!(display_width(USAGE_WRITE), 16);
     }
 
     #[test]

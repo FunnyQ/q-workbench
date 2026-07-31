@@ -6,7 +6,7 @@
 >
 > **Depends on**: foundation/01
 > **Blocks**: cutover/01
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -82,29 +82,29 @@ rediscovering it.
 
 ## Acceptance criteria
 
-- [ ] `dev/herdr-plugin.toml` declares `q.workbench-dev` with all six actions and all
+- [x] `dev/herdr-plugin.toml` declares `q.workbench-dev` with all six actions and all
       five panes, titles visibly marked as dev.
-- [ ] The five popup actions keep the `herdr plugin pane open` form, with
+- [x] The five popup actions keep the `herdr plugin pane open` form, with
       `--plugin q.workbench-dev` and the real manifest's width and height values.
-- [ ] The five panes and the `dashboard` action point at `./run.zsh`.
-- [ ] `dev/run.zsh` is executable and execs `bin/workbench` with all arguments
+- [x] The five panes and the `dashboard` action point at `./run.zsh`.
+- [x] `dev/run.zsh` is executable and execs `bin/workbench` with all arguments
       forwarded.
-- [ ] `herdr plugin link dev/` succeeds and the dev actions appear in
+- [x] `herdr plugin link dev/` succeeds and the dev actions appear in
       `herdr plugin action list`.
-- [ ] Invoking a dev popup action opens an actual popup pane that reaches the Rust
+- [x] Invoking a dev popup action opens an actual popup pane that reaches the Rust
       binary — confirmed by a stub subcommand exiting with its `unimplemented:` message.
-- [ ] The installed `q.workbench` is untouched and still enabled.
+- [x] The installed `q.workbench` is untouched and still enabled.
 
 ## Verification
 
-- [ ] `herdr plugin link dev/` then `herdr plugin list` shows both plugins enabled
-- [ ] `herdr plugin action list` lists the `q.workbench-dev` actions with the expected
+- [x] `herdr plugin link dev/` then `herdr plugin list` shows both plugins enabled
+- [x] `herdr plugin action list` lists the `q.workbench-dev` actions with the expected
       relative commands
-- [ ] Invoke one dev **popup** action and confirm a popup pane actually opens and the
+- [x] Invoke one dev **popup** action and confirm a popup pane actually opens and the
       binary ran inside it (check `herdr plugin log list` or the stub's exit status)
-- [ ] Invoke the dev `dashboard` action and confirm it runs the shim directly, with no
+- [x] Invoke the dev `dashboard` action and confirm it runs the shim directly, with no
       popup
-- [ ] `herdr plugin unlink q.workbench-dev` removes it cleanly, leaving `q.workbench`
+- [x] `herdr plugin unlink q.workbench-dev` removes it cleanly, leaving `q.workbench`
       enabled
 
 ## Eval rubric

@@ -6,7 +6,7 @@
 >
 > **Depends on**: foundation/01
 > **Blocks**: foundation/05, picker/02, picker/03, agent/02, agent/03, agent/04, agent/05, polish/01
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -104,27 +104,27 @@ socket layer works at all.
 
 ## Acceptance criteria
 
-- [ ] `HerdrClient` is a trait; `SocketClient` and `FakeClient` both implement it.
-- [ ] `SocketClient` opens one connection per call and closes it after reading.
-- [ ] Responses split across multiple reads are reassembled correctly.
-- [ ] An `error` response becomes an `anyhow::Error` carrying both code and message.
-- [ ] A missing `HERDR_SOCKET_PATH` produces a clear error, not a panic.
-- [ ] `FakeClient` records calls in order, and holds a per-method FIFO so two calls to
+- [x] `HerdrClient` is a trait; `SocketClient` and `FakeClient` both implement it.
+- [x] `SocketClient` opens one connection per call and closes it after reading.
+- [x] Responses split across multiple reads are reassembled correctly.
+- [x] An `error` response becomes an `anyhow::Error` carrying both code and message.
+- [x] A missing `HERDR_SOCKET_PATH` produces a clear error, not a panic.
+- [x] `FakeClient` records calls in order, and holds a per-method FIFO so two calls to
       the same method return different responses.
-- [ ] An empty or absent queue yields `{"type":"ok"}`; an error response can be queued.
-- [ ] `workbench herdr ping` prints the version and protocol number.
+- [x] An empty or absent queue yields `{"type":"ok"}`; an error response can be queued.
+- [x] `workbench herdr ping` prints the version and protocol number.
 
 ## Verification
 
-- [ ] `cargo test` — integration test spins a real `UnixListener` in a tempdir, writes
+- [x] `cargo test` — integration test spins a real `UnixListener` in a tempdir, writes
       a response **deliberately split across two writes with a delay**, and asserts the
       client reassembles it
-- [ ] Integration test asserts that the client does not attempt a second request on
+- [x] Integration test asserts that the client does not attempt a second request on
       the same connection
-- [ ] Integration test asserts an `error` response becomes an `Err` with the code in
+- [x] Integration test asserts an `error` response becomes an `Err` with the code in
       the message
-- [ ] `./bin/workbench herdr ping` against the live Herdr prints `protocol 17`
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `./bin/workbench herdr ping` against the live Herdr prints `protocol 17`
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

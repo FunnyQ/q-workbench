@@ -6,7 +6,7 @@
 >
 > **Depends on**: foundation/01
 > **Blocks**: foundation/04, registry/01, registry/04, agent/01
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -78,28 +78,28 @@ bypass flags are opt-in and what they do.
 
 ## Acceptance criteria
 
-- [ ] Every setting listed in the parity contract resolves to its documented default
+- [x] Every setting listed in the parity contract resolves to its documented default
       with no config file and no environment.
-- [ ] An environment variable overrides the built-in default.
-- [ ] A value in the user file overrides the environment, including overriding it back
+- [x] An environment variable overrides the built-in default.
+- [x] A value in the user file overrides the environment, including overriding it back
       to empty.
-- [ ] `Q_WORKBENCH_LOCAL_CONFIG` redirects the config path; a nonexistent path yields
+- [x] `Q_WORKBENCH_LOCAL_CONFIG` redirects the config path; a nonexistent path yields
       all defaults without error.
-- [ ] Extra-args are `Vec<String>`; a file value may contain spaces inside one
+- [x] Extra-args are `Vec<String>`; a file value may contain spaces inside one
       argument, an environment value is whitespace-split.
-- [ ] Both extra-args lists default to empty — no bypass flag is ever added implicitly.
-- [ ] A model-order label with no entry in the model map is a load error naming the label.
-- [ ] `config.example.toml` documents every setting, fully commented out.
+- [x] Both extra-args lists default to empty — no bypass flag is ever added implicitly.
+- [x] A model-order label with no entry in the model map is a load error naming the label.
+- [x] `config.example.toml` documents every setting, fully commented out.
 
 ## Verification
 
-- [ ] `cargo test` — one test per acceptance criterion above, mirroring the assertions
+- [x] `cargo test` — one test per acceptance criterion above, mirroring the assertions
       in the existing `tests/config.test.zsh`
-- [ ] A test asserts the resolved default path is
+- [x] A test asserts the resolved default path is
       `<home>/.config/herdr/plugins/config/q.workbench/config.toml` with
       `XDG_CONFIG_HOME` unset
-- [ ] A test asserts a user file can clear an environment-set extra-args list back to empty
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] A test asserts a user file can clear an environment-set extra-args list back to empty
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

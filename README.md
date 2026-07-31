@@ -2,7 +2,7 @@
 
 A Herdr plugin (`q.workbench`) that turns a terminal multiplexer into an agent workbench: launch AI coding agents into a ready-made pane layout, jump between projects and SSH hosts with fuzzy pickers, and restart a stuck agent without losing its tab.
 
-Pure zsh. No build step, no dependencies to install beyond the CLI tools below.
+A Rust binary is committed to the repository, so installing requires no build. However, hacking on it requires a Rust toolchain.
 
 ## What it does
 
@@ -33,7 +33,7 @@ git clone https://github.com/FunnyQ/q-workbench.git
 herdr plugin link ./q-workbench
 ```
 
-`link` registers the repo in place — edits to `scripts/` take effect on the next invocation, no reinstall.
+`link` registers the repo in place. Edits to Rust or shell scripts require running `zsh scripts/build.zsh` to rebuild the embedded binary before changes take effect. This is the single most likely source of confusing stale-binary bugs.
 
 ### Bind it
 
@@ -65,10 +65,10 @@ prompts "use a worktree?".
 
 ### Requirements
 
-macOS, Herdr ≥ 0.7.4, and on `PATH`: `jq`, `gum`, `fzf`, `zoxide`, `rg`, `yazi`, `trash`.
+macOS, Herdr ≥ 0.7.4, and on `PATH`: `gum`, `fzf`, `zoxide`, `yazi`.
 
 ```zsh
-brew install jq gum fzf zoxide ripgrep yazi trash
+brew install gum fzf zoxide yazi
 ```
 
 ## Registries
@@ -78,10 +78,10 @@ Both pickers read a JSON registry you can regenerate at any time.
 **Projects** — `~/.local/state/herdr-projects/registry.json`
 
 ```zsh
-scripts/project-registry.zsh scan          # first run: discover and review
-scripts/project-registry.zsh rescan        # re-review, marking [new] / [missing]
-scripts/project-registry.zsh update        # refresh sources, no prompts
-scripts/project-registry.zsh edit <path>   # rename, add aliases, hide
+./bin/workbench project scan          # first run: discover and review
+./bin/workbench project rescan        # re-review, marking [new] / [missing]
+./bin/workbench project update        # refresh sources, no prompts
+./bin/workbench project edit <path>   # rename, add aliases, hide
 ```
 
 Discovery pulls from Claude Code sessions, Codex rollouts, and a `.git` sweep of `~/Projects`. Entries sort by most-recently-used.
@@ -89,60 +89,61 @@ Discovery pulls from Claude Code sessions, Codex rollouts, and a `.git` sweep of
 **SSH targets** — `~/.local/state/ssh-targets/registry.json`
 
 ```zsh
-scripts/ssh-target-registry.zsh sync       # reconcile against ~/.config/ssh/config
-scripts/ssh-target-registry.zsh list
+./bin/workbench ssh sync       # reconcile against ~/.config/ssh/config
+./bin/workbench ssh list
 ```
 
 Hosts come from your SSH config (seeded once from shell history). In the picker, `ctrl-i` edits a host (adding new ones to your SSH config), `ctrl-x` removes it.
 
 ## Configuration
 
-Machine-specific values go in Herdr's per-plugin config dir — outside this repo, so
-they survive a reinstall and can't be committed by accident:
+Machine-specific values use TOML outside this repo, so they survive a reinstall and
+cannot be committed by accident. Create this file when you need an override:
 
-```zsh
-cp config.example.zsh "$(herdr plugin config-dir q.workbench)/config.zsh"
-$EDITOR "$(herdr plugin config-dir q.workbench)/config.zsh"
+```text
+~/.config/herdr/plugins/config/q.workbench/config.toml
 ```
 
-`config.example.zsh` in this repo documents every setting, fully commented out.
-
-It is sourced by `scripts/config.zsh` — which every script that reads a setting sources
-in turn — ahead of every default, so plain assignments win:
+Existing users can preview a migration from zsh to TOML, then write it after review:
 
 ```zsh
-Q_DASHBOARD_WORKSPACE='my-workspace'
-Q_CLAUDE_EXTRA_ARGS='--dangerously-load-development-channels plugin:monitor@my-marketplace'
-Q_CODEX_EXTRA_ARGS='--dangerously-bypass-approvals-and-sandbox'
+./bin/workbench config migrate
+./bin/workbench config migrate --write
 ```
 
-Use the file rather than `~/.zshrc`: Herdr runs plugin actions detached, so an exported
-variable may not reach them.
+TOML arrays preserve argument boundaries. Put each flag and value in its own entry:
 
-| Variable | Default | Purpose |
+```toml
+dashboard_workspace = "my-workspace"
+claude_extra_args = ["--dangerously-load-development-channels", "plugin:monitor@my-marketplace"]
+codex_extra_args = ["--dangerously-bypass-approvals-and-sandbox"]
+```
+
+| Setting | Default | Purpose |
 | --- | --- | --- |
-| `Q_DASHBOARD_WORKSPACE` | `personal-assistant` | Workspace the dashboard tab opens in |
-| `Q_CLAUDE_EXTRA_ARGS` | *(empty)* | Appended to every `claude` launch |
-| `Q_CODEX_EXTRA_ARGS` | *(empty)* | Appended to every `codex` launch |
-| `Q_AGENT_MODEL_ORDER` / `Q_AGENT_MODELS` / `Q_AGENT_MODEL_ARGS` | Opus, OpusPlan, CCR, Fable 5 | The claude model menu — declare the maps `typeset -gA` first, see the example file |
-| `Q_PROJECT_REGISTRY_FILE` | `~/.local/state/herdr-projects/registry.json` | |
-| `Q_PROJECTS_ROOT` | `~/Projects` | Root of the `.git` discovery sweep |
-| `Q_SSH_REGISTRY_FILE` | `~/.local/state/ssh-targets/registry.json` | |
-| `Q_SSH_CONFIG_FILE` | `~/.config/ssh/config` | What `sync` reconciles against |
-| `Q_SSH_HISTORY_FILE` | `~/.zsh_history` | Seeds the SSH registry on first sync |
+| `dashboard_workspace` | `personal-assistant` | Workspace the dashboard tab opens in |
+| `claude_extra_args` | `[]` | Array appended to every `claude` launch |
+| `codex_extra_args` | `[]` | Array appended to every `codex` launch |
+| `order` / `models` / `model_args` | Opus, OpusPlan, CCR, Fable 5 | The Claude model menu; `order` and each `model_args` value are arrays |
+| `project_registry_file` | `~/.local/state/herdr-projects/registry.json` | Project registry path |
+| `projects_root` | `~/Projects` | Root of the `.git` discovery sweep |
+| `ssh_registry_file` | `~/.local/state/ssh-targets/registry.json` | SSH registry path |
+| `ssh_config_file` | `~/.config/ssh/config` | What `sync` reconciles against |
+| `ssh_history_file` | `~/.zsh_history` | Seeds the SSH registry on first sync |
 
 **On the bypass flags:** `--dangerously-bypass-approvals-and-sandbox` (Codex) and
 `--dangerously-skip-permissions` (Claude) hand the agent unrestricted execution on your
-host. Nothing adds them for you — put them in the `*_EXTRA_ARGS` slot deliberately, per
-machine.
+host. Nothing adds them for you — put them in the `claude_extra_args` or
+`codex_extra_args` TOML array deliberately, per machine.
 
 ## Development
 
 ```zsh
-zsh tests/project-registry.test.zsh                       # one test
-for t in tests/*.test.zsh; do zsh "$t" || break; done      # all of them
+cargo test
+cargo clippy -- -D warnings
+zsh scripts/build.zsh
 ```
 
-Tests are standalone zsh scripts — no framework. Each builds a `mktemp -d` sandbox, shims `herdr`/`fzf`/`gum`/`ssh` into a mock `PATH`, and asserts with `jq -e`. A non-zero exit is a failure.
+The binary must be rebuilt and committed as part of any release, since the version it reports comes from the `Cargo.toml` crate manifest.
 
 See `CLAUDE.md` for architecture notes.

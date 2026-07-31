@@ -4,68 +4,72 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A **Herdr plugin** (`q.workbench`) — pure zsh, no build step, no package manager. It ships terminal-multiplexer actions for Q's workflow: launching AI agents in structured tab layouts, picking projects/SSH targets via fzf, and restarting agents in place.
+A **Herdr plugin** (`q.workbench`) implemented as a Rust binary. It launches AI agents in structured tab layouts, picks projects and SSH targets, and restarts agents in place.
 
-`herdr-plugin.toml` is the entry point: `[[actions]]` (what appears in Herdr's action list) and `[[panes]]` (popup panes an action can open). Every `command` is `["zsh", "scripts/<name>.zsh"]` — adding a feature means adding a script *and* registering it in the manifest.
+`herdr-plugin.toml` registers the actions and popup panes. Most entries call the committed `bin/workbench` artifact. Run `zsh scripts/build.zsh` after changing Rust or embedded shell scripts, and commit the rebuilt binary with a release. A linked checkout still runs that artifact, so forgetting the rebuild is the usual cause of code and behavior disagreeing.
 
 ## Commands
 
 ```zsh
-zsh tests/project-registry.test.zsh     # run a single test
-for t in tests/*.test.zsh; do zsh "$t" || break; done   # run all tests
+cargo test
+cargo clippy -- -D warnings
+zsh scripts/build.zsh
 ```
 
-There is no test framework. Each `tests/*.test.zsh` is a standalone script that `set -eu`, builds a `mktemp -d` sandbox, shims external binaries (`herdr`, `fzf`, `gum`, `zoxide`, `ssh`) into a `$mock_bin` prepended to `PATH`, runs the script under test, asserts with `jq -e`, and prints `<name>: ok`. Non-zero exit = failure. Follow that shape exactly for new tests.
+`cargo test` covers the CLI, socket protocol, registries, pickers, and launch flows. Tests use `FakeClient` for ordered Herdr responses and temporary directories for filesystem state. Keep subprocess boundaries injectable when a flow needs `gum`, `fzf`, `git`, `ssh`, or `zoxide`.
 
 ## Architecture
 
-### Two agent-launch paths — know which one you're touching
+### CLI and configuration
 
-Both build the same 3-pane layout (agent | yazi "Files" / term) but from opposite sides:
+`src/main.rs` is the single command router. Herdr actions and internal reinjections use the same `agent`, `project`, `ssh`, `dashboard`, and `config` command tree, so add behavior there before wiring a manifest entry.
 
-- **`scripts/new-agent-popup.zsh`** — runs *inside a popup*. Collects all choices first (worktree → harness → model → usage), **then** creates the tab and panes via `herdr tab create` / `pane split` / `pane run`. Has a `cleanup_tab()` that closes the half-built tab and notifies on any failure.
-- **`scripts/agent-launcher.zsh`** — runs *inside the agent pane itself* and ends in `exec <harness>`. Menus render at full pane width first; the yazi/term split is deliberately deferred to the very end so no resize happens mid-menu and the chosen worktree drives `--cwd` for all three panes. `scripts/build-agent-tab.zsh` is the thin wrapper that injects it into a pane (used by `ccc` in `zsh/functions/herdr.zsh`, outside this repo).
+`src/config.rs` loads TOML from the per-plugin config path. TOML arrays preserve extra-argument boundaries, including values that contain spaces. Keep bypass flags opt-in through `claude_extra_args` and `codex_extra_args`; never add an unconditional default.
 
-`agent-launcher.zsh` takes positional args `<pane_id> [tab_id] [fixed_usage] [wt_mode] [layout_mode]`; empty-but-quoted slots matter (`'' '' ''`) since args don't shift.
+`workbench config migrate` is the only compatibility boundary with the old zsh config. It executes the source file because that file can contain shell logic, then emits equivalent TOML. Keep that execution explicit in help and errors.
 
-**Restart-in-place** (`restart-agent.zsh`) depends on `exec` replacing the *launcher* subprocess, not the pane's shell — so killing the agent's foreground process group drops the pane back to its prompt instead of destroying it. It then re-injects the launcher with `layout_mode=no-layout`. It also `stty sane`s and clears Kitty keyboard-protocol state because Codex leaves the TTY dirty on SIGTERM.
+### Herdr socket contract
 
-### Configuration
+`src/herdr/mod.rs` talks directly to `HERDR_SOCKET_PATH`. Herdr accepts exactly one request per connection and closes the connection after its response. Open a fresh `UnixStream` for every call; connection reuse hangs rather than saving work.
 
-`scripts/config.zsh` is **sourced** by every script that reads a setting — the three launchers plus both registries and both pickers — so it must stay side-effect free (no output, no `set`, no `exit`). It owns *all* defaults; a script reads `$Q_FOO` bare rather than repeating a `:-` fallback, so there is one place to change a default and no way for two scripts to disagree.
+Requests and responses are newline-delimited JSON. A response can arrive in multiple chunks, so buffer reads until the first newline before parsing. Never assume one `read` contains the full response.
 
-Precedence is user config → environment → built-in defaults, achieved by sourcing the user file *first* so its plain assignments survive the `:-` fallbacks.
+`pane.send_input` replaces the old run-command path. Its `keys` field uses Herdr's key vocabulary: use `"enter"` to submit text. `"Enter"` and `"return"` are accepted, but `"cr"` is rejected. Sending `text` with `keys: ["enter"]` types into the pane's interactive shell and executes it.
 
-The user file lives at `$(herdr plugin config-dir q.workbench)/config.zsh`, resolved lazily (the CLI is only shelled out to when `Q_WORKBENCH_LOCAL_CONFIG` is unset) with a literal `~/.config/herdr/plugins/config/…` fallback. The resolved paths are **exported** so the pickers — which respawn their source script on every fzf reload — skip that shellout. **Tests that invoke any of these scripts must pass `Q_WORKBENCH_LOCAL_CONFIG=/dev/null`** — otherwise the developer's real config leaks in and assertions about defaults pass or fail by machine.
+### Agent launch and restart
 
-`config.example.zsh` at the repo root documents every setting, fully commented out; keep it in step when adding one.
+The popup gathers worktree, harness, model, and usage choices before it creates the final layout. The launcher deliberately defers the yazi and terminal split until every menu is complete. Splitting sooner resizes the agent pane while menus are drawing, and the chosen worktree must determine the cwd of all three panes.
 
-**The model-menu typeset trap:** a user file overriding `Q_AGENT_MODELS` / `Q_AGENT_MODEL_ARGS` must declare them `typeset -gA` *before* assigning. Otherwise they are plain arrays when config.zsh's own `typeset -gA` runs, and zsh **silently empties** an array on that conversion — the `(( ${#…} )) ||` guard then sees 0 and restores the built-in menu, leaving the user's `Q_AGENT_MODEL_ORDER` labels resolving to nothing. `tests/config.test.zsh` pins this.
+The injected launcher ends with `exec` so the harness replaces the launcher process. Restart depends on this: terminating the foreground harness returns the pane to its interactive shell, then the restart worker can inject a new launcher without destroying the side panes.
 
-Harness bypass flags (`--dangerously-bypass-approvals-and-sandbox`, `--dangerously-skip-permissions`) live in `Q_CODEX_EXTRA_ARGS` / `Q_CLAUDE_EXTRA_ARGS` and are **opt-in**. Do not reintroduce a dedicated boolean or an unconditional default; `tests/new-agent-popup.test.zsh` asserts both states.
+Restart injection crosses a shell boundary. `pane.send_input` sends command text, then the pane's shell parses it. Build reinjection commands with `src/shell.rs`; quote every executable path and argument separately so spaces, quotes, and shell metacharacters cannot change argv.
+
+Codex can leave the TTY and Kitty keyboard protocol dirty after termination. Keep the restart reset sequence before reinjection, or gum can render in the wrong column and ignore arrow keys.
+
+### Popup cwd
+
+A popup's current directory is not a reliable project directory. Resolve project context from Herdr's session and pane data instead of trusting process cwd. This matters most for worktree creation and project actions launched from popup panes.
 
 ### Registries
 
-Two JSON state files, both `version: 1`, both written atomically (`mktemp` → `jq '.'` → `mv`) via a local `write_registry`:
+`src/registry/project.rs` and `src/registry/ssh.rs` own the two version-1 JSON stores. Writes replace the complete registry atomically. Preserve stable ordering and existing source metadata when changing either schema.
 
-- **Projects** — `~/.local/state/herdr-projects/registry.json` (override: `$Q_PROJECT_REGISTRY_FILE`). `project-registry.zsh {scan|rescan|update|use PATH|edit PATH}`. Discovery merges three sources: Claude sessions (`~/.claude/projects`), Codex rollouts (`~/.codex/sessions`), and a `.git` sweep of `$Q_PROJECTS_ROOT` (default `~/Projects`). `canonical_project()` resolves to the git toplevel and drops temp dirs — keep that filter intact.
-- **SSH targets** — `~/.local/state/ssh-targets/registry.json` (override: `$Q_SSH_REGISTRY_FILE`). `ssh-target-registry.zsh {sync|list|get|use|remove}`. `sync` reconciles against `~/.config/ssh/config` (`$Q_SSH_CONFIG_FILE`) using `ssh -G`; config-sourced entries are *hidden* on remove, manual ones deleted. Seeded once from `$Q_SSH_HISTORY_FILE`.
+Project discovery merges Claude sessions, Codex rollouts, and a `.git` sweep of `projects_root`. Canonicalization resolves each candidate to its Git root and rejects temp-directory paths. Keep the temp-dir filter: test sandboxes and transient worktrees must not leak into the real registry.
 
-Note `$Q_SSH_REGISTRY_FILE` (the JSON) is distinct from `$Q_SSH_REGISTRY_SCRIPT` (the path to `ssh-target-registry.zsh`, a test injection point alongside `$Q_SSH_EDITOR`) — those two are wiring, not user config, and stay out of `config.zsh`.
-
-`_source` fields accumulate; `use` stamps `last_used_at`, which drives picker sort order.
+SSH sync reconciles configured hosts through `ssh -G`. Removing a config-sourced entry hides it; removing a manual entry deletes it. A successful session stamps usage, and its dedicated tab closes on every connection exit path.
 
 ### fzf pickers
 
-`project-picker-popup.zsh` and `ssh-picker-popup.zsh` both feed fzf **NUL-delimited multi-line records** (`--read0`) with a tab-separated payload (`--delimiter=$'\t' --with-nth=1 --accept-nth=2`). `list_targets` produces those by emitting `\f` from jq and `tr`-ing it to NUL. Keybindings are wired as `execute(...)+reload(...)` back into the same scripts, so editors must `clear` before drawing (fzf owns the alternate screen).
+Both pickers feed fzf NUL-delimited, multi-line records with a tab-separated payload. Newlines belong to the visible row, so line-delimited records corrupt selection boundaries. Keep `--read0`, the payload delimiter, and positional parsing together.
 
-The project picker also falls back to `zoxide query` when the typed query matches no registered project.
+The project picker can append one `zoxide` fallback for an active query. Plain enter opens the agent layout in a new workspace; alt-enter leaves it plain. Existing workspaces are focused without rebuilding their tabs.
+
+fzf owns the alternate screen while edit bindings run. Clear it before drawing a `gum` editor, then let fzf reload its source after the editor exits.
 
 ## Conventions
 
-- `#!/usr/bin/env zsh`, `set -eu` where the script isn't a menu flow, `export PATH="/opt/homebrew/bin:$PATH"` at the top (plugin actions run detached with a minimal PATH).
-- Hard dependencies, assumed present: `herdr`, `jq`, `gum`, `fzf`, `zoxide`, `rg`, `trash`.
-- `trash`, never `rm` — including in test cleanup traps.
-- Every `herdr` call is parsed with `jq -r '.result...// empty'` and guarded; failures are surfaced through `herdr notification show`, not stdout.
-- Menu labels carry Nerd Font glyphs and are also the pane/tab label — stripping the leading pad (`${x#"${x%%[![:space:]]*}"}`) is intentional, keeping the glyph is too.
-- Comments in this repo explain *why* (ordering traps, TTY quirks, git-worktree constraints). Match that density; don't strip them.
+- Keep Herdr protocol types in `src/herdr/types.rs` and expose typed client helpers from `src/herdr/mod.rs`.
+- Route popup failures through notifications and durable CLI failures through stderr. Treat cancellation as a clean outcome.
+- Keep comments focused on ordering, protocol, terminal, and quoting reasons that are not obvious from the code.
+- Use Rust filesystem operations that match the registry contract. Remove only paths the operation is meant to delete.
+- Rebuild `bin/workbench` before testing the linked plugin or preparing a release.

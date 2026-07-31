@@ -586,8 +586,17 @@ fn review_menu_args() -> Vec<String> {
 struct GumPrompt;
 
 impl GumPrompt {
+    /// Run `gum` and capture its answer.
+    ///
+    /// gum writes the answer to stdout but draws its UI on *stderr* whenever stdout is
+    /// not a terminal — which is exactly this call, since the answer is captured. Without
+    /// the inherit the prompt renders nowhere and the user answers a blank screen.
+    /// `choose_projects` needs no inherit only because it never redirects stderr.
     fn output(command: &mut Command) -> Result<Option<String>> {
-        let output = command.output().context("failed to run gum")?;
+        let output = command
+            .stderr(Stdio::inherit())
+            .output()
+            .context("failed to run gum")?;
         if !output.status.success() {
             return Ok(None);
         }

@@ -262,11 +262,14 @@ fn gum_input(header: &str, prompt: &str, value: &str, placeholder: &str) -> Resu
     if !placeholder.is_empty() {
         command.arg(format!("--placeholder={placeholder}"));
     }
-    // gum draws its UI on the controlling TTY and writes the answer to stdout, so
-    // capturing stdout still shows the prompt. A non-zero exit means cancelled.
+    // gum writes the answer to stdout but draws its UI on *stderr* whenever stdout is
+    // not a terminal — which is exactly this call, since the answer is captured. Without
+    // the inherit the prompt renders nowhere and the user types into a blank screen.
+    // A non-zero exit means cancelled.
     let output = command
         .arg(format!("--prompt={prompt}"))
         .arg(format!("--value={value}"))
+        .stderr(Stdio::inherit())
         .output()
         .context("failed to run gum input")?;
     Ok(output.status.success().then(|| {

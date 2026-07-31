@@ -4,6 +4,13 @@ use std::process::ExitCode;
 use anyhow::{anyhow, Result};
 use clap::{Args, Parser, Subcommand};
 
+#[allow(dead_code)]
+mod herdr;
+#[allow(dead_code)]
+mod config;
+
+use herdr::{HerdrClient, SocketClient};
+
 #[derive(Debug, Parser)]
 #[command(name = "workbench", version)]
 struct Cli {
@@ -151,9 +158,15 @@ impl Cli {
             Command::Config { command } => match command {
                 ConfigCommand::Migrate { .. } => "config migrate",
             },
-            Command::Herdr { command } => match command {
-                HerdrCommand::Ping => "herdr ping",
-            },
+            Command::Herdr { command } => {
+                return match command {
+                    HerdrCommand::Ping => {
+                        let response = SocketClient::new()?.ping()?;
+                        println!("herdr {}, protocol {}", response.version, response.protocol);
+                        Ok(())
+                    }
+                };
+            }
         };
 
         Err(anyhow!("unimplemented: {path}"))

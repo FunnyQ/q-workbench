@@ -1,8 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
@@ -11,11 +10,15 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::herdr::HerdrClient;
+use crate::registry::project::write_json_atomically;
 
 const STATE_VERSION: u8 = 1;
-const HARNESS_CLAUDE: &str = "\u{f15ce}  claude code";
-const HARNESS_CODEX: &str = "\u{ee0d}  codex";
-const HARNESS_OPENCODE: &str = "\u{f169f}  opencode";
+// The single home for the harness menu labels. A stored record is keyed by the label,
+// so a glyph edit in a second copy would silently invalidate every saved choice —
+// `flows::agent` imports these rather than restating them.
+pub const HARNESS_CLAUDE: &str = "\u{f15ce}  claude code";
+pub const HARNESS_CODEX: &str = "\u{ee0d}  codex";
+pub const HARNESS_OPENCODE: &str = "\u{f169f}  opencode";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastAgentRecord {
@@ -43,9 +46,7 @@ impl Default for LastAgentState {
 fn state_path() -> Option<PathBuf> {
     let override_path = env::var_os("Q_WORKBENCH_STATE_FILE").map(PathBuf::from);
     #[cfg(test)]
-    if override_path.is_none() {
-        return None;
-    }
+    override_path.as_ref()?;
     override_path.or_else(|| {
         env::var_os("HOME")
             .map(|home| PathBuf::from(home).join(".local/state/herdr-workbench/last-agent.json"))
@@ -63,25 +64,28 @@ pub fn read_state() -> LastAgentState {
         .unwrap_or_default()
 }
 
-pub fn get_for_pane(pane_id: &str) -> Option<(String, Option<String>)> {
+/// The one rule for "is this stored choice still offerable": the harness must still be
+/// on the menu, and a claude record's model label must still resolve in the config.
+/// Both the state reader and the harness menu ask this question, so it lives once.
+pub fn last_choice_is_valid(harness: &str, model: Option<&str>, config: &Config) -> bool {
+    match harness {
+        HARNESS_CLAUDE => model
+            .is_some_and(|model| config.order.iter().any(|l| l == model) && config.models.contains_key(model)),
+        HARNESS_CODEX | HARNESS_OPENCODE => model.is_none(),
+        _ => false,
+    }
+}
+
+/// The caller already holds a loaded config, so this borrows it rather than reading and
+/// parsing the file a second time on every restart.
+pub fn get_for_pane(pane_id: &str, config: &Config) -> Option<(String, Option<String>)> {
     let mut state = read_state();
     let record = state.panes.get(pane_id)?.clone();
-    let valid = match record.harness.as_str() {
-        HARNESS_CLAUDE => {
-            let config = Config::load().ok()?;
-            record.model.as_ref().is_some_and(|model| {
-                config.order.contains(model) && config.models.contains_key(model)
-            })
-        }
-        HARNESS_CODEX | HARNESS_OPENCODE => record.model.is_none(),
-        _ => false,
-    };
+    let valid = last_choice_is_valid(&record.harness, record.model.as_deref(), config);
     if !valid {
         state.panes.remove(pane_id);
         if let Some(path) = state_path() {
-            let _ = serde_json::to_vec(&state)
-                .ok()
-                .and_then(|contents| write_atomically(&path, &contents).ok());
+            let _ = write_json_atomically(&path, &state);
         }
         return None;
     }
@@ -117,29 +121,7 @@ pub fn write_state(
                 .as_secs(),
         },
     );
-    write_atomically(&path, &serde_json::to_vec(&state)?)
-}
-
-fn write_atomically(path: &Path, contents: &[u8]) -> Result<()> {
-    let parent = path.parent().context("agent state path has no parent")?;
-    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
-    let template = format!("{}.tmp.XXXXXX", path.display());
-    let output = Command::new("mktemp")
-        .arg(&template)
-        .output()
-        .context("failed to create temporary agent state file")?;
-    anyhow::ensure!(
-        output.status.success(),
-        "mktemp failed for agent state file"
-    );
-    let temporary = PathBuf::from(String::from_utf8(output.stdout)?.trim());
-    let result = fs::write(&temporary, contents)
-        .and_then(|_| fs::rename(&temporary, path))
-        .with_context(|| format!("failed to replace {}", path.display()));
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
+    write_json_atomically(&path, &state)
 }
 
 #[cfg(test)]
@@ -174,7 +156,7 @@ mod tests {
         write_state(&client, "w2N:p1", HARNESS_CODEX, None).unwrap();
 
         assert_eq!(
-            get_for_pane("w2N:p1"),
+            get_for_pane("w2N:p1", &Config::default()),
             Some((HARNESS_CODEX.to_owned(), None))
         );
         assert!(!read_state().panes.contains_key("dead"));
@@ -206,7 +188,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(get_for_pane("p1"), None);
+        assert_eq!(get_for_pane("p1", &Config::default()), None);
         assert!(!read_state().panes.contains_key("p1"));
         fs::remove_file(path).unwrap();
         env::remove_var("Q_WORKBENCH_STATE_FILE");

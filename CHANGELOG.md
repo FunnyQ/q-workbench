@@ -5,6 +5,45 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-08-01
+
+_tracks tag `v0.2.0`_
+
+### Added
+- Rewrote the plugin from zsh scripts to a single Rust binary (`bin/workbench`),
+  covering agent launch, project/SSH pickers, and in-place restart. Behaviour was
+  checked against 64 parity clauses from the original zsh implementation before
+  cutover.
+- Configuration now loads from TOML with environment-variable overrides; run
+  `workbench config migrate` to convert an existing zsh config.
+- Terminal and picker failures report through stderr with consistent formatting,
+  reserving popup notifications for flows that need them.
+- Added a "use last" menu entry that repeats the previous agent/model combination
+  without walking the menus again.
+
+### Fixed
+- Popup menus now render at the pane's actual size and stay centered. A prior fix
+  made `gum` render at all; everything visible after that was still laid out
+  against wrong numbers. Sizing had silently fallen back to an 80x24 canvas because
+  `$COLUMNS`/`$LINES` are never exported to a child process and `tput` can't read a
+  piped terminal; a new `terminal_size()` helper reads the real pane size directly.
+  Menu items were also centered against stale hardcoded widths, off by up to 10
+  columns, and the banner assumed a fixed 14-row height; both now measure actual
+  content.
+- CJK and other wide characters in branch names no longer throw off menu
+  centering, since width is now measured per display column instead of per byte.
+- Editing failed silently in two places: the SSH picker's `[manual]` record and the
+  project picker's editor. Both piped `gum`'s stderr, where `gum` draws its prompt,
+  so `ctrl+i` cleared the screen and drew four prompts nowhere. Both now inherit
+  stderr like every other `gum` call site, and a regression test pins the stream
+  contract.
+- SSH sessions now pass the real config file into session-history stamping, so the
+  configured half of the SSH registry no longer gets dropped after a session.
+
+Known limitation, not fixed in this release: `gum filter` strips the indent on its
+cursor row only, so the highlighted row in the New Worktree branch list jumps to
+column 0.
+
 ## [0.1.1] - 2026-07-22
 
 _tracks tag `v0.1.1`_

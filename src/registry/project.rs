@@ -536,9 +536,9 @@ fn candidate_rows(
 /// The interactive surface of `scan`, `rescan` and `edit`, behind one trait so the
 /// review logic can be tested without a TTY.
 ///
-/// `Ok(None)` means the user cancelled — `gum` exits non-zero on escape. It is not an
-/// error to report; the caller turns it into the parity contract's "registry not
-/// written" message.
+/// `Ok(None)` means the user cancelled — `gum` exits non-zero on escape. Terminal
+/// cancellation reports that nothing was written because the edit remains visible.
+/// Popup cancellation stays silent because dismissing a temporary menu is normal.
 trait PromptRunner {
     fn choose_projects(&mut self, rows: &[String]) -> Result<Option<String>>;
     fn input(&mut self, header: &str, value: &str) -> Result<Option<String>>;
@@ -1228,7 +1228,13 @@ mod tests {
         .unwrap();
         let before = fs::read(&registry_path).unwrap();
 
-        for choice in [None, Some(String::new())] {
+        for (choice, expected) in [
+            (None, "project-registry: cancelled; registry not written"),
+            (
+                Some(String::new()),
+                "project-registry: nothing selected; registry not written",
+            ),
+        ] {
             let mut prompt = FakePrompt {
                 choices: VecDeque::from([choice]),
                 ..FakePrompt::default()
@@ -1244,7 +1250,7 @@ mod tests {
             )
             .unwrap_err()
             .to_string();
-            assert!(error.contains("registry not written"));
+            assert_eq!(error, expected);
             assert_eq!(fs::read(&registry_path).unwrap(), before);
         }
     }
@@ -1563,6 +1569,56 @@ mod tests {
     }
 
     #[test]
+    fn edit_requires_an_absolute_path() {
+        let fixture = Fixture::new("edit-relative");
+        let registry_path = fixture.directory.join("registry.json");
+        write_registry(
+            &registry_path,
+            &registry_with("/projects/project", &["manual"]),
+        )
+        .unwrap();
+
+        let error = edit_with(
+            &registry_path,
+            Path::new("project"),
+            &mut FakePrompt::default(),
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "project-registry: absolute project path is required"
+        );
+    }
+
+    #[test]
+    fn edit_rejects_invalid_visibility_without_writing() {
+        let fixture = Fixture::new("edit-visibility");
+        let project = fixture.mkdir("projects/project");
+        let registry_path = fixture.directory.join("registry.json");
+        write_registry(
+            &registry_path,
+            &registry_with(project.to_str().unwrap(), &["manual"]),
+        )
+        .unwrap();
+        let before = fs::read(&registry_path).unwrap();
+        let mut prompt = FakePrompt {
+            inputs: VecDeque::from([Some("Project".to_owned()), Some(String::new())]),
+            visibilities: VecDeque::from([Some("private".to_owned())]),
+            ..FakePrompt::default()
+        };
+
+        let error = edit_with(&registry_path, &project, &mut prompt, &mut Vec::new()).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "project-registry: invalid visibility; registry not written"
+        );
+        assert_eq!(fs::read(&registry_path).unwrap(), before);
+    }
+
+    #[test]
     fn edit_cancellation_preserves_registry_and_empty_name_uses_basename() {
         let fixture = Fixture::new("edit");
         let project = fixture.mkdir("projects/project");
@@ -1577,7 +1633,12 @@ mod tests {
             inputs: VecDeque::from([None]),
             ..FakePrompt::default()
         };
-        assert!(edit_with(&registry_path, &project, &mut cancelled, &mut Vec::new()).is_err());
+        let error =
+            edit_with(&registry_path, &project, &mut cancelled, &mut Vec::new()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "project-registry: edit cancelled; registry not written"
+        );
         assert!(cancelled.cleared);
         assert_eq!(fs::read(&registry_path).unwrap(), before);
 
@@ -1586,7 +1647,12 @@ mod tests {
             visibilities: VecDeque::from([Some("hidden".to_owned())]),
             ..FakePrompt::default()
         };
-        edit_with(&registry_path, &project, &mut edited, &mut Vec::new()).unwrap();
+        let mut output = Vec::new();
+        edit_with(&registry_path, &project, &mut edited, &mut output).unwrap();
+        assert_eq!(
+            output,
+            format!("project-registry: edited {}\n", project.display()).as_bytes()
+        );
         let registry = read_registry(&registry_path).unwrap();
         let entry = &registry.projects[project.to_str().unwrap()];
         assert_eq!(entry.name, "project");

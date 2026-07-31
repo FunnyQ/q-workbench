@@ -21,6 +21,14 @@ mod state;
 use flows::{FlowError, FlowResult, Outcome};
 use herdr::{check_protocol, HerdrClient, ProtocolGuardError, SocketClient};
 
+/// Routes failures either to a durable terminal or to a popup notification.
+/// The route also records whether the command needs Herdr, so setup cannot drift.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Channel {
+    Notification(&'static str),
+    Stderr { uses_herdr: bool },
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "workbench", version)]
 struct Cli {
@@ -152,6 +160,95 @@ enum HerdrCommand {
 }
 
 impl Cli {
+    /// Classify parsed commands against the fixed parity-contract lists.
+    /// Command identity, rather than error text, determines the reporting surface.
+    fn channel(&self) -> Channel {
+        match &self.command {
+            Command::Agent {
+                command: AgentCommand::Popup { .. },
+            } => Channel::Notification("Agent popup failed"),
+            Command::Agent {
+                command: AgentCommand::Launch(_),
+            } => Channel::Notification("Agent launch failed"),
+            Command::Agent {
+                command: AgentCommand::Inject(_),
+            } => Channel::Notification("Agent inject failed"),
+            Command::Agent {
+                command: AgentCommand::Restart | AgentCommand::RestartWorker { .. },
+            } => Channel::Notification("Agent restart failed"),
+            Command::Project {
+                command: ProjectCommand::Pick,
+            } => Channel::Notification("Project picker"),
+            Command::Ssh {
+                command: SshCommand::Pick,
+            } => Channel::Notification("SSH picker"),
+            Command::Ssh {
+                command: SshCommand::Session { .. },
+            } => Channel::Notification("SSH session"),
+            Command::Dashboard => Channel::Notification("Dashboard Launcher"),
+            Command::Project {
+                command:
+                    ProjectCommand::Source { .. }
+                    | ProjectCommand::Scan
+                    | ProjectCommand::Rescan
+                    | ProjectCommand::Update
+                    | ProjectCommand::Use { .. }
+                    | ProjectCommand::Edit { .. },
+            }
+            | Command::Ssh {
+                command:
+                    SshCommand::Sync
+                    | SshCommand::List
+                    | SshCommand::Get { .. }
+                    | SshCommand::Use { .. }
+                    | SshCommand::Remove { .. },
+            }
+            | Command::Ssh {
+                command: SshCommand::Edit { .. },
+            }
+            | Command::Config {
+                command: ConfigCommand::Migrate { .. },
+            } => Channel::Stderr { uses_herdr: false },
+            Command::Herdr {
+                command: HerdrCommand::Ping,
+            } => Channel::Stderr { uses_herdr: true },
+        }
+    }
+
+    fn subcommand_path(&self) -> &'static str {
+        match &self.command {
+            Command::Agent { command } => match command {
+                AgentCommand::Popup { .. } => "agent popup",
+                AgentCommand::Launch(_) => "agent launch",
+                AgentCommand::Inject(_) => "agent inject",
+                AgentCommand::Restart => "agent restart",
+                AgentCommand::RestartWorker { .. } => "agent restart-worker",
+            },
+            Command::Project { command } => match command {
+                ProjectCommand::Pick => "project pick",
+                ProjectCommand::Source { .. } => "project source",
+                ProjectCommand::Scan => "project scan",
+                ProjectCommand::Rescan => "project rescan",
+                ProjectCommand::Update => "project update",
+                ProjectCommand::Use { .. } => "project use",
+                ProjectCommand::Edit { .. } => "project edit",
+            },
+            Command::Ssh { command } => match command {
+                SshCommand::Pick => "ssh pick",
+                SshCommand::Sync => "ssh sync",
+                SshCommand::List => "ssh list",
+                SshCommand::Get { .. } => "ssh get",
+                SshCommand::Use { .. } => "ssh use",
+                SshCommand::Remove { .. } => "ssh remove",
+                SshCommand::Edit { .. } => "ssh edit",
+                SshCommand::Session { .. } => "ssh session",
+            },
+            Command::Dashboard => "dashboard",
+            Command::Config { .. } => "config migrate",
+            Command::Herdr { .. } => "herdr ping",
+        }
+    }
+
     #[allow(clippy::needless_return)]
     fn run(self, client: Option<&dyn HerdrClient>) -> FlowResult {
         match self.command {
@@ -364,48 +461,16 @@ impl Cli {
     }
 
     fn uses_herdr(&self) -> bool {
-        !matches!(
-            &self.command,
-            Command::Project {
-                command: ProjectCommand::Source { .. }
-                    | ProjectCommand::Scan
-                    | ProjectCommand::Rescan
-                    | ProjectCommand::Update
-                    | ProjectCommand::Use { .. }
-                    | ProjectCommand::Edit { .. },
-            } | Command::Ssh {
-                command: SshCommand::Sync
-                    | SshCommand::List
-                    | SshCommand::Get { .. }
-                    | SshCommand::Use { .. }
-                    | SshCommand::Remove { .. }
-                    | SshCommand::Edit { .. },
-            } | Command::Config {
-                command: ConfigCommand::Migrate { .. },
-            }
-        )
+        match self.channel() {
+            Channel::Notification(_) => true,
+            Channel::Stderr { uses_herdr } => uses_herdr,
+        }
     }
 
     fn notification_title(&self) -> Option<&'static str> {
-        match &self.command {
-            Command::Agent { command } => Some(match command {
-                AgentCommand::Popup { .. } => "Agent popup failed",
-                AgentCommand::Launch(_) => "Agent launch failed",
-                AgentCommand::Inject(_) => "Agent inject failed",
-                AgentCommand::Restart => "Agent restart failed",
-                AgentCommand::RestartWorker { .. } => "Agent restart failed",
-            }),
-            Command::Project {
-                command: ProjectCommand::Pick,
-            } => Some("Project picker"),
-            Command::Ssh {
-                command: SshCommand::Pick,
-            } => Some("SSH picker"),
-            Command::Ssh {
-                command: SshCommand::Session { .. },
-            } => Some("SSH session"),
-            Command::Dashboard => Some("Dashboard Launcher"),
-            _ => None,
+        match self.channel() {
+            Channel::Notification(title) => Some(title),
+            Channel::Stderr { .. } => None,
         }
     }
 
@@ -513,13 +578,15 @@ fn main() -> ExitCode {
     }
 
     let cli = Cli::parse();
+    let channel = cli.channel();
+    let subcommand_path = cli.subcommand_path();
     let notification_title = cli.notification_title();
     let client = if cli.uses_herdr() {
         match SocketClient::new() {
             Ok(client) => Some(client),
             Err(error) => {
-                if notification_title.is_none() {
-                    eprintln!("{error:#}");
+                if matches!(channel, Channel::Stderr { .. }) {
+                    report_stderr(subcommand_path, &error, &mut std::io::stderr());
                 }
                 return ExitCode::FAILURE;
             }
@@ -527,18 +594,24 @@ fn main() -> ExitCode {
     } else {
         None
     };
-    if let Some(client) = &client {
+    if cli.uses_herdr() {
+        let client = client.as_ref().expect("Herdr commands create a client");
         if let Err(error) = cli.guard_protocol(client) {
-            if notification_title.is_none() {
-                eprintln!("{error:#}");
+            if matches!(channel, Channel::Stderr { .. }) {
+                report_stderr(subcommand_path, &error, &mut std::io::stderr());
             }
             return ExitCode::FAILURE;
         }
     }
 
     let result = cli.run(client.as_ref().map(|client| client as &dyn HerdrClient));
-    if let (Some(default_title), Some(client)) = (notification_title, &client) {
-        return handle_flow_result(client, default_title, result);
+    if matches!(channel, Channel::Notification(_)) {
+        if let (Some(default_title), Some(client)) = (notification_title, &client) {
+            return handle_flow_result(client, default_title, result);
+        }
+        if let (Some(default_title), Ok(client)) = (notification_title, SocketClient::new()) {
+            return handle_flow_result(&client, default_title, result);
+        }
     }
 
     match result {
@@ -550,9 +623,22 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("{error:#}");
+            report_stderr(subcommand_path, &error, &mut std::io::stderr());
             ExitCode::FAILURE
         }
+    }
+}
+
+fn report_stderr(subcommand_path: &str, error: &anyhow::Error, output: &mut impl std::io::Write) {
+    let message = format!("{error:#}");
+    // Contract messages already name their reporting surface. Other fatal errors use
+    // the parsed clap path once, with chained causes from anyhow's `{:#}` format.
+    if message.starts_with(&format!("{subcommand_path}: "))
+        || message.starts_with("project-registry: ")
+    {
+        let _ = writeln!(output, "{message}");
+    } else {
+        let _ = writeln!(output, "{subcommand_path}: {message}");
     }
 }
 
@@ -739,6 +825,82 @@ mod tests {
             let cli = Cli::try_parse_from(&argv).unwrap();
             assert_eq!(cli.notification_title(), expected, "{argv:?}");
         }
+    }
+
+    #[test]
+    fn every_subcommand_selects_its_fixed_channel() {
+        let cases = [
+            (
+                vec!["workbench", "project", "pick"],
+                Channel::Notification("Project picker"),
+            ),
+            (
+                vec!["workbench", "project", "scan"],
+                Channel::Stderr { uses_herdr: false },
+            ),
+            (
+                vec!["workbench", "project", "rescan"],
+                Channel::Stderr { uses_herdr: false },
+            ),
+            (
+                vec!["workbench", "project", "update"],
+                Channel::Stderr { uses_herdr: false },
+            ),
+            (
+                vec!["workbench", "project", "use"],
+                Channel::Stderr { uses_herdr: false },
+            ),
+            (
+                vec!["workbench", "project", "edit", "/tmp/p"],
+                Channel::Stderr { uses_herdr: false },
+            ),
+            (
+                vec!["workbench", "project", "source"],
+                Channel::Stderr { uses_herdr: false },
+            ),
+            (
+                vec!["workbench", "ssh", "edit"],
+                Channel::Stderr { uses_herdr: false },
+            ),
+            (
+                vec!["workbench", "config", "migrate"],
+                Channel::Stderr { uses_herdr: false },
+            ),
+            (
+                vec!["workbench", "herdr", "ping"],
+                Channel::Stderr { uses_herdr: true },
+            ),
+        ];
+
+        for (argv, expected) in cases {
+            let cli = Cli::try_parse_from(&argv).unwrap();
+            assert_eq!(cli.channel(), expected, "{argv:?}");
+            if argv.get(1) == Some(&"project") && argv.get(2) != Some(&"pick") {
+                assert_eq!(cli.notification_title(), None, "{argv:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn stderr_preserves_contract_messages_and_prefixes_unnamed_failures() {
+        let mut contract = Vec::new();
+        report_stderr(
+            "project scan",
+            &anyhow!("project-registry: no projects found"),
+            &mut contract,
+        );
+        assert_eq!(contract, b"project-registry: no projects found\n");
+
+        let mut unnamed = Vec::new();
+        report_stderr(
+            "project update",
+            &anyhow!("disk full").context("failed to write registry"),
+            &mut unnamed,
+        );
+        assert_eq!(
+            unnamed,
+            b"project update: failed to write registry: disk full\n"
+        );
     }
 
     /// A body built by `FlowError::complete` reaches the notification whole, with no
@@ -930,7 +1092,7 @@ mod tests {
     }
 
     #[test]
-    fn every_local_only_subcommand_skips_ping() {
+    fn project_subcommands_never_call_notification_show() {
         let cases = [
             vec!["workbench", "project", "source", "query"],
             vec!["workbench", "project", "scan"],
@@ -938,13 +1100,6 @@ mod tests {
             vec!["workbench", "project", "update"],
             vec!["workbench", "project", "use", "/tmp/project"],
             vec!["workbench", "project", "edit", "/tmp/project"],
-            vec!["workbench", "ssh", "sync"],
-            vec!["workbench", "ssh", "list"],
-            vec!["workbench", "ssh", "get", "host"],
-            vec!["workbench", "ssh", "use", "host"],
-            vec!["workbench", "ssh", "remove", "host"],
-            vec!["workbench", "ssh", "edit", "host"],
-            vec!["workbench", "config", "migrate"],
         ];
 
         for argv in cases {
@@ -956,8 +1111,12 @@ mod tests {
             }
 
             assert!(
-                client.calls.borrow().is_empty(),
-                "{argv:?} unexpectedly called Herdr"
+                client
+                    .calls
+                    .borrow()
+                    .iter()
+                    .all(|call| call.0 != "notification.show"),
+                "{argv:?} unexpectedly issued notification.show"
             );
         }
     }

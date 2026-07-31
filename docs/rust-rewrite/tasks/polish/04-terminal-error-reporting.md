@@ -6,7 +6,7 @@
 >
 > **Depends on**: polish/03, registry/02, registry/03, picker/01
 > **Blocks**: polish/05
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -75,30 +75,30 @@ deserves a line saying nothing was written.
 
 ## Acceptance criteria
 
-- [ ] `main` selects the channel from the subcommand, by an explicit match over the two
+- [x] `main` selects the channel from the subcommand, by an explicit match over the two
       fixed lists.
-- [ ] Every `project-*` message in the parity contract's stderr table is reproduced
+- [x] Every `project-*` message in the parity contract's stderr table is reproduced
       verbatim with its exit code, including the three stdout success lines.
-- [ ] Fatal paths with no contract message use `<subcommand path>: <chained cause>` on
+- [x] Fatal paths with no contract message use `<subcommand path>: <chained cause>` on
       stderr, exit 1.
-- [ ] No project subcommand ever issues a `notification.show`.
-- [ ] `project source` neither notifies nor gains new output; a failure is a bare
+- [x] No project subcommand ever issues a `notification.show`.
+- [x] `project source` neither notifies nor gains new output; a failure is a bare
       non-zero exit.
-- [ ] Cancelling `project scan`, `rescan` or `edit` reports its contract message and
+- [x] Cancelling `project scan`, `rescan` or `edit` reports its contract message and
       exits 1.
-- [ ] The old `Usage: …` line for the project registry is gone.
+- [x] The old `Usage: …` line for the project registry is gone.
 
 ## Verification
 
-- [ ] `cargo test` — for each `project-*` row of the parity contract's stderr table,
+- [x] `cargo test` — for each `project-*` row of the parity contract's stderr table,
       assert the exact bytes on the right stream and the exact exit code
-- [ ] `cargo test` — for each project subcommand, assert no `notification.show` is
+- [x] `cargo test` — for each project subcommand, assert no `notification.show` is
       issued on any failure path
-- [ ] `cargo test` — an unnamed failure produces `<subcommand path>: <cause>` on stderr
-- [ ] `cargo test` — `project source` failure produces no output and a non-zero exit
-- [ ] `cargo test` — cancelling each of the three interactive project subcommands
+- [x] `cargo test` — an unnamed failure produces `<subcommand path>: <cause>` on stderr
+- [x] `cargo test` — `project source` failure produces no output and a non-zero exit
+- [x] `cargo test` — cancelling each of the three interactive project subcommands
       produces its message and exit 1, and leaves the registry unchanged
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

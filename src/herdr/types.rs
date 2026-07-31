@@ -140,18 +140,32 @@ pub struct PaneLayoutResponse {
     pub fields: HashMap<String, Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PaneProcessInfoResponse {
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ProcessInfo {
     #[serde(default)]
     pub foreground_process_group_id: Option<i32>,
     #[serde(default)]
     pub shell_pid: Option<i32>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PaneProcessInfoResponse {
+    #[serde(default)]
+    pub process_info: Option<ProcessInfo>,
     #[serde(flatten)]
     pub fields: HashMap<String, Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Neighbor {
+    #[serde(default)]
+    pub neighbor_pane_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PaneNeighborResponse {
+    #[serde(default)]
+    pub neighbor: Option<Neighbor>,
     #[serde(default)]
     pub pane: Option<Pane>,
     #[serde(flatten)]

@@ -150,6 +150,7 @@ enum HerdrCommand {
 }
 
 impl Cli {
+    #[allow(clippy::needless_return)]
     fn run(self) -> Result<()> {
         let client = if self.uses_herdr() {
             let client = SocketClient::new()?;
@@ -159,7 +160,7 @@ impl Cli {
             None
         };
 
-        let path = match self.command {
+        match self.command {
             Command::Agent { command } => match command {
                 AgentCommand::Popup { worktree } => {
                     let client = client
@@ -198,11 +199,31 @@ impl Cli {
                         },
                     );
                 }
-                AgentCommand::Restart => "agent restart",
-                AgentCommand::RestartWorker { .. } => "agent restart-worker",
+                AgentCommand::Restart => {
+                    let client = client
+                        .as_ref()
+                        .context("Herdr client is required for agent restart")?;
+                    return flows::restart::confirm_restart(client);
+                }
+                AgentCommand::RestartWorker { pane } => {
+                    let client = client
+                        .as_ref()
+                        .context("Herdr client is required for agent restart worker")?;
+                    return flows::restart::restart_worker(client, &pane);
+                }
             },
             Command::Project { command } => match command {
-                ProjectCommand::Pick => "project pick",
+                ProjectCommand::Pick => {
+                    let config = config::Config::load()?;
+                    let client = client
+                        .as_ref()
+                        .context("Herdr client is required for the project picker")?;
+                    return flows::picker::project_pick(
+                        Path::new(&config.project_registry_file),
+                        Path::new(&config.projects_root),
+                        client,
+                    );
+                }
                 ProjectCommand::Source { query } => {
                     flows::picker::project_source(query.as_deref())?;
                     return Ok(());
@@ -355,9 +376,7 @@ impl Cli {
                     }
                 };
             }
-        };
-
-        Err(anyhow!("unimplemented: {path}"))
+        }
     }
 
     fn uses_herdr(&self) -> bool {
@@ -492,7 +511,9 @@ fn main() -> ExitCode {
             // `{error:#}` prints the whole `.context()` chain on one line. Plain
             // `{error}` shows only the outermost message, which drops the concrete
             // cause every fatal path is required to report.
-            eprintln!("{error:#}");
+            if !error.is::<flows::picker::ProjectPickerNotifiedError>() {
+                eprintln!("{error:#}");
+            }
             ExitCode::FAILURE
         }
     }

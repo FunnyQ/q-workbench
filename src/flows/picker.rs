@@ -8,6 +8,7 @@
 //! `scripts/bench-project-source.zsh` reproduces it.
 
 use std::cmp::Ordering;
+use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -17,6 +18,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::json;
 
 use crate::config::Config;
+use crate::flows::agent::{self, InjectOptions};
 use crate::herdr::HerdrClient;
 use crate::notify::notify;
 use crate::registry::project::{ProjectEntry, ProjectRegistry};
@@ -24,8 +26,272 @@ use crate::registry::ssh;
 use crate::shell::shell_quote;
 
 const PROJECT_ICON: &str = "󰉋";
+const PROJECT_PICKER_TITLE: &str = "Project picker";
+const PROJECT_MAIN_LABEL: &str = "󰧑  main";
 const SSH_ICON: &str = "󰢩";
 const SSH_PICKER_TITLE: &str = "SSH picker";
+
+#[derive(Debug, PartialEq, Eq)]
+struct ProjectSelection {
+    query: String,
+    key: String,
+    path: String,
+}
+
+#[derive(Debug)]
+pub struct ProjectPickerNotifiedError;
+
+impl fmt::Display for ProjectPickerNotifiedError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("project picker error was reported by notification")
+    }
+}
+
+impl std::error::Error for ProjectPickerNotifiedError {}
+
+pub fn project_pick(
+    registry_path: &Path,
+    projects_root: &Path,
+    client: &dyn HerdrClient,
+) -> Result<()> {
+    if !registry_path.is_file() {
+        let message = format!(
+            "project picker: registry not found: {}",
+            registry_path.display()
+        );
+        notify(client, PROJECT_PICKER_TITLE, &message);
+        return Err(ProjectPickerNotifiedError.into());
+    }
+
+    adopt_invoking_cwd(client)?;
+    let executable = std::env::current_exe().context("project pick: resolve current executable")?;
+    let (reload_binding, edit_binding) = project_bindings(&executable);
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("HOME is required")?;
+    let source = source(registry_path, &home, "")?;
+    let mut child = Command::new("fzf")
+        .args(project_fzf_args(&reload_binding, &edit_binding))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .context("project pick: start fzf")?;
+    child
+        .stdin
+        .take()
+        .context("project pick: open fzf input")?
+        .write_all(&source)
+        .context("project pick: write fzf input")?;
+    let output = child
+        .wait_with_output()
+        .context("project pick: wait for fzf")?;
+    if !output.status.success() {
+        return Ok(());
+    }
+
+    let output = String::from_utf8(output.stdout).context("project pick: parse fzf output")?;
+    let selection = parse_project_selection(&output);
+    let path = match resolve_project_path(&selection, query_zoxide)? {
+        Some(path) => path,
+        None => {
+            let missing = if selection.query.is_empty() {
+                &selection.path
+            } else {
+                &selection.query
+            };
+            let message = format!("project picker: project not found: {missing}");
+            notify(client, PROJECT_PICKER_TITLE, &message);
+            return Err(ProjectPickerNotifiedError.into());
+        }
+    };
+    focus_or_create_project(&path, &selection.key, registry_path, client)?;
+    crate::registry::project::use_project(
+        registry_path,
+        Some(&path),
+        projects_root,
+        &crate::registry::project::SystemClock,
+    )
+}
+
+fn parse_project_selection(output: &str) -> ProjectSelection {
+    let mut lines = output.split('\n');
+    ProjectSelection {
+        query: lines
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches('\r')
+            .to_owned(),
+        key: lines
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches('\r')
+            .to_owned(),
+        path: lines
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches('\r')
+            .to_owned(),
+    }
+}
+
+fn project_bindings(executable: &Path) -> (String, String) {
+    let executable = shell_quote(&executable.to_string_lossy());
+    (
+        format!("change:reload({executable} project source {{q}})"),
+        format!(
+            "ctrl-i:execute({executable} project edit {{2}})+reload({executable} project source {{q}})"
+        ),
+    )
+}
+
+fn project_fzf_args<'a>(reload_binding: &'a str, edit_binding: &'a str) -> Vec<&'a str> {
+    vec![
+        "--read0",
+        "--print-query",
+        "--expect=alt-enter",
+        "--prompt=Project> ",
+        "--highlight-line",
+        "--pointer=▌",
+        "--info=inline-right",
+        "--delimiter=\t",
+        "--with-nth=1",
+        "--accept-nth=2",
+        "--bind",
+        reload_binding,
+        "--bind",
+        edit_binding,
+        "--border",
+        "--border-label-pos=bottom",
+        "--border-label= enter: agent · alt-enter: plain · ctrl-i: edit · typing searches zoxide ",
+    ]
+}
+
+fn resolve_project_path(
+    selection: &ProjectSelection,
+    zoxide: impl FnOnce(&str) -> Result<Option<PathBuf>>,
+) -> Result<Option<PathBuf>> {
+    let candidate = if !selection.path.is_empty() {
+        Some(PathBuf::from(&selection.path))
+    } else if selection.query.is_empty() {
+        None
+    } else {
+        let query_path = PathBuf::from(&selection.query);
+        if query_path.is_dir() {
+            Some(query_path)
+        } else {
+            zoxide(&selection.query)?
+        }
+    };
+    let Some(candidate) = candidate.filter(|path| path.is_dir()) else {
+        return Ok(None);
+    };
+    fs::canonicalize(&candidate)
+        .map(Some)
+        .with_context(|| format!("project pick: resolve {}", candidate.display()))
+}
+
+fn focus_or_create_project(
+    path: &Path,
+    key: &str,
+    registry_path: &Path,
+    client: &dyn HerdrClient,
+) -> Result<()> {
+    let snapshot = client
+        .session_snapshot(json!({}))
+        .context("project pick: session.snapshot")?;
+    let path_text = path.to_string_lossy();
+    let workspace_id = snapshot
+        .fields
+        .get("snapshot")
+        .and_then(|snapshot| snapshot.get("panes"))
+        .and_then(|panes| panes.as_array())
+        .and_then(|panes| {
+            panes.iter().find_map(|pane| {
+                let matches = pane.get("cwd").and_then(|value| value.as_str())
+                    == Some(path_text.as_ref())
+                    || pane.get("foreground_cwd").and_then(|value| value.as_str())
+                        == Some(path_text.as_ref());
+                matches
+                    .then(|| pane.get("workspace_id")?.as_str().map(str::to_owned))
+                    .flatten()
+            })
+        });
+
+    // When a workspace already exists for this path, we only focus it without
+    // creating an agent tab. This asymmetry is intentional: the enter key shows
+    // the agent menu and injects a launcher, while picking an existing project
+    // reuses it as-is. Only new workspaces get the agent tab.
+    let workspace_id = if let Some(workspace_id) = workspace_id {
+        workspace_id
+    } else {
+        let label = project_label(registry_path, path)?;
+        let created = client
+            .workspace_create(json!({
+                "cwd": path_text,
+                "env": {"Q_NO_BANNER": "1"},
+                "focus": false,
+                "label": label,
+            }))
+            .context("project pick: workspace.create")?;
+        let workspace_id = created.workspace.workspace_id;
+        if key != "alt-enter" {
+            client
+                .tab_rename(json!({
+                    "tab_id": created.tab.tab_id,
+                    "label": PROJECT_MAIN_LABEL,
+                }))
+                .context("project pick: tab.rename")?;
+            agent::inject(
+                client,
+                &InjectOptions {
+                    pane_id: created.root_pane.pane_id,
+                    tab_id: None,
+                    usage: Some(PROJECT_MAIN_LABEL.to_owned()),
+                    worktree: false,
+                },
+            )
+            .context("project pick: inject agent")?;
+        }
+        workspace_id
+    };
+    client
+        .workspace_focus(json!({"workspace_id": workspace_id}))
+        .context("project pick: workspace.focus")?;
+    Ok(())
+}
+
+fn project_label(registry_path: &Path, path: &Path) -> Result<String> {
+    let registry = crate::registry::project::read_registry(registry_path)?;
+    Ok(registry
+        .projects
+        .get(path.to_string_lossy().as_ref())
+        .map(|entry| entry.name.clone())
+        .or_else(|| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default())
+}
+
+fn adopt_invoking_cwd(client: &dyn HerdrClient) -> Result<()> {
+    let context_cwd = std::env::var("HERDR_PLUGIN_CONTEXT_JSON")
+        .ok()
+        .and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok())
+        .and_then(|value| value.get("focused_pane_cwd")?.as_str().map(PathBuf::from));
+    let cwd = context_cwd.filter(|path| path.is_dir()).or_else(|| {
+        std::env::var("HERDR_ACTIVE_PANE_ID")
+            .ok()
+            .and_then(|pane_id| client.pane_get(json!({"pane_id": pane_id})).ok())
+            .and_then(|response| response.pane.foreground_cwd.or(response.pane.cwd))
+            .map(PathBuf::from)
+            .filter(|path| path.is_dir())
+    });
+    if let Some(cwd) = cwd {
+        std::env::set_current_dir(&cwd)
+            .with_context(|| format!("project pick: adopt invoking cwd {}", cwd.display()))?;
+    }
+    Ok(())
+}
 
 pub fn ssh_pick(
     registry: &Path,
@@ -403,6 +669,189 @@ mod tests {
                 "--bind",
                 remove,
             ]
+        );
+    }
+
+    #[test]
+    fn parses_project_result_positionally_for_query_and_key_combinations() {
+        let cases = [
+            ("\n\n/project\n", "", ""),
+            ("typed\n\n/project\n", "typed", ""),
+            ("\nalt-enter\n/project\n", "", "alt-enter"),
+            ("typed\nalt-enter\n/project\n", "typed", "alt-enter"),
+        ];
+
+        for (output, query, key) in cases {
+            assert_eq!(
+                parse_project_selection(output),
+                ProjectSelection {
+                    query: query.to_owned(),
+                    key: key.to_owned(),
+                    path: "/project".to_owned(),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn project_bindings_quote_an_executable_path_containing_spaces() {
+        let executable = Path::new("/Applications/Herdr Workbench/workbench");
+        let (reload, edit) = project_bindings(executable);
+
+        assert_eq!(
+            reload,
+            "change:reload('/Applications/Herdr Workbench/workbench' project source {q})"
+        );
+        assert_eq!(
+            edit,
+            "ctrl-i:execute('/Applications/Herdr Workbench/workbench' project edit {2})+reload('/Applications/Herdr Workbench/workbench' project source {q})"
+        );
+    }
+
+    #[test]
+    fn project_fzf_arguments_match_the_parity_contract() {
+        let reload = "change:reload(<self> project source {q})";
+        let edit = "ctrl-i:execute(<self> project edit {2})+reload(<self> project source {q})";
+
+        assert_eq!(
+            project_fzf_args(reload, edit),
+            vec![
+                "--read0",
+                "--print-query",
+                "--expect=alt-enter",
+                "--prompt=Project> ",
+                "--highlight-line",
+                "--pointer=▌",
+                "--info=inline-right",
+                "--delimiter=\t",
+                "--with-nth=1",
+                "--accept-nth=2",
+                "--bind",
+                reload,
+                "--bind",
+                edit,
+                "--border",
+                "--border-label-pos=bottom",
+                "--border-label= enter: agent · alt-enter: plain · ctrl-i: edit · typing searches zoxide ",
+            ]
+        );
+    }
+
+    fn queue_snapshot(client: &FakeClient, panes: serde_json::Value) {
+        client.queue_response(
+            "session.snapshot",
+            json!({"type": "session_snapshot", "snapshot": {"panes": panes}}),
+        );
+    }
+
+    fn queue_created_workspace(client: &FakeClient) {
+        client.queue_response(
+            "workspace.create",
+            json!({
+                "type": "workspace_created",
+                "workspace": {"workspace_id": "w-new"},
+                "tab": {"tab_id": "t-new"},
+                "root_pane": {"pane_id": "p-new"},
+            }),
+        );
+    }
+
+    #[test]
+    fn existing_project_workspace_is_only_focused() {
+        let directory = TestDirectory::new();
+        let project = directory.0.join("project");
+        fs::create_dir(&project).expect("create project");
+        let registry = write_registry(
+            &directory.0,
+            [(
+                project.to_string_lossy().into_owned(),
+                entry("project", &["manual"], &[], false, None),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        let client = FakeClient::default();
+        queue_snapshot(&client, json!([{"workspace_id": "w-open", "cwd": project}]));
+
+        focus_or_create_project(&project, "", &registry, &client).expect("focus workspace");
+
+        assert_eq!(
+            client
+                .calls
+                .into_inner()
+                .into_iter()
+                .map(|(method, _)| method)
+                .collect::<Vec<_>>(),
+            ["session.snapshot", "workspace.focus"]
+        );
+    }
+
+    #[test]
+    fn new_project_enter_creates_injects_then_focuses() {
+        let directory = TestDirectory::new();
+        let project = directory.0.join("project");
+        fs::create_dir(&project).expect("create project");
+        let registry = write_registry(
+            &directory.0,
+            [(
+                project.to_string_lossy().into_owned(),
+                entry("Project label", &["manual"], &[], false, None),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        let client = FakeClient::default();
+        queue_snapshot(&client, json!([]));
+        queue_created_workspace(&client);
+
+        focus_or_create_project(&project, "", &registry, &client).expect("create workspace");
+
+        let calls = client.calls.into_inner();
+        assert_eq!(
+            calls
+                .iter()
+                .map(|(method, _)| method.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "session.snapshot",
+                "workspace.create",
+                "tab.rename",
+                "pane.rename",
+                "pane.send_input",
+                "workspace.focus",
+            ]
+        );
+        assert_eq!(
+            calls[2].1,
+            json!({"tab_id": "t-new", "label": PROJECT_MAIN_LABEL})
+        );
+        assert!(calls[4].1["text"]
+            .as_str()
+            .expect("launcher command")
+            .contains("'--usage' '󰧑  main'"));
+    }
+
+    #[test]
+    fn new_project_alt_enter_creates_plain_workspace_then_focuses() {
+        let directory = TestDirectory::new();
+        let project = directory.0.join("project");
+        fs::create_dir(&project).expect("create project");
+        let registry = write_registry(&directory.0, BTreeMap::new());
+        let client = FakeClient::default();
+        queue_snapshot(&client, json!([]));
+        queue_created_workspace(&client);
+
+        focus_or_create_project(&project, "alt-enter", &registry, &client)
+            .expect("create plain workspace");
+
+        assert_eq!(
+            client
+                .calls
+                .into_inner()
+                .into_iter()
+                .map(|(method, _)| method)
+                .collect::<Vec<_>>(),
+            ["session.snapshot", "workspace.create", "workspace.focus"]
         );
     }
 

@@ -105,6 +105,13 @@ pub trait HerdrClient {
         decode(self.call("pane.focus", params), "pane.focus")
     }
 
+    fn pane_focus_direction(&self, params: Value) -> Result<OkResponse> {
+        decode(
+            self.call("pane.focus_direction", params),
+            "pane.focus_direction",
+        )
+    }
+
     fn tab_rename(&self, params: Value) -> Result<OkResponse> {
         decode(self.call("tab.rename", params), "tab.rename")
     }

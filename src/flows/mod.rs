@@ -6,6 +6,53 @@ pub mod ssh;
 
 use std::error::Error;
 use std::fmt;
+use std::path::PathBuf;
+
+use serde_json::json;
+
+use crate::herdr::HerdrClient;
+
+/// Which cwd of the invoking pane a flow adopts.
+///
+/// The two entry points genuinely differ and always have. The agent popup wants the
+/// pane's own directory, because that is the repository the launcher runs git against;
+/// the project picker prefers the foreground process's directory, so a shell the user
+/// has `cd`-ed inside still seeds the right query. Naming the difference here is the
+/// point: written as two helpers it read as drift, and either one could be "corrected"
+/// into the other by mistake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneCwd {
+    PaneOnly,
+    PreferForeground,
+}
+
+/// The cwd of the pane that invoked this plugin action, or `None` when nothing usable
+/// is reachable. `HERDR_PLUGIN_CONTEXT_JSON` answers without a round trip; the
+/// `HERDR_ACTIVE_PANE_ID` lookup is the fallback for a caller that has no context.
+pub fn invoking_pane_cwd(
+    client: &dyn HerdrClient,
+    context_json: Option<&str>,
+    active_pane_id: Option<&str>,
+    which: PaneCwd,
+) -> Option<PathBuf> {
+    let context_cwd = context_json
+        .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+        .and_then(|value| value.get("focused_pane_cwd")?.as_str().map(PathBuf::from))
+        .filter(|path| path.is_dir());
+    if context_cwd.is_some() {
+        return context_cwd;
+    }
+    let pane = client
+        .pane_get(json!({ "pane_id": active_pane_id? }))
+        .ok()?
+        .pane;
+    match which {
+        PaneCwd::PaneOnly => pane.cwd,
+        PaneCwd::PreferForeground => pane.foreground_cwd.or(pane.cwd),
+    }
+    .map(PathBuf::from)
+    .filter(|path| path.is_dir())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {

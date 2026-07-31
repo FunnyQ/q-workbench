@@ -10,15 +10,12 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Map, Value};
 
 use crate::config::Config;
-use crate::flows::{FlowError, FlowResult, Outcome};
+use crate::flows::{invoking_pane_cwd, FlowError, FlowResult, Outcome, PaneCwd};
 use crate::herdr::HerdrClient;
 use crate::shell::build_command;
-use crate::state;
+use crate::state::{self, HARNESS_CLAUDE, HARNESS_CODEX, HARNESS_OPENCODE};
 
 const HARNESS_TITLE: &str = "\u{f169f}  Launch Agent";
-const HARNESS_CLAUDE: &str = "\u{f15ce}  claude code";
-const HARNESS_CODEX: &str = "\u{ee0d}  codex";
-const HARNESS_OPENCODE: &str = "\u{f169f}  opencode";
 const USE_LAST_PREFIX: &str = "\u{f0709}  use last: ";
 // Two spaces after the glyph. `scripts/agent-launcher.zsh:183` used one; the unified
 // flow follows the popup and the parity contract (GLY-2).
@@ -78,7 +75,7 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
         lines,
         options
             .restart
-            .then(|| state::get_for_pane(&options.pane_id))
+            .then(|| state::get_for_pane(&options.pane_id, config))
             .flatten(),
     )?
     else {
@@ -168,21 +165,35 @@ fn apply_launch_layout(
 
     // Splitting earlier resizes menus and prevents the selected worktree from driving
     // every pane's cwd, so both splits remain after the decision flow.
+    build_side_panes(client, &options.pane_id, &cwd)?;
+    Ok(())
+}
+
+/// The Files/term half of the three-pane layout, shared by both entry points.
+///
+/// The popup builds the tab first and the in-pane launcher defers the splits until
+/// after its menus, but the six calls between them are identical — same ratios, same
+/// labels, same `Q_NO_BANNER` on the first split only — so they are written once. A
+/// drift in ratio or label between the two would be an accident, never a decision.
+fn build_side_panes(client: &dyn HerdrClient, agent_pane: &str, cwd: &str) -> Result<()> {
     let files_pane = client
         .pane_split(json!({
-            "target_pane_id": options.pane_id,
+            "target_pane_id": agent_pane,
             "direction": "right",
             "ratio": 0.38,
             "cwd": cwd,
             "env": { "Q_NO_BANNER": "1" },
             "focus": false,
         }))
-        .context("failed to split the Files pane")?
+        .context("failed to create files pane")?
         .pane
         .pane_id;
+    if files_pane.is_empty() {
+        return Err(anyhow!("first pane.split returned an empty pane id"));
+    }
     client
         .pane_rename(json!({ "pane_id": files_pane, "label": FILES_LABEL }))
-        .context("failed to rename the Files pane")?;
+        .context("failed to rename files pane")?;
     client
         .pane_send_input(json!({ "pane_id": files_pane, "text": "yazi .", "keys": ["enter"] }))
         .context("failed to start yazi")?;
@@ -194,12 +205,15 @@ fn apply_launch_layout(
             "cwd": cwd,
             "focus": false,
         }))
-        .context("failed to split the terminal pane")?
+        .context("failed to create terminal pane")?
         .pane
         .pane_id;
+    if term_pane.is_empty() {
+        return Err(anyhow!("second pane.split returned an empty pane id"));
+    }
     client
         .pane_rename(json!({ "pane_id": term_pane, "label": TERM_LABEL }))
-        .context("failed to rename the terminal pane")?;
+        .context("failed to rename terminal pane")?;
     Ok(())
 }
 
@@ -251,35 +265,17 @@ fn adopt_invoking_pane_cwd(client: &dyn HerdrClient) -> Result<()> {
     // can mistake that checkout for the project repository.
     let context_json = std::env::var("HERDR_PLUGIN_CONTEXT_JSON").ok();
     let active_pane_id = nonempty_env("HERDR_ACTIVE_PANE_ID");
-    let pane_cwd = invoking_pane_cwd(client, context_json.as_deref(), active_pane_id.as_deref());
+    let pane_cwd = invoking_pane_cwd(
+        client,
+        context_json.as_deref(),
+        active_pane_id.as_deref(),
+        PaneCwd::PaneOnly,
+    );
     if let Some(cwd) = pane_cwd {
         std::env::set_current_dir(&cwd)
             .with_context(|| format!("failed to adopt invoking pane cwd {}", cwd.display()))?;
     }
     Ok(())
-}
-
-fn invoking_pane_cwd(
-    client: &dyn HerdrClient,
-    context_json: Option<&str>,
-    active_pane_id: Option<&str>,
-) -> Option<PathBuf> {
-    let context_cwd = context_json
-        .and_then(|value| serde_json::from_str::<Value>(value).ok())
-        .and_then(|value| value.get("focused_pane_cwd")?.as_str().map(PathBuf::from));
-    let pane_cwd = match (
-        context_cwd.as_ref().filter(|path| path.is_dir()),
-        active_pane_id,
-    ) {
-        (Some(path), _) => Some(path.to_path_buf()),
-        (None, Some(pane_id)) => client
-            .pane_get(json!({ "pane_id": pane_id }))
-            .ok()
-            .and_then(|response| response.pane.cwd.map(PathBuf::from))
-            .filter(|path| path.is_dir()),
-        (None, None) => None,
-    };
-    pane_cwd
 }
 
 fn nonempty_env(name: &str) -> Option<String> {
@@ -362,44 +358,7 @@ fn build_popup_tab(
     client
         .tab_rename(json!({ "tab_id": tab_id, "label": choice.label }))
         .context("failed to rename agent tab")?;
-    let yazi_pane = client
-        .pane_split(json!({
-            "target_pane_id": agent_pane,
-            "direction": "right",
-            "ratio": 0.38,
-            "cwd": cwd,
-            "env": { "Q_NO_BANNER": "1" },
-            "focus": false,
-        }))
-        .context("failed to create files pane")?
-        .pane
-        .pane_id;
-    if yazi_pane.is_empty() {
-        return Err(anyhow!("first pane.split returned an empty pane id"));
-    }
-    client
-        .pane_rename(json!({ "pane_id": yazi_pane, "label": FILES_LABEL }))
-        .context("failed to rename files pane")?;
-    client
-        .pane_send_input(json!({ "pane_id": yazi_pane, "text": "yazi .", "keys": ["enter"] }))
-        .context("failed to start yazi")?;
-    let term_pane = client
-        .pane_split(json!({
-            "target_pane_id": yazi_pane,
-            "direction": "down",
-            "ratio": 0.9,
-            "cwd": cwd,
-            "focus": false,
-        }))
-        .context("failed to create terminal pane")?
-        .pane
-        .pane_id;
-    if term_pane.is_empty() {
-        return Err(anyhow!("second pane.split returned an empty pane id"));
-    }
-    client
-        .pane_rename(json!({ "pane_id": term_pane, "label": TERM_LABEL }))
-        .context("failed to rename terminal pane")?;
+    build_side_panes(client, agent_pane, &cwd)?;
     client
         .pane_send_input(json!({
             "pane_id": agent_pane,
@@ -549,16 +508,8 @@ fn choose_agent_with_last(
         HARNESS_CODEX.to_owned(),
         HARNESS_OPENCODE.to_owned(),
     ];
-    let last = last.filter(|(harness, model)| {
-        regular_harnesses.iter().any(|option| option == harness)
-            && if harness == HARNESS_CLAUDE {
-                model.as_ref().is_some_and(|label| {
-                    config.order.contains(label) && config.models.contains_key(label)
-                })
-            } else {
-                model.is_none()
-            }
-    });
+    let last = last
+        .filter(|(harness, model)| state::last_choice_is_valid(harness, model.as_deref(), config));
     let use_last = last.as_ref().map(|(harness, model)| {
         let name = harness
             .split_once("  ")
@@ -762,16 +713,7 @@ struct RealGit;
 
 impl Git for RealGit {
     fn toplevel(&self, cwd: &Path) -> Option<PathBuf> {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(cwd)
-            .args(["rev-parse", "--show-toplevel"])
-            .output()
-            .ok()?;
-        output
-            .status
-            .success()
-            .then(|| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()))
+        crate::registry::project::git_toplevel(cwd)
     }
 
     /// Drop registrations whose directory was deleted by hand. Without the prune those
@@ -1357,11 +1299,14 @@ mod popup {
 
         let context = json!({ "focused_pane_cwd": context_dir }).to_string();
         assert_eq!(
-            invoking_pane_cwd(&client, Some(&context), Some("p1")),
+            invoking_pane_cwd(&client, Some(&context), Some("p1"), PaneCwd::PaneOnly),
             Some(context_dir)
         );
         assert!(client.calls.borrow().is_empty());
-        assert_eq!(invoking_pane_cwd(&client, None, Some("p1")), Some(pane_dir));
+        assert_eq!(
+            invoking_pane_cwd(&client, None, Some("p1"), PaneCwd::PaneOnly),
+            Some(pane_dir)
+        );
         assert_eq!(
             client.calls.into_inner(),
             [("pane.get".to_owned(), json!({ "pane_id": "p1" }))]

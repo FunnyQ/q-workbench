@@ -18,7 +18,7 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::flows::agent::{self, InjectOptions};
-use crate::flows::{FlowError, FlowResult, Outcome};
+use crate::flows::{invoking_pane_cwd, FlowError, FlowResult, Outcome, PaneCwd};
 use crate::herdr::HerdrClient;
 use crate::registry::project::{ProjectEntry, ProjectRegistry};
 use crate::registry::ssh;
@@ -295,18 +295,12 @@ fn project_label(registry_path: &Path, path: &Path) -> Result<String> {
 }
 
 fn adopt_invoking_cwd(client: &dyn HerdrClient) -> Result<()> {
-    let context_cwd = std::env::var("HERDR_PLUGIN_CONTEXT_JSON")
-        .ok()
-        .and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok())
-        .and_then(|value| value.get("focused_pane_cwd")?.as_str().map(PathBuf::from));
-    let cwd = context_cwd.filter(|path| path.is_dir()).or_else(|| {
-        std::env::var("HERDR_ACTIVE_PANE_ID")
-            .ok()
-            .and_then(|pane_id| client.pane_get(json!({"pane_id": pane_id})).ok())
-            .and_then(|response| response.pane.foreground_cwd.or(response.pane.cwd))
-            .map(PathBuf::from)
-            .filter(|path| path.is_dir())
-    });
+    let cwd = invoking_pane_cwd(
+        client,
+        std::env::var("HERDR_PLUGIN_CONTEXT_JSON").ok().as_deref(),
+        std::env::var("HERDR_ACTIVE_PANE_ID").ok().as_deref(),
+        PaneCwd::PreferForeground,
+    );
     if let Some(cwd) = cwd {
         std::env::set_current_dir(&cwd)
             .with_context(|| format!("project pick: adopt invoking cwd {}", cwd.display()))?;
@@ -424,17 +418,13 @@ fn ssh_fzf_args<'a>(edit_binding: &'a str, remove_binding: &'a str) -> Vec<&'a s
 fn session_command(executable: &Path, target: &str, tab_id: &str) -> String {
     // The pane's interactive shell interprets the text sent via pane.send_input, so every
     // embedded value must be shell-quoted to prevent field splitting and injection attacks.
-    [
+    crate::shell::build_command(&[
         executable.to_string_lossy().into_owned(),
         "ssh".to_owned(),
         "session".to_owned(),
         target.to_owned(),
         tab_id.to_owned(),
-    ]
-    .iter()
-    .map(|part| shell_quote(part))
-    .collect::<Vec<_>>()
-    .join(" ")
+    ])
 }
 
 fn connect_ssh_target(target: &str, executable: &Path, client: &dyn HerdrClient) -> Result<()> {

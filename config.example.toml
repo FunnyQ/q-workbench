@@ -1,0 +1,38 @@
+# Example user config for q.workbench.
+# Copy this file to ${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins/config/q.workbench/config.toml.
+# Uncomment only the settings you want to change.
+
+# Dashboard workspace label opened by the launcher. Default: "personal-assistant".
+# dashboard_workspace = "personal-assistant"
+
+# Extra Claude arguments. Default: [].
+# Bypass flags are opt-in because they disable permission checks and grant unrestricted host access.
+# claude_extra_args = ["--dangerously-skip-permissions"]
+
+# Extra Codex arguments. Default: [].
+# Bypass flags are opt-in because they disable sandbox and approval checks.
+# codex_extra_args = ["--dangerously-bypass-approvals-and-sandbox"]
+
+# Ordered model menu labels. Default: ["Opus", "OpusPlan (Sonnet)", "CCR", "Fable 5"].
+# order = ["Opus", "OpusPlan (Sonnet)", "CCR", "Fable 5"]
+
+# Model value selected by each menu label. Every ordered label must have an entry.
+# models = { "CCR" = "CCR", "Fable 5" = "claude-fable-5", "Opus" = "claude-opus-4-8", "OpusPlan (Sonnet)" = "opusplan" }
+
+# Extra arguments for each model label. Default: { "OpusPlan (Sonnet)" = ["--effort", "medium"] }.
+# model_args = { "OpusPlan (Sonnet)" = ["--effort", "medium"] }
+
+# Project registry JSON path. Default: "$HOME/.local/state/herdr-projects/registry.json".
+# project_registry_file = "$HOME/.local/state/herdr-projects/registry.json"
+
+# Root directory scanned for projects. Default: "$HOME/Projects".
+# projects_root = "$HOME/Projects"
+
+# SSH target registry JSON path. Default: "$HOME/.local/state/ssh-targets/registry.json".
+# ssh_registry_file = "$HOME/.local/state/ssh-targets/registry.json"
+
+# SSH config file read and updated by sync. Default: "$HOME/.config/ssh/config".
+# ssh_config_file = "$HOME/.config/ssh/config"
+
+# Shell history used to seed SSH targets. Default: "$HOME/.zsh_history".
+# ssh_history_file = "$HOME/.zsh_history"

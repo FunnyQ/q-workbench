@@ -120,13 +120,13 @@ committed without the executable bit will fail at runtime with a confusing error
 - [x] `zsh scripts/build.zsh && cargo test && cargo clippy -- -D warnings`
 - [x] Drive all six flows through the dev plugin: new-agent, new-worktree-agent,
       project, ssh, restart-agent, dashboard
-- [ ] `herdr plugin action list` shows the `q.workbench` entries with the new commands
+- [x] `herdr plugin action list` shows the `q.workbench` entries with the new commands
       after the installed clone is updated
 - [x] `rg --files -g '*.zsh'` lists exactly `scripts/build.zsh`
 - [x] `herdr plugin list` no longer shows `q.workbench-dev`
 - [x] `git ls-files --stage bin/workbench` reports mode `100755`
 - [x] Clone the repo to a temp directory and run `./bin/workbench --help` from it
-- [ ] Invoke each of the six real actions once from Herdr's action list
+- [x] Invoke each of the six real actions once from Herdr's action list
 
 ## Verification record — attempt 3
 

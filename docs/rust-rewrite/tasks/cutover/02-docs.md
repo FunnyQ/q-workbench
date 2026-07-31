@@ -6,7 +6,8 @@
 >
 > **Depends on**: cutover/01
 > **Blocks**: cutover/03
-> **Status**: todo
+> **Status**: done
+> **Attempt**: 2
 
 ## Goal
 
@@ -78,27 +79,27 @@ README so it is not discovered after a tag is pushed.
 
 ## Acceptance criteria
 
-- [ ] Every false claim listed above is corrected in `README.md`.
-- [ ] The dependency list matches what the binary actually invokes.
-- [ ] Every documented command uses the new subcommand form.
-- [ ] The configuration section documents TOML, the migration path, and array-valued
+- [x] Every false claim listed above is corrected in `README.md`.
+- [x] The dependency list matches what the binary actually invokes.
+- [x] Every documented command uses the new subcommand form.
+- [x] The configuration section documents TOML, the migration path, and array-valued
       extra args, and keeps the bypass-flag warning.
-- [ ] The rebuild requirement is stated in the install section, not buried.
-- [ ] `CLAUDE.md` describes the Rust architecture, carries forward the still-true
+- [x] The rebuild requirement is stated in the install section, not buried.
+- [x] `CLAUDE.md` describes the Rust architecture, carries forward the still-true
       reasoning, and drops what no longer applies.
-- [ ] `.chronicle/release.json` includes `Cargo.toml` with a pattern that matches.
-- [ ] The release section states that the binary must be rebuilt and committed.
+- [x] `.chronicle/release.json` includes `Cargo.toml` with a pattern that matches.
+- [x] The release section states that the binary must be rebuilt and committed.
 
 ## Verification
 
-- [ ] Read `README.md` end to end and check every command against the built binary by
+- [x] Read `README.md` end to end and check every command against the built binary by
       running it
-- [ ] Confirm no document references a deleted `scripts/*.zsh` path:
+- [x] Confirm no document references a deleted `scripts/*.zsh` path:
       `rg -n 'scripts/[a-z-]+\.zsh' README.md CLAUDE.md` returns only `build.zsh`
-- [ ] Confirm no document references `jq` or `config.example.zsh`
-- [ ] Dry-run the release version bump and confirm both `herdr-plugin.toml` and
+- [x] Confirm no document references `jq` or `config.example.zsh`
+- [x] Dry-run the release version bump and confirm both `herdr-plugin.toml` and
       `Cargo.toml` are updated
-- [ ] Have a fresh reader follow the install and configure sections on a clean setup
+- [x] Have a fresh reader follow the install and configure sections on a clean setup
 
 ## Eval rubric
 

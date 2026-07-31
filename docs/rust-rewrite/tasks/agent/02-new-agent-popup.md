@@ -7,7 +7,7 @@
 >
 > **Depends on**: agent/01, foundation/05
 > **Blocks**: polish/02
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -73,35 +73,35 @@ managed pane. Pass the measured size into the shared flow.
 
 ## Acceptance criteria
 
-- [ ] The ten-call sequence in the parity contract is reproduced exactly, in order,
+- [x] The ten-call sequence in the parity contract is reproduced exactly, in order,
       with the same parameters — including `Q_NO_BANNER` on the tab and the first
       split but not the second.
-- [ ] `--worktree` runs the worktree step first; without it, no worktree step.
-- [ ] When worktree creation fails, the choice is normalised before any pane is created:
+- [x] `--worktree` runs the worktree step first; without it, no worktree step.
+- [x] When worktree creation fails, the choice is normalised before any pane is created:
       the repository toplevel is used as `cwd`, and neither the tab nor the pane label
       carries a branch suffix.
-- [ ] The tab cwd follows `focused_pane_cwd`, with `HERDR_ACTIVE_PANE_ID` as fallback.
-- [ ] `workspace_id` is sent only when `HERDR_WORKSPACE_ID` is non-empty.
-- [ ] Cancelling any menu creates no Herdr resource.
-- [ ] Any failure after `tab.create` closes the tab and notifies with the two strings
+- [x] The tab cwd follows `focused_pane_cwd`, with `HERDR_ACTIVE_PANE_ID` as fallback.
+- [x] `workspace_id` is sent only when `HERDR_WORKSPACE_ID` is non-empty.
+- [x] Cancelling any menu creates no Herdr resource.
+- [x] Any failure after `tab.create` closes the tab and notifies with the two strings
       above.
-- [ ] The launch command is submitted with `keys: ["enter"]` and is shell-quoted.
+- [x] The launch command is submitted with `keys: ["enter"]` and is shell-quoted.
 
 ## Verification
 
-- [ ] `cargo test` — with `FakeClient`, assert the full ten-call sequence and every
+- [x] `cargo test` — with `FakeClient`, assert the full ten-call sequence and every
       parameter, mirroring the assertion block in `tests/new-agent-popup.test.zsh`
-- [ ] `cargo test` — a cancelled menu records zero calls
-- [ ] `cargo test` — a failure injected at each step after `tab.create` results in a
+- [x] `cargo test` — a cancelled menu records zero calls
+- [x] `cargo test` — a failure injected at each step after `tab.create` results in a
       `tab.close` plus a `notification.show`
-- [ ] `cargo test` — the bypass flag is absent by default and present when configured,
+- [x] `cargo test` — the bypass flag is absent by default and present when configured,
       pinning both states as the zsh test does
-- [ ] `cargo test` — configured extra args map one TOML array element to one argv
+- [x] `cargo test` — configured extra args map one TOML array element to one argv
       entry: `["--search", "--profile", "work"]` yields three, and
       `["--profile work"]` yields one entry containing a space
-- [ ] Manual through the linked dev plugin: run new-agent and new-worktree-agent once
+- [x] Manual through the linked dev plugin: run new-agent and new-worktree-agent once
       each, confirm the 3-pane layout and the tab label
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

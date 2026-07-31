@@ -1,13 +1,18 @@
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::io::{self, IsTerminal, Write};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use serde_json::{json, Map, Value};
 
 use crate::config::Config;
+use crate::herdr::HerdrClient;
+use crate::notify;
+use crate::shell::build_command;
 
 const HARNESS_TITLE: &str = "\u{f169f}  Launch Agent";
 const HARNESS_CLAUDE: &str = "\u{f15ce}  claude code";
@@ -24,6 +29,371 @@ const USAGE_DEBUG: &str = "\u{ead8}  debug";
 const USAGE_WRITE: &str = "\u{f19b9}  let me write…";
 const WORKTREE_TITLE: &str = "  New Worktree";
 const WORKTREE_SUBTITLE: &str = "Filter a branch, or name a new one.";
+const FILES_LABEL: &str = "\u{f0968}  Files";
+const TERM_LABEL: &str = "\u{f489}  term";
+const AGENT_LABEL: &str = "\u{f169f}  agent";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchOptions {
+    pub pane_id: String,
+    pub tab_id: Option<String>,
+    pub usage: Option<String>,
+    pub worktree: bool,
+    pub no_layout: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InjectOptions {
+    pub pane_id: String,
+    pub tab_id: Option<String>,
+    pub usage: Option<String>,
+    pub worktree: bool,
+}
+
+/// Run every menu at full width, create side panes last, then replace this process.
+pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions) -> Result<()> {
+    let pane = client
+        .pane_get(json!({ "pane_id": options.pane_id }))
+        .context("failed to read the agent pane")?
+        .pane;
+    let cwd = pane
+        .foreground_cwd
+        .or(pane.cwd)
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+        .map(Ok)
+        .unwrap_or_else(|| {
+            std::env::current_dir().context("failed to read the current directory")
+        })?;
+    let (cols, lines) = pane_viewport(client, &options.pane_id);
+    let Some(mut choice) = choose_agent(
+        config,
+        &cwd,
+        options.worktree,
+        options.usage.as_deref(),
+        cols,
+        lines,
+    )?
+    else {
+        return Ok(());
+    };
+
+    if let (Some(repo_root), Some(branch)) = (RealGit.toplevel(&cwd), choice.branch.clone()) {
+        match realise_worktree(&repo_root, &branch) {
+            Some(directory) => choice.project_dir = directory,
+            None => choice = without_worktree(choice, &repo_root),
+        }
+    }
+    apply_launch_layout(client, options, &choice)?;
+    std::env::set_current_dir(&choice.project_dir)
+        .with_context(|| format!("failed to enter {}", choice.project_dir.display()))?;
+    Command::new("clear")
+        .status()
+        .context("failed to clear the terminal before launching the agent")?;
+
+    // A child wrapper breaks restart-in-place. exec only returns when execvp fails.
+    let error = Command::new(&choice.launch[0])
+        .args(&choice.launch[1..])
+        .exec();
+    let message = format!("Could not launch the agent: {error}");
+    notify::notify(client, "Agent launch failed", &message);
+    Err(anyhow!(message))
+}
+
+pub fn inject(client: &dyn HerdrClient, options: &InjectOptions) -> Result<()> {
+    let executable =
+        std::env::current_exe().context("failed to resolve the workbench executable")?;
+    let executable = executable
+        .to_str()
+        .context("workbench executable path is not valid UTF-8")?;
+    let mut argv = vec![
+        executable.to_owned(),
+        "agent".to_owned(),
+        "launch".to_owned(),
+        options.pane_id.clone(),
+    ];
+    if let Some(tab_id) = &options.tab_id {
+        argv.extend(["--tab".to_owned(), tab_id.clone()]);
+    }
+    if let Some(usage) = &options.usage {
+        argv.extend(["--usage".to_owned(), usage.clone()]);
+    }
+    if options.worktree {
+        argv.push("--worktree".to_owned());
+    }
+
+    client
+        .pane_rename(json!({ "pane_id": options.pane_id, "label": AGENT_LABEL }))
+        .context("failed to rename the injected agent pane")?;
+    client
+        .pane_send_input(json!({
+            "pane_id": options.pane_id,
+            "text": build_command(&argv),
+            "keys": ["enter"],
+        }))
+        .context("failed to inject the agent launcher")?;
+    Ok(())
+}
+
+fn apply_launch_layout(
+    client: &dyn HerdrClient,
+    options: &LaunchOptions,
+    choice: &AgentChoice,
+) -> Result<()> {
+    let cwd = choice.project_dir.to_string_lossy();
+    client
+        .pane_rename(json!({ "pane_id": options.pane_id, "label": choice.label }))
+        .context("failed to rename the agent pane")?;
+    if let Some(tab_id) = &options.tab_id {
+        client
+            .tab_rename(json!({ "tab_id": tab_id, "label": choice.label }))
+            .context("failed to rename the agent tab")?;
+    }
+    if options.no_layout {
+        return Ok(());
+    }
+
+    // Splitting earlier resizes menus and prevents the selected worktree from driving
+    // every pane's cwd, so both splits remain after the decision flow.
+    let files_pane = client
+        .pane_split(json!({
+            "target_pane_id": options.pane_id,
+            "direction": "right",
+            "ratio": 0.38,
+            "cwd": cwd,
+            "env": { "Q_NO_BANNER": "1" },
+            "focus": false,
+        }))
+        .context("failed to split the Files pane")?
+        .pane
+        .pane_id;
+    client
+        .pane_rename(json!({ "pane_id": files_pane, "label": FILES_LABEL }))
+        .context("failed to rename the Files pane")?;
+    client
+        .pane_send_input(json!({ "pane_id": files_pane, "text": "yazi .", "keys": ["enter"] }))
+        .context("failed to start yazi")?;
+    let term_pane = client
+        .pane_split(json!({
+            "target_pane_id": files_pane,
+            "direction": "down",
+            "ratio": 0.9,
+            "cwd": cwd,
+            "focus": false,
+        }))
+        .context("failed to split the terminal pane")?
+        .pane
+        .pane_id;
+    client
+        .pane_rename(json!({ "pane_id": term_pane, "label": TERM_LABEL }))
+        .context("failed to rename the terminal pane")?;
+    Ok(())
+}
+
+fn pane_viewport(client: &dyn HerdrClient, pane_id: &str) -> (u16, u16) {
+    let layout = client.pane_layout(json!({ "pane_id": pane_id })).ok();
+    let rect = layout
+        .as_ref()
+        .and_then(|layout| layout.fields.get("layout"))
+        .and_then(|layout| layout.get("panes"))
+        .and_then(Value::as_array)
+        .and_then(|panes| panes.iter().find(|pane| pane["pane_id"] == pane_id))
+        .and_then(|pane| pane.get("rect"));
+    let cols = rect
+        .and_then(|rect| positive_dimension(rect.get("width")))
+        .unwrap_or_else(|| viewport_dimension("COLUMNS", "cols"));
+    let lines = rect
+        .and_then(|rect| positive_dimension(rect.get("height")))
+        .unwrap_or_else(|| viewport_dimension("LINES", "lines"));
+    (cols, lines)
+}
+
+fn positive_dimension(value: Option<&Value>) -> Option<u16> {
+    value?.as_u64()?.try_into().ok().filter(|value| *value > 0)
+}
+
+/// Collect a popup decision, then create and focus its tab.
+pub fn popup(client: &dyn HerdrClient, worktree: bool) -> Result<()> {
+    adopt_invoking_pane_cwd(client)?;
+    let cwd = std::env::current_dir().context("failed to read popup working directory")?;
+    let config = Config::load().context("failed to load config")?;
+    let (cols, lines) = popup_viewport();
+    let Some(mut choice) = choose_agent(&config, &cwd, worktree, None, cols, lines)? else {
+        return Ok(());
+    };
+
+    if let Some(branch) = choice.branch.clone() {
+        let repo_root = RealGit.toplevel(&cwd).unwrap_or_else(|| cwd.clone());
+        if realise_worktree(&repo_root, &branch).is_none() {
+            choice = without_worktree(choice, &repo_root);
+        }
+    }
+
+    create_popup_tab(client, &choice, nonempty_env("HERDR_WORKSPACE_ID"))
+}
+
+fn adopt_invoking_pane_cwd(client: &dyn HerdrClient) -> Result<()> {
+    // A plugin popup starts in the plugin checkout. Adopt the invoking pane before git
+    // can mistake that checkout for the project repository.
+    let context_json = std::env::var("HERDR_PLUGIN_CONTEXT_JSON").ok();
+    let active_pane_id = nonempty_env("HERDR_ACTIVE_PANE_ID");
+    let pane_cwd = invoking_pane_cwd(client, context_json.as_deref(), active_pane_id.as_deref());
+    if let Some(cwd) = pane_cwd {
+        std::env::set_current_dir(&cwd)
+            .with_context(|| format!("failed to adopt invoking pane cwd {}", cwd.display()))?;
+    }
+    Ok(())
+}
+
+fn invoking_pane_cwd(
+    client: &dyn HerdrClient,
+    context_json: Option<&str>,
+    active_pane_id: Option<&str>,
+) -> Option<PathBuf> {
+    let context_cwd = context_json
+        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+        .and_then(|value| value.get("focused_pane_cwd")?.as_str().map(PathBuf::from));
+    let pane_cwd = match (
+        context_cwd.as_ref().filter(|path| path.is_dir()),
+        active_pane_id,
+    ) {
+        (Some(path), _) => Some(path.to_path_buf()),
+        (None, Some(pane_id)) => client
+            .pane_get(json!({ "pane_id": pane_id }))
+            .ok()
+            .and_then(|response| response.pane.cwd.map(PathBuf::from))
+            .filter(|path| path.is_dir()),
+        (None, None) => None,
+    };
+    pane_cwd
+}
+
+fn nonempty_env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+fn popup_viewport() -> (u16, u16) {
+    (
+        viewport_dimension("COLUMNS", "cols"),
+        viewport_dimension("LINES", "lines"),
+    )
+}
+
+fn viewport_dimension(variable: &str, tput_capability: &str) -> u16 {
+    nonempty_env(variable)
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|value| *value > 0)
+        .or_else(|| {
+            Command::new("tput")
+                .arg(tput_capability)
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .and_then(|value| value.trim().parse::<u16>().ok())
+                .filter(|value| *value > 0)
+        })
+        .unwrap_or(80)
+}
+
+fn create_popup_tab(
+    client: &dyn HerdrClient,
+    choice: &AgentChoice,
+    workspace_id: Option<String>,
+) -> Result<()> {
+    let cwd = choice.project_dir.to_string_lossy();
+    let mut params = Map::from_iter([
+        ("label".to_owned(), json!(choice.label)),
+        ("cwd".to_owned(), json!(cwd)),
+        ("env".to_owned(), json!({ "Q_NO_BANNER": "1" })),
+        ("focus".to_owned(), json!(false)),
+    ]);
+    if let Some(workspace_id) = workspace_id {
+        params.insert("workspace_id".to_owned(), json!(workspace_id));
+    }
+    let created = client
+        .tab_create(Value::Object(params))
+        .context("failed to create agent tab")?;
+    let tab_id = created.tab.tab_id;
+    let agent_pane = created.root_pane.pane_id;
+    let result = if tab_id.is_empty() || agent_pane.is_empty() {
+        Err(anyhow!("tab.create returned an empty tab or pane id"))
+    } else {
+        build_popup_tab(client, choice, &tab_id, &agent_pane)
+    };
+    if let Err(error) = result {
+        if !tab_id.is_empty() {
+            let _ = client.tab_close(json!({ "tab_id": tab_id }));
+        }
+        notify::notify(client, "Agent tab failed", "The incomplete tab was closed.");
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn build_popup_tab(
+    client: &dyn HerdrClient,
+    choice: &AgentChoice,
+    tab_id: &str,
+    agent_pane: &str,
+) -> Result<()> {
+    let cwd = choice.project_dir.to_string_lossy();
+    client
+        .pane_rename(json!({ "pane_id": agent_pane, "label": choice.label }))
+        .context("failed to rename agent pane")?;
+    client
+        .tab_rename(json!({ "tab_id": tab_id, "label": choice.label }))
+        .context("failed to rename agent tab")?;
+    let yazi_pane = client
+        .pane_split(json!({
+            "target_pane_id": agent_pane,
+            "direction": "right",
+            "ratio": 0.38,
+            "cwd": cwd,
+            "env": { "Q_NO_BANNER": "1" },
+            "focus": false,
+        }))
+        .context("failed to create files pane")?
+        .pane
+        .pane_id;
+    if yazi_pane.is_empty() {
+        return Err(anyhow!("first pane.split returned an empty pane id"));
+    }
+    client
+        .pane_rename(json!({ "pane_id": yazi_pane, "label": FILES_LABEL }))
+        .context("failed to rename files pane")?;
+    client
+        .pane_send_input(json!({ "pane_id": yazi_pane, "text": "yazi .", "keys": ["enter"] }))
+        .context("failed to start yazi")?;
+    let term_pane = client
+        .pane_split(json!({
+            "target_pane_id": yazi_pane,
+            "direction": "down",
+            "ratio": 0.9,
+            "cwd": cwd,
+            "focus": false,
+        }))
+        .context("failed to create terminal pane")?
+        .pane
+        .pane_id;
+    if term_pane.is_empty() {
+        return Err(anyhow!("second pane.split returned an empty pane id"));
+    }
+    client
+        .pane_rename(json!({ "pane_id": term_pane, "label": TERM_LABEL }))
+        .context("failed to rename terminal pane")?;
+    client
+        .pane_send_input(json!({
+            "pane_id": agent_pane,
+            "text": build_command(&choice.launch),
+            "keys": ["enter"],
+        }))
+        .context("failed to start agent")?;
+    client
+        .tab_focus(json!({ "tab_id": tab_id }))
+        .context("failed to focus agent tab")?;
+    Ok(())
+}
 
 /// One resolved launch decision.
 ///
@@ -655,12 +1025,354 @@ fn gum_with_input(args: &[&str], input: &str) -> Result<Option<String>> {
 }
 
 #[cfg(test)]
-mod tests {
+mod popup {
     use std::collections::VecDeque;
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
+    use crate::herdr::FakeClient;
+
+    fn popup_choice() -> AgentChoice {
+        AgentChoice {
+            label: "\u{f4af}  review".to_owned(),
+            project_dir: PathBuf::from("/projects/example"),
+            branch: None,
+            launch: vec!["codex".to_owned(), "--profile work".to_owned()],
+            harness: HARNESS_CODEX.to_owned(),
+            model_label: None,
+        }
+    }
+
+    fn queue_popup_create(client: &FakeClient) {
+        client.queue_response(
+            "tab.create",
+            json!({
+                "type": "tab_created",
+                "root_pane": { "pane_id": "p1" },
+                "tab": { "tab_id": "t1" },
+            }),
+        );
+    }
+
+    fn queue_popup_splits(client: &FakeClient) {
+        client.queue_response("pane.split", json!({ "pane": { "pane_id": "p2" } }));
+        client.queue_response("pane.split", json!({ "pane": { "pane_id": "p3" } }));
+    }
+
+    fn launch_options(tab_id: Option<&str>, no_layout: bool) -> LaunchOptions {
+        LaunchOptions {
+            pane_id: "p1".to_owned(),
+            tab_id: tab_id.map(str::to_owned),
+            usage: None,
+            worktree: false,
+            no_layout,
+        }
+    }
+
+    #[test]
+    fn launcher_builds_the_required_layout_sequence() {
+        let client = FakeClient::default();
+        queue_popup_splits(&client);
+
+        apply_launch_layout(&client, &launch_options(Some("t1"), false), &popup_choice()).unwrap();
+
+        assert_eq!(
+            client.calls.into_inner(),
+            vec![
+                (
+                    "pane.rename".to_owned(),
+                    json!({ "pane_id": "p1", "label": "\u{f4af}  review" })
+                ),
+                (
+                    "tab.rename".to_owned(),
+                    json!({ "tab_id": "t1", "label": "\u{f4af}  review" })
+                ),
+                (
+                    "pane.split".to_owned(),
+                    json!({
+                        "target_pane_id": "p1", "direction": "right", "ratio": 0.38,
+                        "cwd": "/projects/example", "env": { "Q_NO_BANNER": "1" }, "focus": false,
+                    })
+                ),
+                (
+                    "pane.rename".to_owned(),
+                    json!({ "pane_id": "p2", "label": FILES_LABEL })
+                ),
+                (
+                    "pane.send_input".to_owned(),
+                    json!({ "pane_id": "p2", "text": "yazi .", "keys": ["enter"] })
+                ),
+                (
+                    "pane.split".to_owned(),
+                    json!({
+                        "target_pane_id": "p2", "direction": "down", "ratio": 0.9,
+                        "cwd": "/projects/example", "focus": false,
+                    })
+                ),
+                (
+                    "pane.rename".to_owned(),
+                    json!({ "pane_id": "p3", "label": TERM_LABEL })
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn no_layout_skips_splits_and_tab_rename_is_optional() {
+        let client = FakeClient::default();
+
+        apply_launch_layout(&client, &launch_options(None, true), &popup_choice()).unwrap();
+
+        assert_eq!(
+            client.calls.into_inner(),
+            vec![(
+                "pane.rename".to_owned(),
+                json!({
+                    "pane_id": "p1", "label": "\u{f4af}  review"
+                })
+            )]
+        );
+    }
+
+    #[test]
+    fn inject_renames_once_and_shell_quoting_round_trips() {
+        let client = FakeClient::default();
+        let options = InjectOptions {
+            pane_id: "pane with ' quote".to_owned(),
+            tab_id: Some("tab with space".to_owned()),
+            usage: Some("review $HOME".to_owned()),
+            worktree: true,
+        };
+
+        inject(&client, &options).unwrap();
+
+        let calls = client.calls.into_inner();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls[0],
+            (
+                "pane.rename".to_owned(),
+                json!({
+                    "pane_id": "pane with ' quote", "label": AGENT_LABEL
+                })
+            )
+        );
+        assert_eq!(calls[1].0, "pane.send_input");
+        assert_eq!(calls[1].1["keys"], json!(["enter"]));
+        let command = calls[1].1["text"].as_str().unwrap();
+        let output = Command::new("zsh")
+            .args(["-c", "eval \"set -- $COMMAND\"; printf '%s\\n' \"$@\""])
+            .env("COMMAND", command)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let argv = String::from_utf8(output.stdout).unwrap();
+        let expected = [
+            std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            "agent".to_owned(),
+            "launch".to_owned(),
+            "pane with ' quote".to_owned(),
+            "--tab".to_owned(),
+            "tab with space".to_owned(),
+            "--usage".to_owned(),
+            "review $HOME".to_owned(),
+            "--worktree".to_owned(),
+        ];
+        assert_eq!(argv.lines().collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn popup_reproduces_the_exact_ten_call_sequence() {
+        let client = FakeClient::default();
+        queue_popup_create(&client);
+        queue_popup_splits(&client);
+
+        create_popup_tab(&client, &popup_choice(), None).unwrap();
+
+        assert_eq!(
+            client.calls.into_inner(),
+            vec![
+                (
+                    "tab.create".to_owned(),
+                    json!({
+                        "label": "\u{f4af}  review",
+                        "cwd": "/projects/example",
+                        "env": { "Q_NO_BANNER": "1" },
+                        "focus": false,
+                    }),
+                ),
+                (
+                    "pane.rename".to_owned(),
+                    json!({ "pane_id": "p1", "label": "\u{f4af}  review" })
+                ),
+                (
+                    "tab.rename".to_owned(),
+                    json!({ "tab_id": "t1", "label": "\u{f4af}  review" })
+                ),
+                (
+                    "pane.split".to_owned(),
+                    json!({
+                        "target_pane_id": "p1", "direction": "right", "ratio": 0.38,
+                        "cwd": "/projects/example", "env": { "Q_NO_BANNER": "1" }, "focus": false,
+                    })
+                ),
+                (
+                    "pane.rename".to_owned(),
+                    json!({ "pane_id": "p2", "label": FILES_LABEL })
+                ),
+                (
+                    "pane.send_input".to_owned(),
+                    json!({ "pane_id": "p2", "text": "yazi .", "keys": ["enter"] })
+                ),
+                (
+                    "pane.split".to_owned(),
+                    json!({
+                        "target_pane_id": "p2", "direction": "down", "ratio": 0.9,
+                        "cwd": "/projects/example", "focus": false,
+                    })
+                ),
+                (
+                    "pane.rename".to_owned(),
+                    json!({ "pane_id": "p3", "label": TERM_LABEL })
+                ),
+                (
+                    "pane.send_input".to_owned(),
+                    json!({
+                        "pane_id": "p1", "text": "'codex' '--profile work'", "keys": ["enter"],
+                    })
+                ),
+                ("tab.focus".to_owned(), json!({ "tab_id": "t1" })),
+            ]
+        );
+    }
+
+    #[test]
+    fn popup_workspace_id_is_omitted_when_empty_and_sent_when_present() {
+        for (workspace, expected) in [(None, None), (Some("w1".to_owned()), Some(json!("w1")))] {
+            let client = FakeClient::default();
+            queue_popup_create(&client);
+            queue_popup_splits(&client);
+            create_popup_tab(&client, &popup_choice(), workspace).unwrap();
+            assert_eq!(
+                client.calls.borrow()[0].1.get("workspace_id"),
+                expected.as_ref()
+            );
+        }
+    }
+
+    #[test]
+    fn popup_cwd_prefers_plugin_context_and_falls_back_to_active_pane() {
+        let fixture = RepoFixture::new("popup-cwd");
+        let context_dir = fixture.directory.join("context");
+        let pane_dir = fixture.directory.join("pane");
+        fs::create_dir_all(&context_dir).unwrap();
+        fs::create_dir_all(&pane_dir).unwrap();
+        let client = FakeClient::default();
+        client.queue_response(
+            "pane.get",
+            json!({ "pane": { "pane_id": "p1", "cwd": pane_dir } }),
+        );
+
+        let context = json!({ "focused_pane_cwd": context_dir }).to_string();
+        assert_eq!(
+            invoking_pane_cwd(&client, Some(&context), Some("p1")),
+            Some(context_dir)
+        );
+        assert!(client.calls.borrow().is_empty());
+        assert_eq!(invoking_pane_cwd(&client, None, Some("p1")), Some(pane_dir));
+        assert_eq!(
+            client.calls.into_inner(),
+            [("pane.get".to_owned(), json!({ "pane_id": "p1" }))]
+        );
+    }
+
+    #[test]
+    fn popup_failure_at_every_post_create_step_closes_and_notifies() {
+        let methods = [
+            "pane.rename",
+            "tab.rename",
+            "pane.split",
+            "pane.rename",
+            "pane.send_input",
+            "pane.split",
+            "pane.rename",
+            "pane.send_input",
+            "tab.focus",
+        ];
+        for failure_index in 0..methods.len() {
+            let client = FakeClient::default();
+            queue_popup_create(&client);
+            let mut method_counts = std::collections::HashMap::<&str, usize>::new();
+            for (index, method) in methods.iter().enumerate() {
+                let count = method_counts.entry(method).or_default();
+                if index == failure_index {
+                    client.queue_error(method, "injected", "failure");
+                    break;
+                }
+                if *method == "pane.split" {
+                    let pane_id = if *count == 0 { "p2" } else { "p3" };
+                    client.queue_response(method, json!({ "pane": { "pane_id": pane_id } }));
+                } else {
+                    client.queue_response(method, json!({ "type": "ok" }));
+                }
+                *count += 1;
+            }
+
+            assert!(create_popup_tab(&client, &popup_choice(), None).is_err());
+            let calls = client.calls.borrow();
+            assert_eq!(
+                calls[calls.len() - 2],
+                ("tab.close".to_owned(), json!({ "tab_id": "t1" }))
+            );
+            assert_eq!(
+                calls[calls.len() - 1],
+                (
+                    "notification.show".to_owned(),
+                    json!({
+                        "title": "Agent tab failed",
+                        "body": "The incomplete tab was closed.",
+                        "position": "bottom-right",
+                        "sound": "none",
+                    })
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn popup_cancelled_choice_makes_zero_calls() {
+        let client = FakeClient::default();
+        let choice: Option<AgentChoice> = None;
+        if let Some(choice) = choice {
+            create_popup_tab(&client, &choice, None).unwrap();
+        }
+        assert!(client.calls.into_inner().is_empty());
+    }
+
+    #[test]
+    fn popup_extra_args_preserve_toml_array_boundaries_and_bypass_is_opt_in() {
+        let mut config = config();
+        config.codex_extra_args = Vec::new();
+        assert_eq!(
+            build_launch(&config, HARNESS_CODEX, None).unwrap(),
+            ["codex"]
+        );
+        config.codex_extra_args = vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()];
+        assert_eq!(build_launch(&config, HARNESS_CODEX, None).unwrap().len(), 2);
+        config.codex_extra_args = ["--search", "--profile", "work"]
+            .map(str::to_owned)
+            .to_vec();
+        assert_eq!(build_launch(&config, HARNESS_CODEX, None).unwrap().len(), 4);
+        config.codex_extra_args = vec!["--profile work".to_owned()];
+        assert_eq!(
+            build_launch(&config, HARNESS_CODEX, None).unwrap(),
+            ["codex", "--profile work"]
+        );
+    }
 
     fn config() -> Config {
         Config {

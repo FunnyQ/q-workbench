@@ -7,7 +7,7 @@
 >
 > **Depends on**: agent/01, foundation/05
 > **Blocks**: agent/04, picker/02, polish/02, polish/06
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -78,33 +78,33 @@ is gone — named flags mean an omitted value simply is not passed.
 
 ## Acceptance criteria
 
-- [ ] `agent launch` ends in `CommandExt::exec()`; no child process wraps the harness.
-- [ ] A failed `exec` notifies with the reason and exits non-zero.
-- [ ] Both splits happen after every menu, with the parameters in the parity contract.
-- [ ] `--no-layout` skips both splits and performs no rename of the side panes.
-- [ ] The tab is renamed only when `--tab` is given.
-- [ ] Viewport size comes from `pane.layout`, with the documented fallback chain.
-- [ ] The working directory is the chosen worktree when one was selected, otherwise
+- [x] `agent launch` ends in `CommandExt::exec()`; no child process wraps the harness.
+- [x] A failed `exec` notifies with the reason and exits non-zero.
+- [x] Both splits happen after every menu, with the parameters in the parity contract.
+- [x] `--no-layout` skips both splits and performs no rename of the side panes.
+- [x] The tab is renamed only when `--tab` is given.
+- [x] Viewport size comes from `pane.layout`, with the documented fallback chain.
+- [x] The working directory is the chosen worktree when one was selected, otherwise
       the repo toplevel, otherwise the current directory.
-- [ ] When worktree creation fails, the choice is normalised before any pane is created:
+- [x] When worktree creation fails, the choice is normalised before any pane is created:
       the repository toplevel is used as `cwd`, and neither the tab nor the pane label
       carries a branch suffix.
-- [ ] `agent inject` renames the pane and sends a correctly quoted launcher command
+- [x] `agent inject` renames the pane and sends a correctly quoted launcher command
       with `keys: ["enter"]`.
 
 ## Verification
 
-- [ ] `cargo test` — with `FakeClient`, assert the split sequence and parameters, and
+- [x] `cargo test` — with `FakeClient`, assert the split sequence and parameters, and
       that `--no-layout` produces no split calls
-- [ ] `cargo test` — assert the tab rename happens only with `--tab`
-- [ ] `cargo test` — `agent inject` produces one `pane.rename` and one
+- [x] `cargo test` — assert the tab rename happens only with `--tab`
+- [x] `cargo test` — `agent inject` produces one `pane.rename` and one
       `pane.send_input` whose text round-trips through a shell back to the intended argv
-- [ ] Manual in a **scratch tab**: run `agent launch` into a pane and confirm the
+- [x] Manual in a **scratch tab**: run `agent launch` into a pane and confirm the
       harness replaces the launcher — check that the pane's process tree has no
       `workbench` process left
-- [ ] Manual: confirm menus stay centered throughout, with no visible resize until the
+- [x] Manual: confirm menus stay centered throughout, with no visible resize until the
       final split
-- [ ] `cargo clippy -- -D warnings` is clean
+- [x] `cargo clippy -- -D warnings` is clean
 
 ## Eval rubric
 

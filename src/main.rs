@@ -161,9 +161,43 @@ impl Cli {
 
         let path = match self.command {
             Command::Agent { command } => match command {
-                AgentCommand::Popup { .. } => "agent popup",
-                AgentCommand::Launch(_) => "agent launch",
-                AgentCommand::Inject(_) => "agent inject",
+                AgentCommand::Popup { worktree } => {
+                    let client = client
+                        .as_ref()
+                        .context("Herdr client is required for agent popup")?;
+                    return flows::agent::popup(client, worktree);
+                }
+                AgentCommand::Launch(args) => {
+                    let client = client
+                        .as_ref()
+                        .context("Herdr client is required for agent launch")?;
+                    let config = config::Config::load().context("failed to load config")?;
+                    return flows::agent::launch(
+                        client,
+                        &config,
+                        &flows::agent::LaunchOptions {
+                            pane_id: args.pane_id,
+                            tab_id: args.tab,
+                            usage: args.usage,
+                            worktree: args.worktree,
+                            no_layout: args.no_layout,
+                        },
+                    );
+                }
+                AgentCommand::Inject(args) => {
+                    let client = client
+                        .as_ref()
+                        .context("Herdr client is required for agent inject")?;
+                    return flows::agent::inject(
+                        client,
+                        &flows::agent::InjectOptions {
+                            pane_id: args.pane_id,
+                            tab_id: args.tab,
+                            usage: args.usage,
+                            worktree: args.worktree,
+                        },
+                    );
+                }
                 AgentCommand::Restart => "agent restart",
                 AgentCommand::RestartWorker { .. } => "agent restart-worker",
             },

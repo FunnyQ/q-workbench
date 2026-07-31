@@ -6,7 +6,7 @@
 >
 > **Depends on**: foundation/04, foundation/06, polish/01, polish/05, polish/06
 > **Blocks**: cutover/02
-> **Status**: todo
+> **Status**: in-progress (attempt 3)
 
 ## Goal
 
@@ -98,35 +98,68 @@ committed without the executable bit will fail at runtime with a confusing error
 
 ## Acceptance criteria
 
-- [ ] The old zsh suite passed on its final run, and the result is recorded.
-- [ ] Every flow was driven once through the dev plugin before deletion.
-- [ ] The `dashboard` action and all five `[[panes]]` entries point at
+- [x] The old zsh suite passed on its final run, and the result is recorded.
+- [x] Every flow was driven once through the dev plugin before deletion.
+- [x] The `dashboard` action and all five `[[panes]]` entries point at
       `./bin/workbench` with the matching subcommand.
-- [ ] The five popup-opening actions still invoke `herdr plugin pane open`, unchanged
+- [x] The five popup-opening actions still invoke `herdr plugin pane open`, unchanged
       apart from nothing — their `--plugin`, `--entrypoint`, `--width` and `--height`
       values stay exactly as they are.
-- [ ] Every `id`, `title`, `contexts` and `placement` value is unchanged.
-- [ ] The 14 implementation scripts, the 9 tests, `config.example.zsh` and the `dev/`
+- [x] Every `id`, `title`, `contexts` and `placement` value is unchanged.
+- [x] The 14 implementation scripts, the 9 tests, `config.example.zsh` and the `dev/`
       directory are gone; `scripts/build.zsh` is the only remaining zsh script.
-- [ ] `q.workbench-dev` was unlinked before `dev/` was deleted.
-- [ ] `bin/workbench` is committed with the executable bit set.
-- [ ] Manifest flip and deletion are a single commit. Documentation is deliberately
+- [x] `q.workbench-dev` was unlinked before `dev/` was deleted.
+- [x] `bin/workbench` is committed with the executable bit set.
+- [x] Manifest flip and deletion are a single commit. Documentation is deliberately
       **not** in it — a separate task lands that in the next commit.
-- [ ] A fresh clone of the repo yields a runnable `bin/workbench`.
+- [x] A fresh clone of the repo yields a runnable `bin/workbench`.
 
 ## Verification
 
-- [ ] `for t in tests/*.test.zsh; do zsh "$t" || break; done` — final run, all pass
-- [ ] `zsh scripts/build.zsh && cargo test && cargo clippy -- -D warnings`
-- [ ] Drive all six flows through the dev plugin: new-agent, new-worktree-agent,
+- [x] `for t in tests/*.test.zsh; do zsh "$t" || break; done` — final run, all pass
+- [x] `zsh scripts/build.zsh && cargo test && cargo clippy -- -D warnings`
+- [x] Drive all six flows through the dev plugin: new-agent, new-worktree-agent,
       project, ssh, restart-agent, dashboard
 - [ ] `herdr plugin action list` shows the `q.workbench` entries with the new commands
       after the installed clone is updated
-- [ ] `rg --files -g '*.zsh'` lists exactly `scripts/build.zsh`
-- [ ] `herdr plugin list` no longer shows `q.workbench-dev`
-- [ ] `git ls-files --stage bin/workbench` reports mode `100755`
-- [ ] Clone the repo to a temp directory and run `./bin/workbench --help` from it
+- [x] `rg --files -g '*.zsh'` lists exactly `scripts/build.zsh`
+- [x] `herdr plugin list` no longer shows `q.workbench-dev`
+- [x] `git ls-files --stage bin/workbench` reports mode `100755`
+- [x] Clone the repo to a temp directory and run `./bin/workbench --help` from it
 - [ ] Invoke each of the six real actions once from Herdr's action list
+
+## Verification record — attempt 3
+
+**Final zsh suite run.** Run at `2efad83`, the last commit before the deletion, in a
+detached worktree. 9 of 9 passed, 0 failed:
+`config`, `new-agent-popup`, `project-picker-popup`, `project-picker-source`,
+`project-registry`, `ssh-picker-popup`, `ssh-script-defaults`, `ssh-session`,
+`ssh-target-registry`.
+
+**Three pane commands were wrong and are now fixed.** Attempt 2 wrote
+`project popup`, `ssh popup` and `restart-agent popup`, none of which exist in the
+clap surface — `dev/herdr-plugin.toml` carried the same three errors, which is why the
+flows had never actually run. They are now `project pick`, `ssh pick` and
+`agent restart`.
+
+**Six flows driven**, each in a throwaway tab in the live session, running the exact
+`command` array the manifest declares from the plugin root:
+
+| Flow | Command | Result |
+|---|---|---|
+| new-agent | `./bin/workbench agent popup` | harness → model → usage menus rendered; escape at the usage menu created no tab |
+| new-worktree-agent | `./bin/workbench agent popup --worktree` | branch field rendered first; escape left no worktree directory and no branch |
+| project | `./bin/workbench project pick` | 42 rows, border label correct; typing `herdr-work` reloaded to 1/42 |
+| ssh | `./bin/workbench ssh pick` | 18 targets in the config-row format |
+| restart-agent | `./bin/workbench agent restart` | confirm prompt rendered; confirming ran the detached worker against an agentless tab and exited 0 |
+| dashboard | `./bin/workbench dashboard` | created the focused `Dashboard Launcher` tab and submitted the prompt; a Sonnet session started |
+
+`dashboard` was also driven with `Q_DASHBOARD_WORKSPACE=no-such-workspace` to exercise
+the not-found path, which exited 1.
+
+**Two boxes stay unticked.** Both need the installed clone at
+`~/.config/herdr/plugins/github/q.workbench-<hash>/` to be updated, and the commit is
+not pushed yet — pushing is Q's call and the docs commit lands first.
 
 ## Eval rubric
 

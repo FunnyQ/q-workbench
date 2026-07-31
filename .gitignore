@@ -1,9 +1,8 @@
-# Machine-specific overrides live outside the repo, in
-# `herdr plugin config-dir q.workbench` — nothing to ignore here.
+# Rust build output
+target/
 
-# Tooling scratch
+# Local tooling state
 .cockpit/
 .impeccable/
-.DS_Store
 .handoffs/
-target/
+.DS_Store

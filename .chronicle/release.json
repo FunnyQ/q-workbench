@@ -10,6 +10,10 @@
     {
       "path": "herdr-plugin.toml",
       "pattern": "version = \"([^\"]+)\""
+    },
+    {
+      "path": "Cargo.toml",
+      "pattern": "version = \"([^\"]+)\""
     }
   ]
 }

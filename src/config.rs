@@ -730,7 +730,7 @@ models = {}
         let environment = TestEnvironment::new();
         env::remove_var("Q_WORKBENCH_LOCAL_CONFIG");
         env::set_var("Q_SSH_HISTORY_FILE", "/inherited/not-in-source");
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config.zsh");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config.fixture");
 
         let partial = migrate(Some(&fixture)).expect("migrate fixture");
         let toml = serialize_migration(&partial).expect("serialize migration");

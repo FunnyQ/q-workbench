@@ -21,7 +21,7 @@ command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench", "--entr
 id = "dashboard"
 title = "Open dashboard launcher"
 contexts = ["workspace"]
-command = ["zsh", "scripts/dashboard-launcher.zsh"]
+command = ["./bin/workbench", "dashboard"]
 
 [[actions]]
 id = "project"
@@ -45,28 +45,28 @@ command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench", "--entr
 id = "agent"
 title = "󱚟  new agent"
 placement = "popup"
-command = ["zsh", "scripts/new-agent-popup.zsh"]
+command = ["./bin/workbench", "agent", "popup"]
 
 [[panes]]
 id = "worktree-agent"
 title = "󱚟  new worktree agent"
 placement = "popup"
-command = ["zsh", "scripts/new-agent-popup.zsh", "worktree"]
+command = ["./bin/workbench", "agent", "popup", "--worktree"]
 
 [[panes]]
 id = "project"
 title = "󰉋 project"
 placement = "popup"
-command = ["zsh", "scripts/project-picker-popup.zsh"]
+command = ["./bin/workbench", "project", "pick"]
 
 [[panes]]
 id = "ssh"
 title = " ssh"
 placement = "popup"
-command = ["zsh", "scripts/ssh-picker-popup.zsh"]
+command = ["./bin/workbench", "ssh", "pick"]
 
 [[panes]]
 id = "restart-agent"
 title = "󰜉  Restart Agent"
 placement = "popup"
-command = ["zsh", "scripts/restart-agent-popup.zsh"]
+command = ["./bin/workbench", "agent", "restart"]

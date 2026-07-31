@@ -26,7 +26,7 @@ fn temporary_directory() -> std::path::PathBuf {
 fn write_refuses_then_force_overwrites_the_resolved_destination() {
     let directory = temporary_directory();
     let fixture =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config.zsh");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config.fixture");
     let destination = directory.join("config.toml");
     let binary = env!("CARGO_BIN_EXE_workbench");
 
@@ -73,7 +73,7 @@ fn write_refuses_then_force_overwrites_the_resolved_destination() {
 #[test]
 fn force_without_write_is_rejected() {
     let fixture =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config.zsh");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config.fixture");
     let output = Command::new(env!("CARGO_BIN_EXE_workbench"))
         .args(["config", "migrate", "--from"])
         .arg(fixture)
@@ -105,7 +105,7 @@ fn write_refuses_a_destination_that_is_the_source() {
     let directory = temporary_directory();
     let source = directory.join("config.zsh");
     fs::copy(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config.zsh"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config.fixture"),
         &source,
     )
     .expect("copy fixture");
@@ -128,7 +128,7 @@ fn write_refuses_a_destination_that_is_the_source() {
     assert_eq!(
         fs::read_to_string(&source).expect("read source"),
         fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config.zsh")
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config.fixture")
         )
         .expect("read fixture"),
         "the source file was modified"
@@ -142,7 +142,7 @@ fn write_refuses_a_destination_that_is_not_named_toml() {
     let directory = temporary_directory();
     let destination = directory.join("config.zsh");
     let fixture =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config.zsh");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config.fixture");
 
     let output = Command::new(env!("CARGO_BIN_EXE_workbench"))
         .args(["config", "migrate", "--from"])

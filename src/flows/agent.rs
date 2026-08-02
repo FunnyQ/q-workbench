@@ -41,6 +41,7 @@ pub struct LaunchOptions {
     pub worktree: bool,
     pub no_layout: bool,
     pub restart: bool,
+    pub layout: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,10 +50,19 @@ pub struct InjectOptions {
     pub tab_id: Option<String>,
     pub usage: Option<String>,
     pub worktree: bool,
+    pub layout: Option<String>,
+}
+
+fn resolve_layout<'a>(config: &'a Config, requested: Option<&str>) -> Result<&'a TabLayout> {
+    let name = requested.unwrap_or(&config.default_tab_layout);
+    config
+        .layout(name)
+        .with_context(|| format!("unknown tab layout: {name}"))
 }
 
 /// Run every menu at full width, create side panes last, then replace this process.
 pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions) -> FlowResult {
+    let layout = resolve_layout(config, options.layout.as_deref())?;
     let pane = client
         .pane_get(json!({ "pane_id": options.pane_id }))
         .context("failed to read the agent pane")?
@@ -67,9 +77,6 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
             std::env::current_dir().context("failed to read the current directory")
         })?;
     let (cols, lines) = pane_viewport(client, &options.pane_id);
-    let layout = config
-        .layout(&config.default_tab_layout)
-        .expect("validated at load");
     let Some(mut choice) = choose_agent(
         config,
         layout,
@@ -121,6 +128,16 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
 }
 
 pub fn inject(client: &dyn HerdrClient, options: &InjectOptions) -> FlowResult {
+    let config = Config::load().context("failed to load config")?;
+    inject_with_config(client, &config, options)
+}
+
+pub(crate) fn inject_with_config(
+    client: &dyn HerdrClient,
+    config: &Config,
+    options: &InjectOptions,
+) -> FlowResult {
+    let layout = resolve_layout(config, options.layout.as_deref())?;
     let executable =
         std::env::current_exe().context("failed to resolve the workbench executable")?;
     let executable = executable
@@ -141,9 +158,24 @@ pub fn inject(client: &dyn HerdrClient, options: &InjectOptions) -> FlowResult {
     if options.worktree {
         argv.push("--worktree".to_owned());
     }
+    if let Some(layout) = &options.layout {
+        argv.extend(["--layout".to_owned(), layout.clone()]);
+    }
+
+    // At inject time the usage menu has not run, so the layout root is the best
+    // available name and the generic agent label remains the fallback.
+    let root_pane_label = layout.panes.first().and_then(|pane| pane.label.as_deref());
+    let pane_label = if let Some(label) = root_pane_label {
+        render_label(
+            layout.panes.first().and_then(|pane| pane.icon.as_deref()),
+            label,
+        )
+    } else {
+        AGENT_LABEL.to_owned()
+    };
 
     client
-        .pane_rename(json!({ "pane_id": options.pane_id, "label": AGENT_LABEL }))
+        .pane_rename(json!({ "pane_id": options.pane_id, "label": pane_label }))
         .context("failed to rename the injected agent pane")?;
     client
         .pane_send_input(json!({
@@ -270,14 +302,16 @@ fn positive_dimension(value: Option<&Value>) -> Option<u16> {
 }
 
 /// Collect a popup decision, then create and focus its tab.
-pub fn popup(client: &dyn HerdrClient, worktree: bool) -> FlowResult {
+pub fn popup(
+    client: &dyn HerdrClient,
+    worktree: bool,
+    requested_layout: Option<&str>,
+) -> FlowResult {
     adopt_invoking_pane_cwd(client)?;
     let cwd = std::env::current_dir().context("failed to read popup working directory")?;
     let config = Config::load().context("failed to load config")?;
     let (cols, lines) = popup_viewport();
-    let layout = config
-        .layout(&config.default_tab_layout)
-        .expect("validated at load");
+    let layout = resolve_layout(&config, requested_layout)?;
     let Some(mut choice) = choose_agent(&config, layout, &cwd, worktree, None, cols, lines, None)?
     else {
         return Ok(Outcome::Cancelled);
@@ -1371,7 +1405,49 @@ mod popup {
             worktree: false,
             no_layout,
             restart: false,
+            layout: None,
         }
+    }
+
+    #[test]
+    fn resolve_layout_accepts_a_named_layout() {
+        let config = Config::test_default();
+
+        let layout = resolve_layout(&config, Some("agentic-coding")).unwrap();
+
+        assert_eq!(layout.name, "agentic-coding");
+    }
+
+    #[test]
+    fn resolve_layout_uses_the_configured_default() {
+        let mut config = Config::test_default();
+        config.default_tab_layout = "agentic-coding".to_owned();
+
+        let layout = resolve_layout(&config, None).unwrap();
+
+        assert_eq!(layout.name, config.default_tab_layout);
+    }
+
+    #[test]
+    fn resolve_layout_rejects_an_unknown_name() {
+        let config = Config::test_default();
+
+        let error = resolve_layout(&config, Some("unknown-layout")).unwrap_err();
+
+        assert!(error.to_string().contains("unknown-layout"));
+    }
+
+    #[test]
+    fn launch_unknown_layout_rejects_before_socket() {
+        let client = FakeClient::default();
+        let config = Config::test_default();
+        let mut options = launch_options(None, false);
+        options.layout = Some("unknown-layout".to_owned());
+
+        let error = launch(&client, &config, &options).unwrap_err();
+
+        assert!(error.to_string().contains("unknown-layout"));
+        assert!(client.calls.into_inner().is_empty());
     }
 
     #[test]
@@ -1472,9 +1548,14 @@ mod popup {
             tab_id: Some("tab with space".to_owned()),
             usage: Some("review $HOME".to_owned()),
             worktree: true,
+            layout: Some("my layout".to_owned()),
         };
 
-        inject(&client, &options).unwrap();
+        let mut config = Config::test_default();
+        let mut layout = default_layout();
+        layout.name = "my layout".to_owned();
+        config.tab_layouts.push(layout);
+        inject_with_config(&client, &config, &options).unwrap();
 
         let calls = client.calls.into_inner();
         assert_eq!(calls.len(), 2);
@@ -1510,6 +1591,8 @@ mod popup {
             "--usage".to_owned(),
             "review $HOME".to_owned(),
             "--worktree".to_owned(),
+            "--layout".to_owned(),
+            "my layout".to_owned(),
         ];
         assert_eq!(argv.lines().collect::<Vec<_>>(), expected);
     }

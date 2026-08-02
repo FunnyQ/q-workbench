@@ -262,13 +262,14 @@ fn focus_or_create_project(
                     "label": PROJECT_MAIN_LABEL,
                 }))
                 .context("project pick: tab.rename")?;
-            agent::inject(
+            inject_project_agent(
                 client,
                 &InjectOptions {
                     pane_id: created.root_pane.pane_id,
                     tab_id: None,
                     usage: Some(PROJECT_MAIN_LABEL.to_owned()),
                     worktree: false,
+                    layout: None,
                 },
             )
             .context("project pick: inject agent")?;
@@ -279,6 +280,16 @@ fn focus_or_create_project(
         .workspace_focus(json!({"workspace_id": workspace_id}))
         .context("project pick: workspace.focus")?;
     Ok(())
+}
+
+#[cfg(not(test))]
+fn inject_project_agent(client: &dyn HerdrClient, options: &InjectOptions) -> FlowResult {
+    agent::inject(client, options)
+}
+
+#[cfg(test)]
+fn inject_project_agent(client: &dyn HerdrClient, options: &InjectOptions) -> FlowResult {
+    agent::inject_with_config(client, &Config::test_default(), options)
 }
 
 fn project_label(registry_path: &Path, path: &Path) -> Result<String> {

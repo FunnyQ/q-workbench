@@ -56,6 +56,8 @@ enum AgentCommand {
     Popup {
         #[arg(long)]
         worktree: bool,
+        #[arg(long)]
+        layout: Option<String>,
     },
     Launch(LaunchArgs),
     Inject(InjectArgs),
@@ -80,6 +82,8 @@ struct LaunchArgs {
     no_layout: bool,
     #[arg(long, hide = true)]
     restart: bool,
+    #[arg(long)]
+    layout: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -91,6 +95,8 @@ struct InjectArgs {
     usage: Option<String>,
     #[arg(long)]
     worktree: bool,
+    #[arg(long)]
+    layout: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -226,9 +232,9 @@ impl Cli {
     fn run(self, client: Option<&dyn HerdrClient>) -> FlowResult {
         match self.command {
             Command::Agent { command } => match command {
-                AgentCommand::Popup { worktree } => {
+                AgentCommand::Popup { worktree, layout } => {
                     let client = client.context("Herdr client is required for agent popup")?;
-                    return flows::agent::popup(client, worktree);
+                    return flows::agent::popup(client, worktree, layout.as_deref());
                 }
                 AgentCommand::Launch(args) => {
                     let client = client.context("Herdr client is required for agent launch")?;
@@ -243,6 +249,7 @@ impl Cli {
                             worktree: args.worktree,
                             no_layout: args.no_layout,
                             restart: args.restart,
+                            layout: args.layout,
                         },
                     );
                 }
@@ -255,6 +262,7 @@ impl Cli {
                             tab_id: args.tab,
                             usage: args.usage,
                             worktree: args.worktree,
+                            layout: args.layout,
                         },
                     );
                 }

@@ -18,6 +18,12 @@ contexts = ["workspace"]
 command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench", "--entrypoint", "worktree-agent", "--placement", "popup", "--width", "60%", "--height", "70%"]
 
 [[actions]]
+id = "new-assistant"
+title = "New personal assistant"
+contexts = ["workspace"]
+command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench", "--entrypoint", "assistant", "--placement", "popup", "--width", "60%", "--height", "70%"]
+
+[[actions]]
 id = "dashboard"
 title = "Open dashboard launcher"
 contexts = ["workspace"]
@@ -58,6 +64,12 @@ id = "worktree-agent"
 title = "󱚟  new worktree agent"
 placement = "popup"
 command = ["./bin/workbench", "agent", "popup", "--worktree"]
+
+[[panes]]
+id = "assistant"
+title = "\U000F169F  personal assistant"
+placement = "popup"
+command = ["./bin/workbench", "agent", "popup", "--layout", "personal-assistant"]
 
 [[panes]]
 id = "project"

@@ -7,7 +7,7 @@
 >
 > **Depends on**: launch/02, wiring/02, wiring/03
 > **Blocks**: none — closing task
-> **Status**: todo
+> **Status**: done
 > **Final review**: true
 
 ## Goal
@@ -99,24 +99,24 @@ Rebuild `bin/workbench` **last**, after every source edit is settled.
 
 ## Acceptance criteria
 
-- [ ] The five plan goals are each demonstrably met, with the evidence named.
-- [ ] The six launch argv lines match the baseline byte for byte.
-- [ ] The default layout's socket-call sequence matches the baseline, including the missing `env` on the second split.
-- [ ] All 25 rejection branches in the validation matrix are enforced at config load, and each is named alongside the test function covering it.
-- [ ] No leftover reference to the removed settings, subcommand, or harness constants remains in `src/`.
-- [ ] No Rust source file contains a literal Nerd Font glyph outside a `\u{...}` escape.
-- [ ] `bin/workbench` is rebuilt from the final source and its bytes changed.
-- [ ] Any finding that was not fixed is recorded in the completion report with a reason.
+- [x] The five plan goals are each demonstrably met, with the evidence named.
+- [x] The six launch argv lines match the baseline byte for byte.
+- [x] The default layout's socket-call sequence matches the baseline, including the missing `env` on the second split.
+- [x] All 25 rejection branches in the validation matrix are enforced at config load, and each is named alongside the test function covering it.
+- [x] No leftover reference to the removed settings, subcommand, or harness constants remains in `src/`.
+- [x] No Rust source file contains a literal Nerd Font glyph outside a `\u{...}` escape.
+- [x] `bin/workbench` is rebuilt from the final source and its bytes changed.
+- [x] Any finding that was not fixed is recorded in the completion report with a reason.
 
 ## Verification
 
-- [ ] `cargo test` — the whole suite passes.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] `zsh scripts/build.zsh`, then `git status --short bin/workbench` shows it modified. A stale committed binary is the usual cause of code and behaviour disagreeing, because a linked checkout runs that artifact rather than the source.
-- [ ] `rg -n 'config migrate|claude_extra_args|codex_extra_args|model_args|config\.order|HARNESS_CLAUDE|HARNESS_CODEX|HARNESS_OPENCODE' src/` returns nothing.
-- [ ] `python3 -c "import pathlib;[print(p,hex(ord(c))) for p in pathlib.Path('src').rglob('*.rs') for c in p.read_text() if 0xE000<=ord(c)<=0xF8FF or 0xF0000<=ord(c)<=0xFFFFD or 0x100000<=ord(c)<=0x10FFFD]"` returns nothing — every Nerd Font glyph in Rust is a `\u{...}` escape, never a literal. The ranges are the three Unicode private-use areas, which is where Nerd Font glyphs live. Do **not** widen this to "any codepoint above U+2FFF": ordinary CJK, arrows, and box-drawing characters in comments and strings are legitimate and would fail the gate for no reason.
-- [ ] Grep the test suite for every one of the 25 matrix branches and confirm a test exists for each; list any branch that has none.
-- [ ] Run `git status --short` and quote it. Expect `bin/workbench`, plus any source file this review had to correct, plus at most this task file. Anything unexpected is a scope violation worth explaining in the report.
+- [x] `cargo test` — the whole suite passes.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] `zsh scripts/build.zsh`, then `git status --short bin/workbench` shows it modified. A stale committed binary is the usual cause of code and behaviour disagreeing, because a linked checkout runs that artifact rather than the source.
+- [x] `rg -n 'config migrate|claude_extra_args|codex_extra_args|model_args|config\.order|HARNESS_CLAUDE|HARNESS_CODEX|HARNESS_OPENCODE' src/` returns nothing.
+- [x] `python3 -c "import pathlib;[print(p,hex(ord(c))) for p in pathlib.Path('src').rglob('*.rs') for c in p.read_text() if 0xE000<=ord(c)<=0xF8FF or 0xF0000<=ord(c)<=0xFFFFD or 0x100000<=ord(c)<=0x10FFFD]"` returns nothing — every Nerd Font glyph in Rust is a `\u{...}` escape, never a literal. The ranges are the three Unicode private-use areas, which is where Nerd Font glyphs live. Do **not** widen this to "any codepoint above U+2FFF": ordinary CJK, arrows, and box-drawing characters in comments and strings are legitimate and would fail the gate for no reason.
+- [x] Grep the test suite for every one of the 25 matrix branches and confirm a test exists for each; list any branch that has none.
+- [x] Run `git status --short` and quote it. Expect `bin/workbench`, plus any source file this review had to correct, plus at most this task file. Anything unexpected is a scope violation worth explaining in the report.
 
 ## Eval rubric
 

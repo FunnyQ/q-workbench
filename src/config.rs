@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::ErrorKind;
@@ -314,6 +314,213 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
+        let mut layout_names = BTreeSet::new();
+        for layout in &self.tab_layouts {
+            if !layout_names.insert(layout.name.as_str()) {
+                bail!("duplicate tab layout name: {}", layout.name);
+            }
+        }
+
+        let mut agent_names = BTreeSet::new();
+        for agent in &self.agents {
+            if !agent_names.insert(agent.name.as_str()) {
+                bail!("duplicate agent name: {}", agent.name);
+            }
+
+            let mut option_names = BTreeSet::new();
+            for option in &agent.options {
+                if !option_names.insert(option.name.as_str()) {
+                    bail!(
+                        "agent '{}': duplicate option name: {}",
+                        agent.name,
+                        option.name
+                    );
+                }
+            }
+        }
+
+        if !layout_names.contains(self.default_tab_layout.as_str()) {
+            bail!(
+                "default_tab_layout names no tab layout: {}",
+                self.default_tab_layout
+            );
+        }
+
+        for layout in &self.tab_layouts {
+            if layout.panes.is_empty() {
+                bail!(
+                    "layout '{}': declares no panes; the first pane is the tab root",
+                    layout.name
+                );
+            }
+
+            let root = &layout.panes[0];
+            if root.pane_type != PaneType::Agent {
+                bail!(
+                    "layout '{}': the first pane is the tab root and must be type = \"agent\", found {:?}",
+                    layout.name,
+                    root.pane_type
+                );
+            }
+
+            let agent_pane_count = layout
+                .panes
+                .iter()
+                .filter(|pane| pane.pane_type == PaneType::Agent)
+                .count();
+            if agent_pane_count != 1 {
+                bail!(
+                    "layout '{}': exactly one pane may be type = \"agent\", found {}",
+                    layout.name,
+                    agent_pane_count
+                );
+            }
+
+            let mut pane_names = BTreeSet::new();
+            for (index, pane) in layout.panes.iter().enumerate() {
+                if pane_names.contains(pane.name.as_str()) {
+                    bail!(
+                        "layout '{}': duplicate pane name: {}",
+                        layout.name,
+                        pane.name
+                    );
+                }
+
+                if index == 0 {
+                    if pane.split_from.is_some() {
+                        bail!(
+                            "layout '{}': the root pane '{}' cannot set split_from",
+                            layout.name,
+                            pane.name
+                        );
+                    }
+                    if pane.direction.is_some() {
+                        bail!(
+                            "layout '{}': the root pane '{}' cannot set direction",
+                            layout.name,
+                            pane.name
+                        );
+                    }
+                    if pane.ratio.is_some() {
+                        bail!(
+                            "layout '{}': the root pane '{}' cannot set ratio",
+                            layout.name,
+                            pane.name
+                        );
+                    }
+                } else {
+                    if let Some(target) = &pane.split_from {
+                        if !pane_names.contains(target.as_str()) {
+                            bail!(
+                                "layout '{}' pane '{}': split_from names no earlier pane: {}",
+                                layout.name,
+                                pane.name,
+                                target
+                            );
+                        }
+                    }
+                    if pane.direction.is_none() {
+                        bail!(
+                            "layout '{}' pane '{}': direction is required for a pane that splits",
+                            layout.name,
+                            pane.name
+                        );
+                    }
+                    if pane.ratio.is_none() {
+                        bail!(
+                            "layout '{}' pane '{}': ratio is required for a pane that splits",
+                            layout.name,
+                            pane.name
+                        );
+                    }
+                }
+
+                if let Some(ratio) = pane.ratio {
+                    // Every comparison against NaN is false, so this catches NaN for free.
+                    if !(ratio > 0.0 && ratio < 1.0) {
+                        bail!(
+                            "layout '{}' pane '{}': ratio must be between 0 and 1, exclusive: {}",
+                            layout.name,
+                            pane.name,
+                            ratio
+                        );
+                    }
+                }
+
+                match pane.pane_type {
+                    PaneType::Command => match pane.command.as_deref() {
+                        None => bail!(
+                            "layout '{}' pane '{}': type = \"command\" requires command",
+                            layout.name,
+                            pane.name
+                        ),
+                        Some(command) if command.trim().is_empty() => bail!(
+                            "layout '{}' pane '{}': command is empty",
+                            layout.name,
+                            pane.name
+                        ),
+                        Some(_) => {}
+                    },
+                    PaneType::Agent | PaneType::Shell if pane.command.is_some() => bail!(
+                        "layout '{}' pane '{}': command is only valid for type = \"command\"",
+                        layout.name,
+                        pane.name
+                    ),
+                    PaneType::Agent | PaneType::Shell => {}
+                }
+
+                pane_names.insert(pane.name.as_str());
+            }
+
+            for pane in &layout.panes {
+                match (&pane.agent, &pane.option_name) {
+                    (Some(agent_name), option_name) => {
+                        let Some(agent) = self.agent(agent_name) else {
+                            bail!(
+                                "layout '{}' pane '{}': agent names no agent entry: {}",
+                                layout.name,
+                                pane.name,
+                                agent_name
+                            );
+                        };
+                        if let Some(option_name) = option_name {
+                            if !agent.options.iter().any(|option| option.name == *option_name) {
+                                bail!(
+                                    "layout '{}' pane '{}': agent '{}' has no option: {}",
+                                    layout.name,
+                                    pane.name,
+                                    agent_name,
+                                    option_name
+                                );
+                            }
+                        }
+                    }
+                    (None, Some(option_name)) => bail!(
+                        "layout '{}' pane '{}': option requires agent, because an option belongs to one agent: {}",
+                        layout.name,
+                        pane.name,
+                        option_name
+                    ),
+                    (None, None) => {}
+                }
+            }
+        }
+
+        for agent in &self.agents {
+            if agent.command.is_empty() {
+                bail!("agent '{}': command is empty", agent.name);
+            }
+            for option in &agent.options {
+                if option.command.as_ref().is_some_and(Vec::is_empty) {
+                    bail!(
+                        "agent '{}' option '{}': command override is empty",
+                        agent.name,
+                        option.name
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -567,12 +774,14 @@ command = ["custom-agent"]
         let environment = TestEnvironment::new();
         environment.write(
             r#"
+default_tab_layout = "custom"
+
 [[tab_layouts]]
 name = "custom"
 
   [[tab_layouts.panes]]
-  name = "shell"
-  type = "shell"
+  name = "agent"
+  type = "agent"
 "#,
         );
 
@@ -770,5 +979,340 @@ name = "x"
             agents: vec![],
         };
         assert_eq!(config.agent("nonexistent"), None);
+    }
+
+    fn validation_error(config: &Config) -> String {
+        config
+            .validate()
+            .expect_err("config must be rejected")
+            .to_string()
+    }
+
+    #[test]
+    fn unknown_default_tab_layout_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.default_tab_layout = "missing-layout".to_owned();
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("missing-layout"), "{error}");
+    }
+
+    #[test]
+    fn unknown_pane_agent_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].name = "named-layout".to_owned();
+        config.tab_layouts[0].panes[0].name = "named-pane".to_owned();
+        config.tab_layouts[0].panes[0].agent = Some("missing-agent".to_owned());
+        config.default_tab_layout = "named-layout".to_owned();
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("named-layout"), "{error}");
+        assert!(error.contains("named-pane"), "{error}");
+        assert!(error.contains("missing-agent"), "{error}");
+    }
+
+    #[test]
+    fn unknown_agent_option_is_a_named_error() {
+        let mut config = Config::test_default();
+        let pane = &mut config.tab_layouts[0].panes[0];
+        pane.agent = Some("claude code".to_owned());
+        pane.option_name = Some("missing-option".to_owned());
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("agent"), "{error}");
+        assert!(error.contains("claude code"), "{error}");
+        assert!(error.contains("missing-option"), "{error}");
+    }
+
+    #[test]
+    fn option_without_agent_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[0].option_name = Some("orphan-option".to_owned());
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("agent"), "{error}");
+        assert!(error.contains("orphan-option"), "{error}");
+    }
+
+    #[test]
+    fn layout_without_panes_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes.clear();
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+    }
+
+    #[test]
+    fn non_agent_root_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[0].pane_type = PaneType::Shell;
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("Shell"), "{error}");
+    }
+
+    #[test]
+    fn multiple_agent_panes_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[1].pane_type = PaneType::Agent;
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains('2'), "{error}");
+    }
+
+    #[test]
+    fn duplicate_pane_name_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[1].name = "agent".to_owned();
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("agent"), "{error}");
+    }
+
+    #[test]
+    fn unknown_or_later_split_target_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[1].split_from = Some("later-pane".to_owned());
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("files"), "{error}");
+        assert!(error.contains("later-pane"), "{error}");
+    }
+
+    #[test]
+    fn root_split_from_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[0].split_from = Some("agent".to_owned());
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("agent"), "{error}");
+    }
+
+    #[test]
+    fn missing_split_direction_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[1].direction = None;
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("files"), "{error}");
+    }
+
+    #[test]
+    fn root_direction_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[0].direction = Some(Direction::Right);
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("agent"), "{error}");
+    }
+
+    #[test]
+    fn missing_split_ratio_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[1].ratio = None;
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("files"), "{error}");
+    }
+
+    #[test]
+    fn root_ratio_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[0].ratio = Some(0.5);
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("agent"), "{error}");
+    }
+
+    #[test]
+    fn zero_ratio_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[1].ratio = Some(0.0);
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("files"), "{error}");
+        assert!(error.contains('0'), "{error}");
+    }
+
+    #[test]
+    fn one_ratio_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[1].ratio = Some(1.0);
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("files"), "{error}");
+        assert!(error.contains('1'), "{error}");
+    }
+
+    #[test]
+    fn nan_ratio_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[1].ratio = Some(f64::NAN);
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("files"), "{error}");
+    }
+
+    #[test]
+    fn command_pane_without_command_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[1].command = None;
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("files"), "{error}");
+    }
+
+    #[test]
+    fn command_on_non_command_pane_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[0].command = Some("echo nope".to_owned());
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("agent"), "{error}");
+    }
+
+    #[test]
+    fn whitespace_pane_command_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[1].command = Some("  \t".to_owned());
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("files"), "{error}");
+    }
+
+    #[test]
+    fn empty_agent_command_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.agents[0].command.clear();
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("claude code"), "{error}");
+    }
+
+    #[test]
+    fn empty_option_command_override_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.agents[0].options[0].command = Some(Vec::new());
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("claude code"), "{error}");
+        assert!(error.contains("Opus"), "{error}");
+    }
+
+    #[test]
+    fn duplicate_layout_name_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts.push(config.tab_layouts[0].clone());
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+    }
+
+    #[test]
+    fn duplicate_agent_name_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.agents.push(config.agents[0].clone());
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("claude code"), "{error}");
+    }
+
+    #[test]
+    fn duplicate_option_name_is_a_named_error() {
+        let mut config = Config::test_default();
+        let duplicate = config.agents[0].options[0].clone();
+        config.agents[0].options.push(duplicate);
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("claude code"), "{error}");
+        assert!(error.contains("Opus"), "{error}");
+    }
+
+    #[test]
+    fn no_config_file_returns_ok() {
+        let _environment = TestEnvironment::new();
+
+        assert!(Config::load().is_ok());
+    }
+
+    #[test]
+    fn example_config_passes_validation() {
+        let environment = TestEnvironment::new();
+        environment.write(include_str!("../config.example.toml"));
+
+        Config::load().expect("load and validate config.example.toml");
+    }
+
+    #[test]
+    fn parse_stage_error_names_path_and_value() {
+        let environment = TestEnvironment::new();
+        environment.write(
+            r#"
+[[tab_layouts]]
+name = "bad-direction"
+
+  [[tab_layouts.panes]]
+  name = "agent"
+  type = "agent"
+
+  [[tab_layouts.panes]]
+  name = "term"
+  type = "shell"
+  direction = "left"
+  ratio = 0.5
+"#,
+        );
+
+        let error = format!(
+            "{:#}",
+            Config::load().expect_err("reject invalid direction")
+        );
+        let path = environment.directory.join("config.toml");
+
+        assert!(error.contains(&path.display().to_string()), "{error}");
+        assert!(error.contains("left"), "{error}");
     }
 }

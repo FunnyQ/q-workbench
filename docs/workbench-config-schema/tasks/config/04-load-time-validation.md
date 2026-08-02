@@ -7,7 +7,7 @@
 >
 > **Depends on**: config/03
 > **Blocks**: launch/01, launch/02, launch/03
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -257,23 +257,23 @@ Name them consistently — `fn <what>_is_a_named_error()` — so the count is gr
 
 ## Acceptance criteria
 
-- [ ] All the rules above are enforced in `Config::validate()`, and `validate()` is called by `Config::load()` before it returns.
-- [ ] Every **validation-stage** rejection message names the offending value: the layout, the pane, and the bad name or number. Parse-stage errors are left to `toml`'s path-plus-span reporting, with no custom `Deserialize`.
-- [ ] `split_from` is checked against panes seen so far, not against the whole list; no cycle-detection code exists.
-- [ ] `ratio` rejects `0.0`, `1.0`, negatives, values above 1, and `NaN`.
-- [ ] The root pane is rejected if it sets `direction`, `ratio`, or `split_from`; non-root panes are rejected if they omit `direction` or `ratio`.
-- [ ] Every one of the 25 rejection branches in the matrix above has its own test asserting the listed value appears in the message.
-- [ ] `Config::load()` with no config file returns `Ok`.
-- [ ] The real `config.example.toml` passes `Config::load()`.
+- [x] All the rules above are enforced in `Config::validate()`, and `validate()` is called by `Config::load()` before it returns.
+- [x] Every **validation-stage** rejection message names the offending value: the layout, the pane, and the bad name or number. Parse-stage errors are left to `toml`'s path-plus-span reporting, with no custom `Deserialize`.
+- [x] `split_from` is checked against panes seen so far, not against the whole list; no cycle-detection code exists.
+- [x] `ratio` rejects `0.0`, `1.0`, negatives, values above 1, and `NaN`.
+- [x] The root pane is rejected if it sets `direction`, `ratio`, or `split_from`; non-root panes are rejected if they omit `direction` or `ratio`.
+- [x] Every one of the 25 rejection branches in the matrix above has its own test asserting the listed value appears in the message.
+- [x] `Config::load()` with no config file returns `Ok`.
+- [x] The real `config.example.toml` passes `Config::load()`.
 
 ## Verification
 
-- [ ] `cargo test` passes.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] `cargo test config::` passes, including all 25 rejection tests and all three positive tests.
-- [ ] Count them: `rg -c 'fn .*_is_a_named_error' src/config.rs` reports at least 25.
-- [ ] Walk the matrix row by row and name the test function covering each. Report any row with no test.
-- [ ] Run `git status --short` and quote it. Expect `src/config.rs` plus at most this task file. Any OTHER path is a real scope violation.
+- [x] `cargo test` passes.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] `cargo test config::` passes, including all 25 rejection tests and all three positive tests.
+- [x] Count them: `rg -c 'fn .*_is_a_named_error' src/config.rs` reports at least 25.
+- [x] Walk the matrix row by row and name the test function covering each. Report any row with no test.
+- [x] Run `git status --short` and quote it. Expect `src/config.rs` plus at most this task file. Any OTHER path is a real scope violation.
 
 ## Eval rubric
 

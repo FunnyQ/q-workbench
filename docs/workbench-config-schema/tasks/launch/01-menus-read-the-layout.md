@@ -6,7 +6,7 @@
 >
 > **Depends on**: config/04, launch/02
 > **Blocks**: wiring/01, wiring/02
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -165,22 +165,22 @@ Use the existing `FakeMenu` harness in this module (it returns a queued sequence
 
 ## Acceptance criteria
 
-- [ ] `choose_agent`, `choose_agent_with_last`, and `choose_agent_with` take a `&TabLayout` and read the root pane's `agent` / `option` and the layout's `tab_label` from it.
-- [ ] A pinned `agent` skips the harness menu; a pinned `option` skips the model menu; a pinned `tab_label` skips the usage menu.
-- [ ] An agent with an empty `options` list skips the model menu, and the `harness.contains("claude code")` substring test is gone from the file.
-- [ ] The model menu's title is the chosen agent's rendered label; the `MODEL_TITLE` constant is removed.
-- [ ] `AgentChoice` exposes `agent_name: String` and `option_name: Option<String>` holding config names, and no longer exposes rendered labels under `harness` / `model_label`.
-- [ ] `fixed_usage` still takes precedence over `tab_label`, which takes precedence over the usage menu; `compose_label` still appends the branch after two spaces.
-- [ ] The `use last` entry still renders and still short-circuits both menus, and `src/state.rs` is unchanged by this task — its schema, version, and validity rule are somebody else's work.
-- [ ] Cancelling at any of the three menus returns `Ok(None)` and creates nothing.
+- [x] `choose_agent`, `choose_agent_with_last`, and `choose_agent_with` take a `&TabLayout` and read the root pane's `agent` / `option` and the layout's `tab_label` from it.
+- [x] A pinned `agent` skips the harness menu; a pinned `option` skips the model menu; a pinned `tab_label` skips the usage menu.
+- [x] An agent with an empty `options` list skips the model menu, and the `harness.contains("claude code")` substring test is gone from the file.
+- [x] The model menu's title is the chosen agent's rendered label; the `MODEL_TITLE` constant is removed.
+- [x] `AgentChoice` exposes `agent_name: String` and `option_name: Option<String>` holding config names, and no longer exposes rendered labels under `harness` / `model_label`.
+- [x] `fixed_usage` still takes precedence over `tab_label`, which takes precedence over the usage menu; `compose_label` still appends the branch after two spaces.
+- [x] The `use last` entry still renders and still short-circuits both menus, and `src/state.rs` is unchanged by this task — its schema, version, and validity rule are somebody else's work.
+- [x] Cancelling at any of the three menus returns `Ok(None)` and creates nothing.
 
 ## Verification
 
-- [ ] `cargo test` passes.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] `cargo test flows::agent::` — the five tests above are present and passing.
-- [ ] `grep -n 'MODEL_TITLE\|contains("claude code")' src/flows/agent.rs` returns nothing.
-- [ ] Run `git status --short` and quote it. Expect `src/flows/agent.rs`, plus at most this task file. Any OTHER path is a real scope violation.
+- [x] `cargo test` passes.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] `cargo test flows::agent::` — the five tests above are present and passing.
+- [x] `grep -n 'MODEL_TITLE\|contains("claude code")' src/flows/agent.rs` returns nothing.
+- [x] Run `git status --short` and quote it. Expect `src/flows/agent.rs`, plus at most this task file. Any OTHER path is a real scope violation.
 
 ## Eval rubric
 

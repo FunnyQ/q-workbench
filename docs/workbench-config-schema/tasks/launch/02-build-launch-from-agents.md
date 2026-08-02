@@ -6,7 +6,7 @@
 >
 > **Depends on**: config/04
 > **Blocks**: launch/01, wiring/03, wiring/04
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -117,21 +117,21 @@ Then four behavioural tests:
 
 ## Acceptance criteria
 
-- [ ] `build_launch(config, agent_name, option_name)` takes stable config names and assembles base command → option `args` → agent `extra_args`, in that order.
-- [ ] The `harness.contains("codex")`, `harness.contains("opencode")`, and `model == "CCR"` branches are all gone from the file.
-- [ ] All six default launch lines are asserted byte-equal against whole `Vec<String>` values.
-- [ ] An option's `command` override replaces the executable and still receives that option's own `args`.
-- [ ] An agent with an empty `options` list succeeds with `option_name == None`; an agent with options fails with a message naming the agent.
-- [ ] An unknown agent name and an unknown option name each error with the offending value in the message.
-- [ ] An argument containing a space survives as exactly one argv entry.
+- [x] `build_launch(config, agent_name, option_name)` takes stable config names and assembles base command → option `args` → agent `extra_args`, in that order.
+- [x] The `harness.contains("codex")`, `harness.contains("opencode")`, and `model == "CCR"` branches are all gone from the file.
+- [x] All six default launch lines are asserted byte-equal against whole `Vec<String>` values.
+- [x] An option's `command` override replaces the executable and still receives that option's own `args`.
+- [x] An agent with an empty `options` list succeeds with `option_name == None`; an agent with options fails with a message naming the agent.
+- [x] An unknown agent name and an unknown option name each error with the offending value in the message.
+- [x] An argument containing a space survives as exactly one argv entry.
 
 ## Verification
 
-- [ ] `cargo test` passes.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] `cargo test flows::agent::` — the six-line parity test and the four behavioural tests are present and passing.
-- [ ] `grep -n 'model == "CCR"\|contains("codex")\|contains("opencode")' src/flows/agent.rs` returns nothing. Grep for the deleted **conditionals**, not for the string `CCR` — the parity tests in this task legitimately call `build_launch(config, "claude code", Some("CCR"))`, so a blanket `CCR` grep can never pass on a correct implementation.
-- [ ] Run `git status --short` and quote it. Expect `src/flows/agent.rs`, plus at most this task file. Any OTHER path is a real scope violation.
+- [x] `cargo test` passes.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] `cargo test flows::agent::` — the six-line parity test and the four behavioural tests are present and passing.
+- [x] `grep -n 'model == "CCR"\|contains("codex")\|contains("opencode")' src/flows/agent.rs` returns nothing. Grep for the deleted **conditionals**, not for the string `CCR` — the parity tests in this task legitimately call `build_launch(config, "claude code", Some("CCR"))`, so a blanket `CCR` grep can never pass on a correct implementation.
+- [x] Run `git status --short` and quote it. Expect `src/flows/agent.rs`, plus at most this task file. Any OTHER path is a real scope violation.
 
 ## Eval rubric
 

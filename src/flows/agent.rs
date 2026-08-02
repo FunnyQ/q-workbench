@@ -587,7 +587,7 @@ fn choose_agent_with_last(
         }
         let selected_last = use_last.as_deref() == Some(harness.as_str());
         let (harness, stored_option) = if selected_last {
-            // Bridge until src/state.rs stores stable ids in v2
+            // Bridge until the record stores names directly.
             last.expect("use-last entry requires a stored choice")
         } else {
             (harness, None)
@@ -1890,6 +1890,7 @@ mod popup {
         .unwrap();
 
         assert!(choice.is_some());
+        assert_eq!(menu.titles.len(), 3);
         assert_eq!(menu.titles, [HARNESS_TITLE, HARNESS_CLAUDE, USAGE_TITLE]);
     }
 

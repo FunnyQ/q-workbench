@@ -9,9 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Map, Value};
 
-use crate::config::{render_label, Config, PaneType, TabLayout};
 #[cfg(test)]
-use crate::config::{Agent, AgentOption, LayoutPane};
+use crate::config::LayoutPane;
+use crate::config::{render_label, Agent, Config, PaneType, TabLayout};
 use crate::flows::{invoking_pane_cwd, nonempty_env, FlowError, FlowResult, Outcome, PaneCwd};
 use crate::herdr::HerdrClient;
 use crate::shell::build_command;
@@ -159,15 +159,12 @@ pub(crate) fn inject_with_config(
 
     // At inject time the usage menu has not run, so the layout root is the best
     // available name and the generic agent label remains the fallback.
-    let root_pane_label = layout.panes.first().and_then(|pane| pane.label.as_deref());
-    let pane_label = if let Some(label) = root_pane_label {
-        render_label(
-            layout.panes.first().and_then(|pane| pane.icon.as_deref()),
-            label,
-        )
-    } else {
-        AGENT_LABEL.to_owned()
-    };
+    let root = &layout.panes[0];
+    let pane_label = root
+        .label
+        .as_deref()
+        .map(|label| render_label(root.icon.as_deref(), label))
+        .unwrap_or_else(|| AGENT_LABEL.to_owned());
 
     client
         .pane_rename(json!({ "pane_id": options.pane_id, "label": pane_label }))
@@ -250,8 +247,6 @@ fn build_side_panes(
                 pane.name
             ));
         }
-        pane_ids.insert(pane.name.as_str(), pane_id.clone());
-        previous_pane_id = pane_id.clone();
         if let Some(label) = &pane.label {
             client
                 .pane_rename(json!({
@@ -269,6 +264,8 @@ fn build_side_panes(
                 }))
                 .with_context(|| format!("failed to start command in pane {}", pane.name))?;
         }
+        pane_ids.insert(pane.name.as_str(), pane_id.clone());
+        previous_pane_id = pane_id;
     }
     Ok(())
 }
@@ -302,11 +299,13 @@ pub fn popup(
     worktree: bool,
     requested_layout: Option<&str>,
 ) -> FlowResult {
+    // Config first: adopting the invoking pane's cwd queries Herdr, and a broken config
+    // must be reported before the first socket call.
+    let config = Config::load().context("failed to load config")?;
+    let layout = resolve_layout(&config, requested_layout)?;
     adopt_invoking_pane_cwd(client)?;
     let cwd = std::env::current_dir().context("failed to read popup working directory")?;
-    let config = Config::load().context("failed to load config")?;
     let (cols, lines) = popup_viewport();
-    let layout = resolve_layout(&config, requested_layout)?;
     let Some(mut choice) = choose_agent(&config, layout, &cwd, worktree, None, cols, lines, None)?
     else {
         return Ok(Outcome::Cancelled);
@@ -578,35 +577,29 @@ fn choose_agent_with_last(
         _ => None,
     };
 
-    let regular_harnesses = config
-        .agents
-        .iter()
-        .map(|agent| {
-            render_label(
-                agent.icon.as_deref(),
-                agent.label.as_deref().unwrap_or(&agent.name),
-            )
-        })
-        .collect::<Vec<_>>();
-    let last = last.filter(|record| state::last_choice_is_valid(record, config));
-    let use_last = last.as_ref().map(|record| {
-        let agent = config.agent(&record.agent).expect("validated above");
-        let label = render_label(
-            agent.icon.as_deref(),
-            agent.label.as_deref().unwrap_or(&agent.name),
-        );
-        match &record.option {
-            Some(option) => format!("{USE_LAST_PREFIX}{label} · {option}"),
-            None => format!("{USE_LAST_PREFIX}{label}"),
-        }
-    });
-    let mut harness_options = regular_harnesses;
-    if let Some(option) = &use_last {
-        harness_options.insert(0, option.clone());
-    }
+    // A layout that pins the agent runs no harness menu, so nothing here is built for it.
     let (agent_name, stored_option) = if let Some(agent_name) = &layout.panes[0].agent {
         (agent_name.clone(), None)
     } else {
+        let last = last.filter(|record| state::last_choice_is_valid(record, config));
+        let use_last = last.as_ref().map(|record| {
+            let label = config
+                .agent(&record.agent)
+                .expect("validated above")
+                .menu_label();
+            match &record.option {
+                Some(option) => format!("{USE_LAST_PREFIX}{label} · {option}"),
+                None => format!("{USE_LAST_PREFIX}{label}"),
+            }
+        });
+        let mut harness_options = config
+            .agents
+            .iter()
+            .map(Agent::menu_label)
+            .collect::<Vec<_>>();
+        if let Some(option) = &use_last {
+            harness_options.insert(0, option.clone());
+        }
         let Some(harness) = menu.choose(HARNESS_TITLE, "Choose a harness.", &harness_options, 8)?
         else {
             return Ok(None);
@@ -616,34 +609,25 @@ fn choose_agent_with_last(
             return Ok(None);
         }
         let selected_last = use_last.as_deref() == Some(harness.as_str());
-        let (agent_name, stored_option) = if selected_last {
+        if selected_last {
             let record = last.expect("use-last entry requires a stored choice");
             (record.agent, record.option)
         } else {
+            // Rendered labels are unique across agents, enforced at config load.
             let agent_name = config
                 .agents
                 .iter()
-                .find(|agent| {
-                    render_label(
-                        agent.icon.as_deref(),
-                        agent.label.as_deref().unwrap_or(&agent.name),
-                    ) == harness
-                })
+                .find(|agent| agent.menu_label() == harness)
                 .map(|agent| agent.name.clone())
                 .expect("validated at load");
             (agent_name, None)
-        };
-        (agent_name, stored_option)
+        }
     };
     let agent = config.agent(&agent_name).expect("validated at load");
-    let rendered_agent_label = render_label(
-        agent.icon.as_deref(),
-        agent.label.as_deref().unwrap_or(&agent.name),
-    );
-    let option_name = if let Some(option_name) = &layout.panes[0].option_name {
-        Some(option_name.clone())
-    } else if stored_option.is_some() {
-        stored_option
+    let option_name = if let Some(option_name) =
+        layout.panes[0].option_name.clone().or(stored_option)
+    {
+        Some(option_name)
     } else if agent.options.is_empty() {
         None
     } else {
@@ -652,8 +636,7 @@ fn choose_agent_with_last(
             .iter()
             .map(|option| option.name.clone())
             .collect::<Vec<_>>();
-        let Some(option_name) =
-            menu.choose(&rendered_agent_label, "Choose a model.", &options, 6)?
+        let Some(option_name) = menu.choose(&agent.menu_label(), "Choose a model.", &options, 6)?
         else {
             return Ok(None);
         };
@@ -732,9 +715,7 @@ fn build_launch(
     let option = match option_name {
         Some(option_name) => Some(
             agent
-                .options
-                .iter()
-                .find(|option| option.name == option_name)
+                .option(option_name)
                 .with_context(|| format!("agent {agent_name} has no option: {option_name}"))?,
         ),
         None if agent.options.is_empty() => None,
@@ -1215,6 +1196,8 @@ mod popup {
     use super::*;
     use crate::herdr::FakeClient;
 
+    static POPUP_CONFIG_ID: AtomicU64 = AtomicU64::new(0);
+
     fn popup_choice() -> AgentChoice {
         AgentChoice {
             label: "\u{f4af}  review".to_owned(),
@@ -1255,42 +1238,9 @@ mod popup {
         build_side_panes(&client, &default_layout(), "root", "/projects/example").unwrap();
 
         let calls = client.calls.into_inner();
-        assert_eq!(calls.len(), 5);
-        assert_eq!(calls[0].0, "pane.split");
-        assert_eq!(calls[0].1["target_pane_id"], "root");
-        assert_eq!(calls[0].1["direction"], "right");
-        assert!((calls[0].1["ratio"].as_f64().unwrap() - 0.38).abs() < 1e-9);
-        assert_eq!(calls[0].1["cwd"], "/projects/example");
-        assert_eq!(calls[0].1["env"], json!({ "Q_NO_BANNER": "1" }));
-        assert_eq!(calls[0].1["focus"], false);
-        assert_eq!(
-            calls[1],
-            (
-                "pane.rename".to_owned(),
-                json!({ "pane_id": "p2", "label": "\u{f0968}  Files" }),
-            )
-        );
-        assert_eq!(
-            calls[2],
-            (
-                "pane.send_input".to_owned(),
-                json!({ "pane_id": "p2", "text": "yazi .", "keys": ["enter"] }),
-            )
-        );
-        assert_eq!(calls[3].0, "pane.split");
-        assert_eq!(calls[3].1["target_pane_id"], "p2");
-        assert_eq!(calls[3].1["direction"], "down");
-        assert!((calls[3].1["ratio"].as_f64().unwrap() - 0.9).abs() < 1e-9);
-        assert_eq!(calls[3].1["cwd"], "/projects/example");
-        assert_eq!(calls[3].1["focus"], false);
-        assert!(calls[3].1.get("env").is_none());
-        assert_eq!(
-            calls[4],
-            (
-                "pane.rename".to_owned(),
-                json!({ "pane_id": "p3", "label": "\u{f489}  term" }),
-            )
-        );
+        // The second split carries no `env` key at all, not an empty one. The whole-vec
+        // compare below covers it, but the baseline is worth naming on its own line.
+        assert!(calls[3].1.get("env").is_none(), "{:?}", calls[3].1);
         assert_eq!(
             calls,
             vec![
@@ -1361,6 +1311,53 @@ mod popup {
             .into_inner()
             .iter()
             .any(|(method, params)| { method == "pane.rename" && params["pane_id"] == "p2" }));
+    }
+
+    /// The plan's fifth goal: every configuration error surfaces at load, before the first
+    /// socket call. `popup` used to adopt the invoking pane's cwd first, which asks Herdr
+    /// for the pane, so a broken config produced a socket round trip before it was read.
+    #[test]
+    fn a_broken_config_stops_the_popup_before_the_first_socket_call() {
+        let _guard = crate::state::env_lock();
+        let directory = std::env::temp_dir().join(format!(
+            "workbench-popup-config-{}-{}",
+            std::process::id(),
+            POPUP_CONFIG_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&directory).expect("create temporary directory");
+        let config_file = directory.join("config.toml");
+        fs::write(&config_file, "default_tab_layout = \"missing-layout\"\n").expect("write config");
+        let saved = [
+            "HOME",
+            "Q_WORKBENCH_LOCAL_CONFIG",
+            "HERDR_ACTIVE_PANE_ID",
+            "HERDR_PLUGIN_CONTEXT_JSON",
+        ]
+        .map(|name| (name, std::env::var_os(name)));
+        // Without the context JSON the cwd adoption falls through to a pane.get, which is
+        // the socket call this test proves never happens.
+        std::env::remove_var("HERDR_PLUGIN_CONTEXT_JSON");
+        std::env::set_var("HOME", &directory);
+        std::env::set_var("Q_WORKBENCH_LOCAL_CONFIG", &config_file);
+        std::env::set_var("HERDR_ACTIVE_PANE_ID", "p1");
+
+        let client = FakeClient::default();
+        let error = popup(&client, false, None).expect_err("reject the broken config");
+
+        for (name, value) in &saved {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+        fs::remove_dir_all(&directory).expect("remove temporary directory");
+
+        assert!(format!("{error:#}").contains("missing-layout"), "{error:#}");
+        assert!(
+            client.calls.borrow().is_empty(),
+            "{:?}",
+            client.calls.borrow()
+        );
     }
 
     #[test]
@@ -1795,65 +1792,35 @@ mod popup {
         );
     }
 
+    /// The shipped defaults plus the two `extra_args` values these tests pin, so a change
+    /// to `default_agents()` cannot silently diverge from a hand-written parallel copy.
     fn config() -> Config {
-        Config {
-            dashboard_workspace: String::new(),
-            default_tab_layout: String::new(),
-            project_registry_file: String::new(),
-            projects_root: String::new(),
-            ssh_registry_file: String::new(),
-            ssh_config_file: String::new(),
-            ssh_history_file: String::new(),
-            tab_layouts: Vec::new(),
-            agents: vec![
-                Agent {
-                    name: "claude code".to_owned(),
-                    label: None,
-                    icon: Some("\u{f15ce}".to_owned()),
-                    command: vec!["claude".to_owned()],
-                    extra_args: vec!["argument with space".to_owned()],
-                    options: vec![
-                        AgentOption {
-                            name: "Opus".to_owned(),
-                            args: ["--model", "claude-opus-4-8"].map(str::to_owned).to_vec(),
-                            command: None,
-                        },
-                        AgentOption {
-                            name: "OpusPlan (Sonnet)".to_owned(),
-                            args: ["--model", "opusplan", "--effort", "medium"]
-                                .map(str::to_owned)
-                                .to_vec(),
-                            command: None,
-                        },
-                        AgentOption {
-                            name: "CCR".to_owned(),
-                            args: Vec::new(),
-                            command: Some(["ccr", "code"].map(str::to_owned).to_vec()),
-                        },
-                        AgentOption {
-                            name: "Fable 5".to_owned(),
-                            args: ["--model", "claude-fable-5"].map(str::to_owned).to_vec(),
-                            command: None,
-                        },
-                    ],
-                },
-                Agent {
-                    name: "codex".to_owned(),
-                    label: None,
-                    icon: Some("\u{ee0d}".to_owned()),
-                    command: vec!["codex".to_owned()],
-                    extra_args: vec!["--search".to_owned()],
-                    options: Vec::new(),
-                },
-                Agent {
-                    name: "opencode".to_owned(),
-                    label: None,
-                    icon: Some("\u{f169f}".to_owned()),
-                    command: vec!["opencode".to_owned()],
-                    extra_args: Vec::new(),
-                    options: Vec::new(),
-                },
-            ],
+        let mut config = Config::test_default();
+        config.tab_layouts = Vec::new();
+        config.default_tab_layout = String::new();
+        config.agents[0].extra_args = vec!["argument with space".to_owned()];
+        config.agents[1].extra_args = vec!["--search".to_owned()];
+        config
+    }
+
+    /// A layout whose only pane is a bare agent root: nothing pinned, so every menu runs.
+    fn bare_layout(name: &str) -> TabLayout {
+        TabLayout {
+            name: name.to_owned(),
+            tab_label: None,
+            panes: vec![LayoutPane {
+                name: "agent".to_owned(),
+                label: None,
+                icon: None,
+                pane_type: PaneType::Agent,
+                agent: None,
+                option_name: None,
+                command: None,
+                direction: None,
+                ratio: None,
+                split_from: None,
+                env: BTreeMap::new(),
+            }],
         }
     }
 
@@ -1865,7 +1832,7 @@ mod popup {
     }
 
     impl FakeMenu {
-        fn new<const N: usize>(answers: [Option<&str>; N]) -> Self {
+        fn new<'a>(answers: impl IntoIterator<Item = Option<&'a str>>) -> Self {
             Self {
                 answers: answers
                     .into_iter()
@@ -1911,23 +1878,7 @@ mod popup {
     #[test]
     fn layout_omissions_drive_three_menus_in_order() {
         let config = config();
-        let layout = TabLayout {
-            name: "ask".to_owned(),
-            tab_label: None,
-            panes: vec![LayoutPane {
-                name: "agent".to_owned(),
-                label: None,
-                icon: None,
-                pane_type: PaneType::Agent,
-                agent: None,
-                option_name: None,
-                command: None,
-                direction: None,
-                ratio: None,
-                split_from: None,
-                env: BTreeMap::new(),
-            }],
-        };
+        let layout = bare_layout("ask");
         let mut menu = FakeMenu::new([Some(TEST_CLAUDE_LABEL), Some("Opus"), Some(USAGE_DISCUSS)]);
 
         let choice = choose_agent_with(
@@ -1949,22 +1900,12 @@ mod popup {
     #[test]
     fn pinned_layout_drives_zero_menus() {
         let config = config();
-        let layout = TabLayout {
-            name: "pinned".to_owned(),
-            tab_label: Some("Personal Assistant".to_owned()),
-            panes: vec![LayoutPane {
-                name: "agent".to_owned(),
-                label: None,
-                icon: None,
-                pane_type: PaneType::Agent,
-                agent: Some("claude code".to_owned()),
-                option_name: Some("Opus".to_owned()),
-                command: None,
-                direction: None,
-                ratio: None,
-                split_from: None,
-                env: BTreeMap::new(),
-            }],
+        let layout = {
+            let mut layout = bare_layout("pinned");
+            layout.tab_label = Some("Personal Assistant".to_owned());
+            layout.panes[0].agent = Some("claude code".to_owned());
+            layout.panes[0].option_name = Some("Opus".to_owned());
+            layout
         };
         let mut menu = FakeMenu::new([]);
 
@@ -1989,23 +1930,7 @@ mod popup {
     #[test]
     fn empty_options_skip_the_model_menu() {
         let config = config();
-        let layout = TabLayout {
-            name: "ask".to_owned(),
-            tab_label: None,
-            panes: vec![LayoutPane {
-                name: "agent".to_owned(),
-                label: None,
-                icon: None,
-                pane_type: PaneType::Agent,
-                agent: None,
-                option_name: None,
-                command: None,
-                direction: None,
-                ratio: None,
-                split_from: None,
-                env: BTreeMap::new(),
-            }],
-        };
+        let layout = bare_layout("ask");
         let mut menu = FakeMenu::new([Some(TEST_CODEX_LABEL), Some(USAGE_REVIEW)]);
 
         let choice = choose_agent_with(
@@ -2029,24 +1954,12 @@ mod popup {
         let mut config = config();
         config.agents[0].label = Some("Claude Custom".to_owned());
         let rendered_label = render_label(Some("\u{f15ce}"), "Claude Custom");
-        let layout = TabLayout {
-            name: "ask".to_owned(),
-            tab_label: Some("Assistant".to_owned()),
-            panes: vec![LayoutPane {
-                name: "agent".to_owned(),
-                label: None,
-                icon: None,
-                pane_type: PaneType::Agent,
-                agent: None,
-                option_name: None,
-                command: None,
-                direction: None,
-                ratio: None,
-                split_from: None,
-                env: BTreeMap::new(),
-            }],
+        let layout = {
+            let mut layout = bare_layout("ask");
+            layout.tab_label = Some("Assistant".to_owned());
+            layout
         };
-        let mut menu = FakeMenu::new([Some(&rendered_label), Some("Opus")]);
+        let mut menu = FakeMenu::new([Some(rendered_label.as_str()), Some("Opus")]);
 
         let choice = choose_agent_with(
             &config,
@@ -2071,32 +1984,9 @@ mod popup {
             vec![Some(TEST_CLAUDE_LABEL), None],
             vec![Some(TEST_CLAUDE_LABEL), Some("Opus"), None],
         ];
+        let layout = bare_layout("ask");
         for answers in cases {
-            let layout = TabLayout {
-                name: "ask".to_owned(),
-                tab_label: None,
-                panes: vec![LayoutPane {
-                    name: "agent".to_owned(),
-                    label: None,
-                    icon: None,
-                    pane_type: PaneType::Agent,
-                    agent: None,
-                    option_name: None,
-                    command: None,
-                    direction: None,
-                    ratio: None,
-                    split_from: None,
-                    env: BTreeMap::new(),
-                }],
-            };
-            let mut menu = FakeMenu {
-                answers: answers
-                    .into_iter()
-                    .map(|answer| answer.map(str::to_owned))
-                    .collect(),
-                options: Vec::new(),
-                titles: Vec::new(),
-            };
+            let mut menu = FakeMenu::new(answers);
 
             let choice = choose_agent_with(
                 &config,

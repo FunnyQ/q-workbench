@@ -67,21 +67,11 @@ pub fn last_choice_is_valid(record: &LastAgentRecord, config: &Config) -> bool {
     };
     // The option rule binds in both directions: an option stored for an agent that no longer
     // offers any is stale, and an agent that does offer options cannot be replayed without one.
-    if !agent.options.is_empty() {
-        let Some(option_name) = &record.option else {
-            return false;
-        };
-        if !agent
-            .options
-            .iter()
-            .any(|option| option.name == *option_name)
-        {
-            return false;
-        }
-    } else if record.option.is_some() {
-        return false;
-    }
-    config.layout(&record.layout).is_some()
+    let option_ok = match &record.option {
+        Some(name) => agent.option(name).is_some(),
+        None => agent.options.is_empty(),
+    };
+    option_ok && config.layout(&record.layout).is_some()
 }
 
 /// The caller already holds a loaded config, so this borrows it rather than reading and
@@ -121,12 +111,14 @@ pub fn write_state(
     write_json_atomically(&path, &state)
 }
 
+/// The one lock every test that mutates process environment takes. Tests run on threads
+/// of a single process, so two harnesses with separate locks would still race.
 #[cfg(test)]
 pub(crate) fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(|| std::sync::Mutex::new(()))
         .lock()
-        .unwrap()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(test)]

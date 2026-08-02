@@ -186,13 +186,14 @@ fn restart_resolved(client: &dyn HerdrClient, target: &Pane) -> Result<()> {
     // The worker reads the state file directly rather than asking Herdr for the layout. The
     // config is only needed to validate a record that exists, so a pane with no record still
     // restarts when the config file is broken.
-    let config = state::read_state()
-        .panes
-        .contains_key(&target.pane_id)
-        .then(Config::load)
-        .transpose()
-        .context("failed to load config for agent restart")?;
-    let command = injected_command(&executable, &target.pane_id, label, config.as_ref())?;
+    let record = match state::read_state().panes.contains_key(&target.pane_id) {
+        true => {
+            let config = Config::load().context("failed to load config for agent restart")?;
+            state::get_for_pane(&target.pane_id, &config)
+        }
+        false => None,
+    };
+    let command = injected_command(&executable, &target.pane_id, label, record.as_ref())?;
     client
         .pane_send_input(json!({
             "pane_id": target.pane_id,
@@ -232,7 +233,7 @@ fn injected_command(
     executable: &Path,
     pane_id: &str,
     label: &str,
-    config: Option<&Config>,
+    record: Option<&state::LastAgentRecord>,
 ) -> Result<String> {
     let executable = executable
         .to_str()
@@ -248,8 +249,8 @@ fn injected_command(
         "--usage".to_owned(),
         label.to_owned(),
     ];
-    if let Some(record) = config.and_then(|config| state::get_for_pane(pane_id, config)) {
-        argv.extend(["--layout".to_owned(), record.layout]);
+    if let Some(record) = record {
+        argv.extend(["--layout".to_owned(), record.layout.clone()]);
     }
     argv.extend(["--no-layout".to_owned(), "--restart".to_owned()]);
     let launcher = build_command(&argv);
@@ -664,8 +665,11 @@ mod tests {
             )
             .unwrap();
 
+            // Resolve through the state file exactly as `restart_resolved` does, so the
+            // stored record still has to survive validation before it reaches the argv.
+            let record = crate::state::get_for_pane("p1", &config).expect("stored record");
             let command =
-                injected_command(Path::new("/tmp/workbench"), "p1", "review", Some(&config))
+                injected_command(Path::new("/tmp/workbench"), "p1", "review", Some(&record))
                     .unwrap();
 
             assert!(command.starts_with(TTY_RESET));

@@ -282,6 +282,7 @@ impl Cli {
                     let client =
                         client.context("Herdr client is required for the project picker")?;
                     return flows::picker::project_pick(
+                        &config,
                         Path::new(&config.project_registry_file),
                         Path::new(&config.projects_root),
                         client,

@@ -36,19 +36,6 @@ _tracks tag `v0.5.0`_
   `config.example.toml` is the executable specification for the new schema.
 - Removed `workbench config migrate` and the zsh-config migration surface it
   supported. Existing configs must be rewritten by hand against the new schema.
-
-## [Unreleased]
-
-### Changed
-- **BREAKING:** The flat model and extra-argument settings are gone. Two declarative
-  sections now describe tab layouts and their panes, and agents and their options.
-  A layout that omits a choice asks for it, so a layout that pins nothing behaves
-  exactly as before. There is no automatic conversion from the old file; an old
-  config now fails to load with an unknown-field error that names the offending key.
-
-### Removed
-- Removed the zsh-to-TOML `workbench config migrate` subcommand because the zsh era
-  is over and its only user has already converted.
 - Removed the `Q_AGENT_MODEL_ORDER`, `Q_AGENT_MODELS`, `Q_AGENT_MODEL_ARGS`,
   `Q_CLAUDE_EXTRA_ARGS`, and `Q_CODEX_EXTRA_ARGS` environment-variable overrides
   with the settings they belonged to. Path settings and `Q_DASHBOARD_WORKSPACE`

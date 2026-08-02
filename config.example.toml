@@ -1,38 +1,181 @@
 # Example user config for q.workbench.
 # Copy this file to ${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins/config/q.workbench/config.toml.
-# Uncomment only the settings you want to change.
+#
+# Every setting below carries its built-in default. Edit the values you want to change.
+# Delete a line to hand that setting back to the default and its environment variable;
+# a value written here always wins over the environment.
+#
+# TOML assigns every key after a [[table]] header to that table. Keep all the scalars in
+# the first section, and keep each entry's own scalars above its nested tables.
 
-# Dashboard workspace label opened by the launcher. Default: "personal-assistant".
-# dashboard_workspace = "personal-assistant"
+# -- Paths and pointers -------------------------------------------------------
 
-# Extra Claude arguments. Default: [].
-# Bypass flags are opt-in because they disable permission checks and grant unrestricted host access.
-# claude_extra_args = ["--dangerously-skip-permissions"]
+# Names a Herdr workspace label directly, not a config entry; matched against Herdr's workspace list.
+dashboard_workspace = "personal-assistant"
 
-# Extra Codex arguments. Default: [].
-# Bypass flags are opt-in because they disable sandbox and approval checks.
-# codex_extra_args = ["--dangerously-bypass-approvals-and-sandbox"]
+# Layout used by a launch that does not come from a listed workspace: the project
+# picker, a restart, an agent started in the current tab. Names a [[tab_layouts]] entry.
+default_tab_layout = "agentic-coding"
 
-# Ordered model menu labels. Default: ["Opus", "OpusPlan (Sonnet)", "CCR", "Fable 5"].
-# order = ["Opus", "OpusPlan (Sonnet)", "CCR", "Fable 5"]
+# Project registry JSON path.
+project_registry_file = "$HOME/.local/state/herdr-projects/registry.json"
 
-# Model value selected by each menu label. Every ordered label must have an entry.
-# models = { "CCR" = "CCR", "Fable 5" = "claude-fable-5", "Opus" = "claude-opus-4-8", "OpusPlan (Sonnet)" = "opusplan" }
+# Root directory scanned for projects.
+projects_root = "$HOME/Projects"
 
-# Extra arguments for each model label. Default: { "OpusPlan (Sonnet)" = ["--effort", "medium"] }.
-# model_args = { "OpusPlan (Sonnet)" = ["--effort", "medium"] }
+# SSH target registry JSON path.
+ssh_registry_file = "$HOME/.local/state/ssh-targets/registry.json"
 
-# Project registry JSON path. Default: "$HOME/.local/state/herdr-projects/registry.json".
-# project_registry_file = "$HOME/.local/state/herdr-projects/registry.json"
+# SSH config file read and updated by sync.
+ssh_config_file = "$HOME/.config/ssh/config"
 
-# Root directory scanned for projects. Default: "$HOME/Projects".
-# projects_root = "$HOME/Projects"
+# Shell history used to seed SSH targets.
+ssh_history_file = "$HOME/.zsh_history"
 
-# SSH target registry JSON path. Default: "$HOME/.local/state/ssh-targets/registry.json".
-# ssh_registry_file = "$HOME/.local/state/ssh-targets/registry.json"
 
-# SSH config file read and updated by sync. Default: "$HOME/.config/ssh/config".
-# ssh_config_file = "$HOME/.config/ssh/config"
+# -- Tab layouts --------------------------------------------------------------
+#
+# A layout is selected with `--layout <name>` — `workbench agent popup --layout
+# personal-assistant`, or a Herdr action whose command carries the flag. Without the
+# flag the launcher uses `default_tab_layout`.
+#
+# LEAVING A CHOICE OUT MEANS ASKING FOR IT. Write agent, option, or tab_label to pin
+# that choice and skip its menu. Omit it and the launcher asks, exactly as it does
+# today. The first layout below omits all three and reproduces today's popup.
+#
+# Layout keys:
+#   name       Stable id. A workspace and default_tab_layout name it.
+#   tab_label  Tab title, and with it the title of the agent pane. Omit to ask: the
+#              usage menu runs, and a chosen worktree branch is appended to the answer.
+#
+# Panes are created top to bottom. The first is the tab's root: it fills the tab, so it
+# takes no geometry. Each later pane splits an existing pane in half.
+#
+#   name        Unique within the layout. A later split_from names it.
+#   label       Pane title. The root pane follows tab_label; any other pane falls back
+#               to Herdr's own title.
+#   icon        Drawn before the label, separated by two spaces: "${icon}  ${label}".
+#               Any text - an emoji, a Nerd Font glyph, a letter. Nerd Font glyphs show
+#               as a box in an editor without the font, so each one below carries its
+#               codepoint name as a comment.
+#   type        "agent", "command", or "shell".
+#                 agent    Runs the harness. Exactly one per layout, and it must be the
+#                          root: restart-in-place replaces this process with exec, and
+#                          the panes that survive are the ones split off it.
+#                 command  Runs command, then leaves the pane at its shell.
+#                 shell    Interactive shell. Nothing is run.
+#   agent       type = "agent". Names an [[agents]] entry. Omit to ask.
+#   option      type = "agent". Names one of that agent's options. Omit to ask. Setting
+#               it means setting agent too, because an option belongs to one agent.
+#   command     type = "command". One shell line, typed into the pane's shell.
+#   direction   "right" or "down". Herdr splits in these two only.
+#   ratio       0 to 1. The share of the split this pane takes. Every entry describes
+#               itself, so a small strip along the bottom is 0.1, not 0.9.
+#   split_from  Pane to split. Defaults to the pane directly above, which is what a
+#               straight chain of splits wants. Name it to branch back to an earlier one.
+#   env         Environment variables for this pane alone.
 
-# Shell history used to seed SSH targets. Default: "$HOME/.zsh_history".
-# ssh_history_file = "$HOME/.zsh_history"
+# Today's popup, unchanged: harness, model, and usage are all asked.
+[[tab_layouts]]
+name = "agentic-coding"
+
+  [[tab_layouts.panes]]
+  name = "agent"
+  type = "agent"
+  env = { Q_NO_BANNER = "1" }
+
+  [[tab_layouts.panes]]
+  name = "files"
+  label = "Files"
+  icon = "󰥨"                  # nf-md-folder_eye
+  type = "command"
+  command = "yazi ."
+  direction = "right"
+  ratio = 0.62
+  env = { Q_NO_BANNER = "1" }
+
+  [[tab_layouts.panes]]
+  name = "term"
+  label = "term"
+  icon = ""                  # nf-oct-terminal
+  type = "shell"
+  direction = "down"
+  ratio = 0.1
+
+# Everything pinned: opens straight to Opus, no menus at all.
+[[tab_layouts]]
+name = "personal-assistant"
+tab_label = "Personal Assistant"
+
+  [[tab_layouts.panes]]
+  name = "agent"
+  label = "Main"
+  type = "agent"
+  agent = "claude code"
+  option = "Opus"
+  env = { Q_NO_BANNER = "1" }
+
+  [[tab_layouts.panes]]
+  name = "btop"
+  label = "machine stats"
+  icon = "📊"
+  type = "command"
+  command = "btop"
+  direction = "right"
+  ratio = 0.7
+
+
+# -- Agents -------------------------------------------------------------------
+#
+#   name        Stable id. A pane's agent field names it.
+#   label       Harness menu text. Defaults to name.
+#   icon        Drawn before the label, exactly as it is for a pane.
+#   command     Executable and its fixed arguments.
+#   extra_args  Appended to every launch of this agent.
+#   options     Model menu, in menu order. An agent with no options skips that menu.
+#                 name     Menu text, and the value a pane's option field names.
+#                 args     Inserted after command, before extra_args.
+#                 command  Replaces the agent's command for this option alone.
+#
+# Every argument is its own array entry. One whitespace-joined string would split
+# "--cd /Users/q/My Projects" into two arguments.
+#
+# Bypass flags - --dangerously-skip-permissions, --dangerously-bypass-approvals-and-
+# sandbox - disable permission, sandbox, and approval checks and grant the agent
+# unrestricted access to this host. Nothing adds them for you. Put them in extra_args
+# deliberately, per machine.
+
+[[agents]]
+name = "claude code"
+icon = "󱗎"                    # nf-md-alpha_c_box
+command = ["claude"]
+extra_args = []
+
+  [[agents.options]]
+  name = "Opus"
+  args = ["--model", "claude-opus-4-8"]
+
+  [[agents.options]]
+  name = "OpusPlan (Sonnet)"
+  args = ["--model", "opusplan", "--effort", "medium"]
+
+  # CCR dispatches to its own binary and takes no model flag.
+  [[agents.options]]
+  name = "CCR"
+  command = ["ccr", "code"]
+
+  [[agents.options]]
+  name = "Fable 5"
+  args = ["--model", "claude-fable-5"]
+
+[[agents]]
+name = "codex"
+icon = ""                    # nf-seti-config
+command = ["codex"]
+extra_args = []
+
+[[agents]]
+name = "opencode"
+icon = "󱚟"                    # nf-md-robot
+command = ["opencode"]
+extra_args = []

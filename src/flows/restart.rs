@@ -8,10 +8,12 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use serde_json::json;
 
+use crate::config::Config;
 use crate::flows::{FlowError, FlowResult, Outcome};
 use crate::herdr::types::Pane;
 use crate::herdr::HerdrClient;
 use crate::shell::build_command;
+use crate::state;
 
 const NO_AGENT: &str = "No agent pane in this tab to restart.";
 const CANNOT_FOCUS: &str = "Could not focus the agent pane.";
@@ -181,7 +183,17 @@ fn restart_resolved(client: &dyn HerdrClient, target: &Pane) -> Result<()> {
     // only the launcher, so killing the agent group returns the pane to its surviving shell.
     let executable = env::current_exe().context("failed to resolve the workbench executable")?;
     let label = target.label.as_deref().unwrap_or_default();
-    let command = injected_command(&executable, &target.pane_id, label)?;
+    // The worker reads the state file directly rather than asking Herdr for the layout. The
+    // config is only needed to validate a record that exists, so a pane with no record still
+    // restarts when the config file is broken.
+    let record = match state::read_state().panes.contains_key(&target.pane_id) {
+        true => {
+            let config = Config::load().context("failed to load config for agent restart")?;
+            state::get_for_pane(&target.pane_id, &config)
+        }
+        false => None,
+    };
+    let command = injected_command(&executable, &target.pane_id, label, record.as_ref())?;
     client
         .pane_send_input(json!({
             "pane_id": target.pane_id,
@@ -217,23 +229,31 @@ fn group_alive(group: i32) -> bool {
     unsafe { libc::kill(-group, 0) == 0 }
 }
 
-fn injected_command(executable: &Path, pane_id: &str, label: &str) -> Result<String> {
+fn injected_command(
+    executable: &Path,
+    pane_id: &str,
+    label: &str,
+    record: Option<&state::LastAgentRecord>,
+) -> Result<String> {
     let executable = executable
         .to_str()
         .context("workbench executable path is not valid UTF-8")?;
     // No tab id (the tab keeps its name), the current label as the fixed usage (so the usage
     // menu is skipped), no worktree step, and no layout. `--restart` is the restart signal;
     // `--no-layout` cannot be, because a manual launch may set it too.
-    let launcher = build_command(&[
+    let mut argv = vec![
         executable.to_owned(),
         "agent".to_owned(),
         "launch".to_owned(),
         pane_id.to_owned(),
         "--usage".to_owned(),
         label.to_owned(),
-        "--no-layout".to_owned(),
-        "--restart".to_owned(),
-    ]);
+    ];
+    if let Some(record) = record {
+        argv.extend(["--layout".to_owned(), record.layout.clone()]);
+    }
+    argv.extend(["--no-layout".to_owned(), "--restart".to_owned()]);
+    let launcher = build_command(&argv);
     Ok(format!("{TTY_RESET}{launcher}"))
 }
 
@@ -348,8 +368,10 @@ fn spawn_worker(executable: &Path, pane_id: &str) -> Result<std::process::Child>
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
+    use std::fs;
 
     use super::*;
+    use crate::config::TabLayout;
     use crate::herdr::FakeClient;
 
     fn pane(id: &str, tab: &str, agent: bool) -> serde_json::Value {
@@ -607,9 +629,54 @@ mod tests {
     }
 
     #[test]
-    fn restart_command_keeps_reset_unquoted_and_quotes_launcher_arguments() {
-        let command = injected_command(Path::new("/tmp/work bench"), "p 1", "review's").unwrap();
+    fn restart_without_a_record_omits_layout_and_quotes_launcher_arguments() {
+        let _guard = crate::state::env_lock();
+        env::remove_var("Q_WORKBENCH_STATE_FILE");
+        let command =
+            injected_command(Path::new("/tmp/work bench"), "p 1", "review's", None).unwrap();
+        assert!(command.starts_with(TTY_RESET));
+        assert!(!command.contains("'--layout'"));
         assert_eq!(command, "stty sane; printf '\\033[<u\\033[?7h\\033[?25h\\033[0m'; '/tmp/work bench' 'agent' 'launch' 'p 1' '--usage' 'review'\\''s' '--no-layout' '--restart'");
+    }
+
+    #[test]
+    fn restart_injects_the_stored_layout_after_the_tty_reset() {
+        let _guard = crate::state::env_lock();
+        let mut config = Config::test_default();
+        for name in ["personal-assistant", "side quest"] {
+            config.tab_layouts.push(TabLayout {
+                name: name.to_owned(),
+                tab_label: None,
+                panes: Vec::new(),
+            });
+        }
+        let path = env::temp_dir().join(format!("workbench-restart-state-{}", std::process::id()));
+        env::set_var("Q_WORKBENCH_STATE_FILE", &path);
+
+        for (layout, expected) in [
+            ("personal-assistant", "'--layout' 'personal-assistant'"),
+            ("side quest", "'--layout' 'side quest'"),
+        ] {
+            fs::write(
+                &path,
+                format!(
+                    r#"{{"version":2,"panes":{{"p1":{{"agent":"codex","layout":"{layout}","recorded_at":1}}}}}}"#
+                ),
+            )
+            .unwrap();
+
+            // Resolve through the state file exactly as `restart_resolved` does, so the
+            // stored record still has to survive validation before it reaches the argv.
+            let record = crate::state::get_for_pane("p1", &config).expect("stored record");
+            let command =
+                injected_command(Path::new("/tmp/workbench"), "p1", "review", Some(&record))
+                    .unwrap();
+
+            assert!(command.starts_with(TTY_RESET));
+            assert!(command.contains(&format!("{expected} '--no-layout' '--restart'")));
+        }
+        fs::remove_file(path).unwrap();
+        env::remove_var("Q_WORKBENCH_STATE_FILE");
     }
 
     /// Reports whether a child process is still running, without reaping it.

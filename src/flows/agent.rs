@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::io::{self, IsTerminal, Write};
 use std::os::unix::process::CommandExt;
@@ -6,20 +6,21 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Map, Value};
 
-use crate::config::Config;
+#[cfg(test)]
+use crate::config::LayoutPane;
+use crate::config::{render_label, Agent, Config, PaneType, TabLayout};
 use crate::flows::{invoking_pane_cwd, nonempty_env, FlowError, FlowResult, Outcome, PaneCwd};
 use crate::herdr::HerdrClient;
 use crate::shell::build_command;
-use crate::state::{self, HARNESS_CLAUDE, HARNESS_CODEX, HARNESS_OPENCODE};
+use crate::state;
 
 const HARNESS_TITLE: &str = "\u{f169f}  Launch Agent";
 const USE_LAST_PREFIX: &str = "\u{f0709}  use last: ";
 // Two spaces after the glyph. `scripts/agent-launcher.zsh:183` used one; the unified
 // flow follows the popup and the parity contract (GLY-2).
-const MODEL_TITLE: &str = "\u{f09d1}  claude code";
 const USAGE_TITLE: &str = "\u{f27b}  Usage";
 const USAGE_DISCUSS: &str = "\u{f442}  discuss";
 const USAGE_REVIEW: &str = "\u{f4af}  review";
@@ -28,9 +29,13 @@ const USAGE_DEBUG: &str = "\u{ead8}  debug";
 const USAGE_WRITE: &str = "\u{f19b9}  let me write…";
 const WORKTREE_TITLE: &str = "  New Worktree";
 const WORKTREE_SUBTITLE: &str = "Filter a branch, or name a new one.";
-const FILES_LABEL: &str = "\u{f0968}  Files";
-const TERM_LABEL: &str = "\u{f489}  term";
 const AGENT_LABEL: &str = "\u{f169f}  agent";
+#[cfg(test)]
+const TEST_CLAUDE_LABEL: &str = "\u{f15ce}  claude code";
+#[cfg(test)]
+const TEST_CODEX_LABEL: &str = "\u{ee0d}  codex";
+#[cfg(test)]
+const TEST_OPENCODE_LABEL: &str = "\u{f169f}  opencode";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchOptions {
@@ -40,6 +45,7 @@ pub struct LaunchOptions {
     pub worktree: bool,
     pub no_layout: bool,
     pub restart: bool,
+    pub layout: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,10 +54,19 @@ pub struct InjectOptions {
     pub tab_id: Option<String>,
     pub usage: Option<String>,
     pub worktree: bool,
+    pub layout: Option<String>,
+}
+
+fn resolve_layout<'a>(config: &'a Config, requested: Option<&str>) -> Result<&'a TabLayout> {
+    let name = requested.unwrap_or(&config.default_tab_layout);
+    config
+        .layout(name)
+        .with_context(|| format!("unknown tab layout: {name}"))
 }
 
 /// Run every menu at full width, create side panes last, then replace this process.
 pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions) -> FlowResult {
+    let layout = resolve_layout(config, options.layout.as_deref())?;
     let pane = client
         .pane_get(json!({ "pane_id": options.pane_id }))
         .context("failed to read the agent pane")?
@@ -68,6 +83,7 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
     let (cols, lines) = pane_viewport(client, &options.pane_id);
     let Some(mut choice) = choose_agent(
         config,
+        layout,
         &cwd,
         options.worktree,
         options.usage.as_deref(),
@@ -88,19 +104,15 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
             None => choice = without_worktree(choice, &repo_root),
         }
     }
-    apply_launch_layout(client, options, &choice)?;
+    apply_launch_layout(client, layout, options, &choice)?;
     std::env::set_current_dir(&choice.project_dir)
         .with_context(|| format!("failed to enter {}", choice.project_dir.display()))?;
     Command::new("clear")
         .status()
         .context("failed to clear the terminal before launching the agent")?;
 
-    let _ = state::write_state(
-        client,
-        &options.pane_id,
-        &choice.harness,
-        choice.model_label.as_deref(),
-    );
+    let record = last_agent_record(&choice, layout)?;
+    let _ = state::write_state(client, &options.pane_id, &record);
 
     // A child wrapper breaks restart-in-place. exec only returns when execvp fails.
     let error = Command::new(&choice.launch[0])
@@ -111,6 +123,16 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
 }
 
 pub fn inject(client: &dyn HerdrClient, options: &InjectOptions) -> FlowResult {
+    let config = Config::load().context("failed to load config")?;
+    inject_with_config(client, &config, options)
+}
+
+pub(crate) fn inject_with_config(
+    client: &dyn HerdrClient,
+    config: &Config,
+    options: &InjectOptions,
+) -> FlowResult {
+    let layout = resolve_layout(config, options.layout.as_deref())?;
     let executable =
         std::env::current_exe().context("failed to resolve the workbench executable")?;
     let executable = executable
@@ -131,9 +153,21 @@ pub fn inject(client: &dyn HerdrClient, options: &InjectOptions) -> FlowResult {
     if options.worktree {
         argv.push("--worktree".to_owned());
     }
+    if let Some(layout) = &options.layout {
+        argv.extend(["--layout".to_owned(), layout.clone()]);
+    }
+
+    // At inject time the usage menu has not run, so the layout root is the best
+    // available name and the generic agent label remains the fallback.
+    let root = &layout.panes[0];
+    let pane_label = root
+        .label
+        .as_deref()
+        .map(|label| render_label(root.icon.as_deref(), label))
+        .unwrap_or_else(|| AGENT_LABEL.to_owned());
 
     client
-        .pane_rename(json!({ "pane_id": options.pane_id, "label": AGENT_LABEL }))
+        .pane_rename(json!({ "pane_id": options.pane_id, "label": pane_label }))
         .context("failed to rename the injected agent pane")?;
     client
         .pane_send_input(json!({
@@ -147,6 +181,7 @@ pub fn inject(client: &dyn HerdrClient, options: &InjectOptions) -> FlowResult {
 
 fn apply_launch_layout(
     client: &dyn HerdrClient,
+    layout: &TabLayout,
     options: &LaunchOptions,
     choice: &AgentChoice,
 ) -> Result<()> {
@@ -165,55 +200,73 @@ fn apply_launch_layout(
 
     // Splitting earlier resizes menus and prevents the selected worktree from driving
     // every pane's cwd, so both splits remain after the decision flow.
-    build_side_panes(client, &options.pane_id, &cwd)?;
+    build_side_panes(client, layout, &options.pane_id, &cwd)?;
     Ok(())
 }
 
-/// The Files/term half of the three-pane layout, shared by both entry points.
-///
-/// The popup builds the tab first and the in-pane launcher defers the splits until
-/// after its menus, but the six calls between them are identical — same ratios, same
-/// labels, same `Q_NO_BANNER` on the first split only — so they are written once. A
-/// drift in ratio or label between the two would be an accident, never a decision.
-fn build_side_panes(client: &dyn HerdrClient, agent_pane: &str, cwd: &str) -> Result<()> {
-    let files_pane = client
-        .pane_split(json!({
-            "target_pane_id": agent_pane,
-            "direction": "right",
-            "ratio": 0.38,
-            "cwd": cwd,
-            "env": { "Q_NO_BANNER": "1" },
-            "focus": false,
-        }))
-        .context("failed to create files pane")?
-        .pane
-        .pane_id;
-    if files_pane.is_empty() {
-        return Err(anyhow!("first pane.split returned an empty pane id"));
+fn build_side_panes(
+    client: &dyn HerdrClient,
+    layout: &TabLayout,
+    root_pane: &str,
+    cwd: &str,
+) -> Result<()> {
+    let mut pane_ids = BTreeMap::from([(layout.panes[0].name.as_str(), root_pane.to_owned())]);
+    let mut previous_pane_id = root_pane.to_owned();
+    for pane in &layout.panes[1..] {
+        let target_pane_id = pane
+            .split_from
+            .as_deref()
+            .map(|name| pane_ids.get(name).expect("validated at load"))
+            .unwrap_or(&previous_pane_id);
+        let direction = match pane.direction.expect("validated at load") {
+            crate::config::Direction::Right => "right",
+            crate::config::Direction::Down => "down",
+        };
+        // Config ratios are self-describing as each new pane's share, while Herdr's
+        // ratio is the original pane's share after the split. For example, `files`
+        // uses 0.62 so Files takes 62%, the agent keeps 38%, and Herdr receives 38%.
+        let ratio = 1.0 - pane.ratio.expect("validated at load");
+        let mut params = Map::from_iter([
+            ("target_pane_id".to_owned(), json!(target_pane_id)),
+            ("direction".to_owned(), json!(direction)),
+            ("ratio".to_owned(), json!(ratio)),
+            ("cwd".to_owned(), json!(cwd)),
+            ("focus".to_owned(), json!(false)),
+        ]);
+        if !pane.env.is_empty() {
+            params.insert("env".to_owned(), json!(pane.env));
+        }
+        let pane_id = client
+            .pane_split(Value::Object(params))
+            .with_context(|| format!("failed to create pane {}", pane.name))?
+            .pane
+            .pane_id;
+        if pane_id.is_empty() {
+            return Err(anyhow!(
+                "pane.split returned an empty pane id for pane {}",
+                pane.name
+            ));
+        }
+        if let Some(label) = &pane.label {
+            client
+                .pane_rename(json!({
+                    "pane_id": pane_id,
+                    "label": render_label(pane.icon.as_deref(), label),
+                }))
+                .with_context(|| format!("failed to rename pane {}", pane.name))?;
+        }
+        if pane.pane_type == PaneType::Command {
+            client
+                .pane_send_input(json!({
+                    "pane_id": pane_id,
+                    "text": pane.command.as_deref().expect("validated at load"),
+                    "keys": ["enter"],
+                }))
+                .with_context(|| format!("failed to start command in pane {}", pane.name))?;
+        }
+        pane_ids.insert(pane.name.as_str(), pane_id.clone());
+        previous_pane_id = pane_id;
     }
-    client
-        .pane_rename(json!({ "pane_id": files_pane, "label": FILES_LABEL }))
-        .context("failed to rename files pane")?;
-    client
-        .pane_send_input(json!({ "pane_id": files_pane, "text": "yazi .", "keys": ["enter"] }))
-        .context("failed to start yazi")?;
-    let term_pane = client
-        .pane_split(json!({
-            "target_pane_id": files_pane,
-            "direction": "down",
-            "ratio": 0.9,
-            "cwd": cwd,
-            "focus": false,
-        }))
-        .context("failed to create terminal pane")?
-        .pane
-        .pane_id;
-    if term_pane.is_empty() {
-        return Err(anyhow!("second pane.split returned an empty pane id"));
-    }
-    client
-        .pane_rename(json!({ "pane_id": term_pane, "label": TERM_LABEL }))
-        .context("failed to rename terminal pane")?;
     Ok(())
 }
 
@@ -241,12 +294,20 @@ fn positive_dimension(value: Option<&Value>) -> Option<u16> {
 }
 
 /// Collect a popup decision, then create and focus its tab.
-pub fn popup(client: &dyn HerdrClient, worktree: bool) -> FlowResult {
+pub fn popup(
+    client: &dyn HerdrClient,
+    worktree: bool,
+    requested_layout: Option<&str>,
+) -> FlowResult {
+    // Config first: adopting the invoking pane's cwd queries Herdr, and a broken config
+    // must be reported before the first socket call.
+    let config = Config::load().context("failed to load config")?;
+    let layout = resolve_layout(&config, requested_layout)?;
     adopt_invoking_pane_cwd(client)?;
     let cwd = std::env::current_dir().context("failed to read popup working directory")?;
-    let config = Config::load().context("failed to load config")?;
     let (cols, lines) = popup_viewport();
-    let Some(mut choice) = choose_agent(&config, &cwd, worktree, None, cols, lines, None)? else {
+    let Some(mut choice) = choose_agent(&config, layout, &cwd, worktree, None, cols, lines, None)?
+    else {
         return Ok(Outcome::Cancelled);
     };
 
@@ -257,7 +318,7 @@ pub fn popup(client: &dyn HerdrClient, worktree: bool) -> FlowResult {
         }
     }
 
-    create_popup_tab(client, &choice, nonempty_env("HERDR_WORKSPACE_ID"))?;
+    create_popup_tab(client, layout, &choice, nonempty_env("HERDR_WORKSPACE_ID"))?;
     Ok(Outcome::Done)
 }
 
@@ -307,6 +368,7 @@ fn viewport_dimension(variable: &str, tput_capability: &str) -> u16 {
 
 fn create_popup_tab(
     client: &dyn HerdrClient,
+    layout: &TabLayout,
     choice: &AgentChoice,
     workspace_id: Option<String>,
 ) -> Result<()> {
@@ -314,9 +376,11 @@ fn create_popup_tab(
     let mut params = Map::from_iter([
         ("label".to_owned(), json!(choice.label)),
         ("cwd".to_owned(), json!(cwd)),
-        ("env".to_owned(), json!({ "Q_NO_BANNER": "1" })),
         ("focus".to_owned(), json!(false)),
     ]);
+    if !layout.panes[0].env.is_empty() {
+        params.insert("env".to_owned(), json!(layout.panes[0].env));
+    }
     if let Some(workspace_id) = workspace_id {
         params.insert("workspace_id".to_owned(), json!(workspace_id));
     }
@@ -328,7 +392,7 @@ fn create_popup_tab(
     let result = if tab_id.is_empty() || agent_pane.is_empty() {
         Err(anyhow!("tab.create returned an empty tab or pane id"))
     } else {
-        build_popup_tab(client, choice, &tab_id, &agent_pane)
+        build_popup_tab(client, layout, choice, &tab_id, &agent_pane)
     };
     if let Err(error) = result {
         if !tab_id.is_empty() {
@@ -346,6 +410,7 @@ fn create_popup_tab(
 
 fn build_popup_tab(
     client: &dyn HerdrClient,
+    layout: &TabLayout,
     choice: &AgentChoice,
     tab_id: &str,
     agent_pane: &str,
@@ -357,7 +422,7 @@ fn build_popup_tab(
     client
         .tab_rename(json!({ "tab_id": tab_id, "label": choice.label }))
         .context("failed to rename agent tab")?;
-    build_side_panes(client, agent_pane, &cwd)?;
+    build_side_panes(client, layout, agent_pane, &cwd)?;
     client
         .pane_send_input(json!({
             "pane_id": agent_pane,
@@ -368,13 +433,21 @@ fn build_popup_tab(
     client
         .tab_focus(json!({ "tab_id": tab_id }))
         .context("failed to focus agent tab")?;
-    let _ = state::write_state(
-        client,
-        agent_pane,
-        &choice.harness,
-        choice.model_label.as_deref(),
-    );
+    let record = last_agent_record(choice, layout)?;
+    let _ = state::write_state(client, agent_pane, &record);
     Ok(())
+}
+
+fn last_agent_record(choice: &AgentChoice, layout: &TabLayout) -> Result<state::LastAgentRecord> {
+    Ok(state::LastAgentRecord {
+        agent: choice.agent_name.clone(),
+        option: choice.option_name.clone(),
+        layout: layout.name.clone(),
+        recorded_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("system clock is before Unix epoch")?
+            .as_secs(),
+    })
 }
 
 /// One resolved launch decision.
@@ -391,14 +464,10 @@ pub struct AgentChoice {
     pub branch: Option<String>,
     /// argv, ready for `exec` or for a pane command.
     pub launch: Vec<String>,
-    /// The pad-stripped harness menu label, not a resolved binary name.
-    pub harness: String,
-    /// The pad-stripped model menu label; `None` for codex and opencode.
-    ///
-    /// The menu label is stored rather than the resolved model value: the label is what
-    /// resolves through the config maps, so a renamed menu entry must not silently keep
-    /// pointing at an old model.
-    pub model_label: Option<String>,
+    /// The [[agents]] entry's `name`, not its rendered label.
+    pub agent_name: String,
+    /// The chosen [[agents.options]] entry's `name`; None for an agent with no options.
+    pub option_name: Option<String>,
 }
 
 /// Run every menu and return one decision.
@@ -409,18 +478,21 @@ pub struct AgentChoice {
 /// orphaned worktree directory and branch behind — deviation 6 in the parity contract.
 /// Creating the chosen worktree is the caller's job, through [`realise_worktree`], once
 /// a choice actually came back.
+#[allow(clippy::too_many_arguments)]
 pub fn choose_agent(
     config: &Config,
+    layout: &TabLayout,
     cwd: &Path,
     worktree: bool,
     fixed_usage: Option<&str>,
     cols: u16,
     lines: u16,
-    last: Option<(String, Option<String>)>,
+    last: Option<state::LastAgentRecord>,
 ) -> Result<Option<AgentChoice>> {
     let mut menu = GumMenu::new(cols, lines);
     choose_agent_with_last(
         config,
+        layout,
         cwd,
         worktree,
         fixed_usage,
@@ -471,21 +543,24 @@ enum InputIndent {
 #[cfg(test)]
 fn choose_agent_with(
     config: &Config,
+    layout: &TabLayout,
     cwd: &Path,
     worktree: bool,
     fixed_usage: Option<&str>,
     menu: &mut impl Menu,
     git: &impl Git,
 ) -> Result<Option<AgentChoice>> {
-    choose_agent_with_last(config, cwd, worktree, fixed_usage, None, menu, git)
+    choose_agent_with_last(config, layout, cwd, worktree, fixed_usage, None, menu, git)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn choose_agent_with_last(
     config: &Config,
+    layout: &TabLayout,
     cwd: &Path,
     worktree: bool,
     fixed_usage: Option<&str>,
-    last: Option<(String, Option<String>)>,
+    last: Option<state::LastAgentRecord>,
     menu: &mut impl Menu,
     git: &impl Git,
 ) -> Result<Option<AgentChoice>> {
@@ -502,63 +577,79 @@ fn choose_agent_with_last(
         _ => None,
     };
 
-    let regular_harnesses = [
-        HARNESS_CLAUDE.to_owned(),
-        HARNESS_CODEX.to_owned(),
-        HARNESS_OPENCODE.to_owned(),
-    ];
-    let last = last
-        .filter(|(harness, model)| state::last_choice_is_valid(harness, model.as_deref(), config));
-    let use_last = last.as_ref().map(|(harness, model)| {
-        let name = harness
-            .split_once("  ")
-            .map_or(harness.as_str(), |(_, name)| name);
-        match model {
-            Some(model) => format!("{USE_LAST_PREFIX}{name} · {model}"),
-            None => format!("{USE_LAST_PREFIX}{name}"),
-        }
-    });
-    let mut harness_options = regular_harnesses.to_vec();
-    if let Some(option) = &use_last {
-        harness_options.insert(0, option.clone());
-    }
-    let Some(harness) = menu.choose(HARNESS_TITLE, "Choose a harness.", &harness_options, 8)?
-    else {
-        return Ok(None);
-    };
-    let harness = strip_pad(&harness);
-    if harness.is_empty() {
-        return Ok(None);
-    }
-
-    // harness → model → usage. The popup already asked in this order; the in-pane
-    // launcher asked harness → usage → model. Deviation 1 in the parity contract picks
-    // the popup's order so both entry points can share this one flow.
-    let selected_last = use_last.as_deref() == Some(harness.as_str());
-    let (harness, stored_model) = if selected_last {
-        last.expect("use-last entry requires a stored choice")
+    // A layout that pins the agent runs no harness menu, so nothing here is built for it.
+    let (agent_name, stored_option) = if let Some(agent_name) = &layout.panes[0].agent {
+        (agent_name.clone(), None)
     } else {
-        (harness, None)
-    };
-    let model_label = if selected_last {
-        stored_model
-    } else if harness.contains("claude code") {
-        let Some(model_label) = menu.choose(MODEL_TITLE, "Choose a model.", &config.order, 6)?
+        let last = last.filter(|record| state::last_choice_is_valid(record, config));
+        let use_last = last.as_ref().map(|record| {
+            let label = config
+                .agent(&record.agent)
+                .expect("validated above")
+                .menu_label();
+            match &record.option {
+                Some(option) => format!("{USE_LAST_PREFIX}{label} · {option}"),
+                None => format!("{USE_LAST_PREFIX}{label}"),
+            }
+        });
+        let mut harness_options = config
+            .agents
+            .iter()
+            .map(Agent::menu_label)
+            .collect::<Vec<_>>();
+        if let Some(option) = &use_last {
+            harness_options.insert(0, option.clone());
+        }
+        let Some(harness) = menu.choose(HARNESS_TITLE, "Choose a harness.", &harness_options, 8)?
         else {
             return Ok(None);
         };
-        let model_label = strip_pad(&model_label);
-        if model_label.is_empty() {
+        let harness = strip_pad(&harness);
+        if harness.is_empty() {
             return Ok(None);
         }
-        Some(model_label)
-    } else {
+        let selected_last = use_last.as_deref() == Some(harness.as_str());
+        if selected_last {
+            let record = last.expect("use-last entry requires a stored choice");
+            (record.agent, record.option)
+        } else {
+            // Rendered labels are unique across agents, enforced at config load.
+            let agent_name = config
+                .agents
+                .iter()
+                .find(|agent| agent.menu_label() == harness)
+                .map(|agent| agent.name.clone())
+                .expect("validated at load");
+            (agent_name, None)
+        }
+    };
+    let agent = config.agent(&agent_name).expect("validated at load");
+    let option_name = if let Some(option_name) =
+        layout.panes[0].option_name.clone().or(stored_option)
+    {
+        Some(option_name)
+    } else if agent.options.is_empty() {
         None
+    } else {
+        let options = agent
+            .options
+            .iter()
+            .map(|option| option.name.clone())
+            .collect::<Vec<_>>();
+        let Some(option_name) = menu.choose(&agent.menu_label(), "Choose a model.", &options, 6)?
+        else {
+            return Ok(None);
+        };
+        let option_name = strip_pad(&option_name);
+        if option_name.is_empty() {
+            return Ok(None);
+        }
+        Some(option_name)
     };
 
     // A fixed usage skips the menu and is used verbatim: the restart path passes the
     // pane's current label, and the project picker passes its pinned tab label.
-    let usage = match fixed_usage {
+    let usage = match fixed_usage.or(layout.tab_label.as_deref()) {
         Some(usage) => usage.to_owned(),
         None => match select_usage(menu)? {
             Some(usage) => usage,
@@ -572,15 +663,15 @@ fn choose_agent_with_last(
         (None, _) => cwd.to_path_buf(),
     };
     let label = compose_label(&usage, branch.as_deref());
-    let launch = build_launch(config, &harness, model_label.as_deref())?;
+    let launch = build_launch(config, &agent_name, option_name.as_deref())?;
 
     Ok(Some(AgentChoice {
         label,
         project_dir,
         branch,
         launch,
-        harness,
-        model_label,
+        agent_name,
+        option_name,
     }))
 }
 
@@ -613,32 +704,32 @@ fn select_usage(menu: &mut impl Menu) -> Result<Option<String>> {
     Ok(if label.is_empty() { None } else { Some(label) })
 }
 
-fn build_launch(config: &Config, harness: &str, model_label: Option<&str>) -> Result<Vec<String>> {
-    if harness.contains("codex") {
-        let mut launch = vec!["codex".to_owned()];
-        launch.extend(config.codex_extra_args.clone());
-        return Ok(launch);
-    }
-    if harness.contains("opencode") {
-        return Ok(vec!["opencode".to_owned()]);
-    }
+fn build_launch(
+    config: &Config,
+    agent_name: &str,
+    option_name: Option<&str>,
+) -> Result<Vec<String>> {
+    let agent = config
+        .agent(agent_name)
+        .with_context(|| format!("no agent entry for: {agent_name}"))?;
+    let option = match option_name {
+        Some(option_name) => Some(
+            agent
+                .option(option_name)
+                .with_context(|| format!("agent {agent_name} has no option: {option_name}"))?,
+        ),
+        None if agent.options.is_empty() => None,
+        None => bail!("agent {agent_name} requires an option"),
+    };
 
-    let label = model_label.context("claude harness requires a model label")?;
-    let model = config
-        .models
-        .get(label)
-        .with_context(|| format!("model label has no model entry: {label}"))?;
-    // CCR is not a model: it dispatches to its own binary, with no model flag and none
-    // of the claude extra args.
-    if model == "CCR" {
-        return Ok(vec!["ccr".to_owned(), "code".to_owned()]);
-    }
-
-    let mut launch = vec!["claude".to_owned(), "--model".to_owned(), model.clone()];
-    if let Some(args) = config.model_args.get(label) {
-        launch.extend(args.clone());
-    }
-    launch.extend(config.claude_extra_args.clone());
+    let mut launch = option
+        .and_then(|option| option.command.as_ref())
+        .unwrap_or(&agent.command)
+        .clone();
+    launch.extend(option.into_iter().flat_map(|option| option.args.clone()));
+    // A command override changes only the executable; extra args apply to every
+    // launch of the agent, including overridden commands.
+    launch.extend(agent.extra_args.clone());
     Ok(launch)
 }
 
@@ -1105,15 +1196,22 @@ mod popup {
     use super::*;
     use crate::herdr::FakeClient;
 
+    static POPUP_CONFIG_ID: AtomicU64 = AtomicU64::new(0);
+
     fn popup_choice() -> AgentChoice {
         AgentChoice {
             label: "\u{f4af}  review".to_owned(),
             project_dir: PathBuf::from("/projects/example"),
             branch: None,
             launch: vec!["codex".to_owned(), "--profile work".to_owned()],
-            harness: HARNESS_CODEX.to_owned(),
-            model_label: None,
+            agent_name: "codex".to_owned(),
+            option_name: None,
         }
+    }
+
+    fn default_layout() -> TabLayout {
+        let config = Config::test_default();
+        config.layout(&config.default_tab_layout).unwrap().clone()
     }
 
     fn queue_popup_create(client: &FakeClient) {
@@ -1132,6 +1230,166 @@ mod popup {
         client.queue_response("pane.split", json!({ "pane": { "pane_id": "p3" } }));
     }
 
+    #[test]
+    fn default_layout_reproduces_side_pane_calls() {
+        let client = FakeClient::default();
+        queue_popup_splits(&client);
+
+        build_side_panes(&client, &default_layout(), "root", "/projects/example").unwrap();
+
+        let calls = client.calls.into_inner();
+        // The second split carries no `env` key at all, not an empty one. The whole-vec
+        // compare below covers it, but the baseline is worth naming on its own line.
+        assert!(calls[3].1.get("env").is_none(), "{:?}", calls[3].1);
+        assert_eq!(
+            calls,
+            vec![
+                (
+                    "pane.split".to_owned(),
+                    json!({
+                        "target_pane_id": "root", "direction": "right", "ratio": 0.38,
+                        "cwd": "/projects/example", "env": { "Q_NO_BANNER": "1" },
+                        "focus": false,
+                    }),
+                ),
+                (
+                    "pane.rename".to_owned(),
+                    json!({ "pane_id": "p2", "label": "\u{f0968}  Files" }),
+                ),
+                (
+                    "pane.send_input".to_owned(),
+                    json!({ "pane_id": "p2", "text": "yazi .", "keys": ["enter"] }),
+                ),
+                (
+                    "pane.split".to_owned(),
+                    json!({
+                        "target_pane_id": "p2", "direction": "down", "ratio": 0.9,
+                        "cwd": "/projects/example", "focus": false,
+                    }),
+                ),
+                (
+                    "pane.rename".to_owned(),
+                    json!({ "pane_id": "p3", "label": "\u{f489}  term" }),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn split_from_branches_back_to_named_pane() {
+        let client = FakeClient::default();
+        let mut layout = default_layout();
+        let mut fourth = layout.panes[2].clone();
+        fourth.name = "logs".to_owned();
+        fourth.label = None;
+        fourth.split_from = Some(layout.panes[0].name.clone());
+        layout.panes.push(fourth);
+        queue_popup_splits(&client);
+        client.queue_response("pane.split", json!({ "pane": { "pane_id": "p4" } }));
+
+        build_side_panes(&client, &layout, "root", "/projects/example").unwrap();
+
+        let calls = client.calls.into_inner();
+        let splits = calls
+            .iter()
+            .filter(|(method, _)| method == "pane.split")
+            .collect::<Vec<_>>();
+        assert_eq!(splits[2].1["target_pane_id"], "root");
+    }
+
+    #[test]
+    fn label_less_pane_produces_no_rename() {
+        let client = FakeClient::default();
+        let mut layout = default_layout();
+        layout.panes[1].label = None;
+        queue_popup_splits(&client);
+
+        build_side_panes(&client, &layout, "root", "/projects/example").unwrap();
+
+        assert!(!client
+            .calls
+            .into_inner()
+            .iter()
+            .any(|(method, params)| { method == "pane.rename" && params["pane_id"] == "p2" }));
+    }
+
+    /// The plan's fifth goal: every configuration error surfaces at load, before the first
+    /// socket call. `popup` used to adopt the invoking pane's cwd first, which asks Herdr
+    /// for the pane, so a broken config produced a socket round trip before it was read.
+    #[test]
+    fn a_broken_config_stops_the_popup_before_the_first_socket_call() {
+        let _guard = crate::state::env_lock();
+        let directory = std::env::temp_dir().join(format!(
+            "workbench-popup-config-{}-{}",
+            std::process::id(),
+            POPUP_CONFIG_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&directory).expect("create temporary directory");
+        let config_file = directory.join("config.toml");
+        fs::write(&config_file, "default_tab_layout = \"missing-layout\"\n").expect("write config");
+        let saved = [
+            "HOME",
+            "Q_WORKBENCH_LOCAL_CONFIG",
+            "HERDR_ACTIVE_PANE_ID",
+            "HERDR_PLUGIN_CONTEXT_JSON",
+        ]
+        .map(|name| (name, std::env::var_os(name)));
+        // Without the context JSON the cwd adoption falls through to a pane.get, which is
+        // the socket call this test proves never happens.
+        std::env::remove_var("HERDR_PLUGIN_CONTEXT_JSON");
+        std::env::set_var("HOME", &directory);
+        std::env::set_var("Q_WORKBENCH_LOCAL_CONFIG", &config_file);
+        std::env::set_var("HERDR_ACTIVE_PANE_ID", "p1");
+
+        let client = FakeClient::default();
+        let error = popup(&client, false, None).expect_err("reject the broken config");
+
+        for (name, value) in &saved {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+        fs::remove_dir_all(&directory).expect("remove temporary directory");
+
+        assert!(format!("{error:#}").contains("missing-layout"), "{error:#}");
+        assert!(
+            client.calls.borrow().is_empty(),
+            "{:?}",
+            client.calls.borrow()
+        );
+    }
+
+    #[test]
+    fn shell_pane_sends_no_input() {
+        let client = FakeClient::default();
+        let mut layout = default_layout();
+        layout.panes.remove(1);
+        client.queue_response("pane.split", json!({ "pane": { "pane_id": "p2" } }));
+
+        build_side_panes(&client, &layout, "root", "/projects/example").unwrap();
+
+        assert!(!client
+            .calls
+            .into_inner()
+            .iter()
+            .any(|(method, _)| method == "pane.send_input"));
+    }
+
+    #[test]
+    fn empty_pane_id_fails_loudly() {
+        let client = FakeClient::default();
+        client.queue_response("pane.split", json!({ "pane": { "pane_id": "" } }));
+
+        let error =
+            build_side_panes(&client, &default_layout(), "root", "/projects/example").unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "pane.split returned an empty pane id for pane files"
+        );
+    }
+
     fn launch_options(tab_id: Option<&str>, no_layout: bool) -> LaunchOptions {
         LaunchOptions {
             pane_id: "p1".to_owned(),
@@ -1140,7 +1398,49 @@ mod popup {
             worktree: false,
             no_layout,
             restart: false,
+            layout: None,
         }
+    }
+
+    #[test]
+    fn resolve_layout_accepts_a_named_layout() {
+        let config = Config::test_default();
+
+        let layout = resolve_layout(&config, Some("agentic-coding")).unwrap();
+
+        assert_eq!(layout.name, "agentic-coding");
+    }
+
+    #[test]
+    fn resolve_layout_uses_the_configured_default() {
+        let mut config = Config::test_default();
+        config.default_tab_layout = "agentic-coding".to_owned();
+
+        let layout = resolve_layout(&config, None).unwrap();
+
+        assert_eq!(layout.name, config.default_tab_layout);
+    }
+
+    #[test]
+    fn resolve_layout_rejects_an_unknown_name() {
+        let config = Config::test_default();
+
+        let error = resolve_layout(&config, Some("unknown-layout")).unwrap_err();
+
+        assert!(error.to_string().contains("unknown-layout"));
+    }
+
+    #[test]
+    fn launch_unknown_layout_rejects_before_socket() {
+        let client = FakeClient::default();
+        let config = Config::test_default();
+        let mut options = launch_options(None, false);
+        options.layout = Some("unknown-layout".to_owned());
+
+        let error = launch(&client, &config, &options).unwrap_err();
+
+        assert!(error.to_string().contains("unknown-layout"));
+        assert!(client.calls.into_inner().is_empty());
     }
 
     #[test]
@@ -1148,7 +1448,14 @@ mod popup {
         let client = FakeClient::default();
         queue_popup_splits(&client);
 
-        apply_launch_layout(&client, &launch_options(Some("t1"), false), &popup_choice()).unwrap();
+        let layout = default_layout();
+        apply_launch_layout(
+            &client,
+            &layout,
+            &launch_options(Some("t1"), false),
+            &popup_choice(),
+        )
+        .unwrap();
 
         assert_eq!(
             client.calls.into_inner(),
@@ -1170,7 +1477,13 @@ mod popup {
                 ),
                 (
                     "pane.rename".to_owned(),
-                    json!({ "pane_id": "p2", "label": FILES_LABEL })
+                    json!({
+                        "pane_id": "p2",
+                        "label": render_label(
+                            layout.panes[1].icon.as_deref(),
+                            layout.panes[1].label.as_deref().unwrap(),
+                        ),
+                    })
                 ),
                 (
                     "pane.send_input".to_owned(),
@@ -1185,7 +1498,13 @@ mod popup {
                 ),
                 (
                     "pane.rename".to_owned(),
-                    json!({ "pane_id": "p3", "label": TERM_LABEL })
+                    json!({
+                        "pane_id": "p3",
+                        "label": render_label(
+                            layout.panes[2].icon.as_deref(),
+                            layout.panes[2].label.as_deref().unwrap(),
+                        ),
+                    })
                 ),
             ]
         );
@@ -1195,7 +1514,13 @@ mod popup {
     fn no_layout_skips_splits_and_tab_rename_is_optional() {
         let client = FakeClient::default();
 
-        apply_launch_layout(&client, &launch_options(None, true), &popup_choice()).unwrap();
+        apply_launch_layout(
+            &client,
+            &default_layout(),
+            &launch_options(None, true),
+            &popup_choice(),
+        )
+        .unwrap();
 
         assert_eq!(
             client.calls.into_inner(),
@@ -1216,9 +1541,14 @@ mod popup {
             tab_id: Some("tab with space".to_owned()),
             usage: Some("review $HOME".to_owned()),
             worktree: true,
+            layout: Some("my layout".to_owned()),
         };
 
-        inject(&client, &options).unwrap();
+        let mut config = Config::test_default();
+        let mut layout = default_layout();
+        layout.name = "my layout".to_owned();
+        config.tab_layouts.push(layout);
+        inject_with_config(&client, &config, &options).unwrap();
 
         let calls = client.calls.into_inner();
         assert_eq!(calls.len(), 2);
@@ -1254,6 +1584,8 @@ mod popup {
             "--usage".to_owned(),
             "review $HOME".to_owned(),
             "--worktree".to_owned(),
+            "--layout".to_owned(),
+            "my layout".to_owned(),
         ];
         assert_eq!(argv.lines().collect::<Vec<_>>(), expected);
     }
@@ -1264,7 +1596,8 @@ mod popup {
         queue_popup_create(&client);
         queue_popup_splits(&client);
 
-        create_popup_tab(&client, &popup_choice(), None).unwrap();
+        let layout = default_layout();
+        create_popup_tab(&client, &layout, &popup_choice(), None).unwrap();
 
         assert_eq!(
             client.calls.into_inner(),
@@ -1295,7 +1628,13 @@ mod popup {
                 ),
                 (
                     "pane.rename".to_owned(),
-                    json!({ "pane_id": "p2", "label": FILES_LABEL })
+                    json!({
+                        "pane_id": "p2",
+                        "label": render_label(
+                            layout.panes[1].icon.as_deref(),
+                            layout.panes[1].label.as_deref().unwrap(),
+                        ),
+                    })
                 ),
                 (
                     "pane.send_input".to_owned(),
@@ -1310,7 +1649,13 @@ mod popup {
                 ),
                 (
                     "pane.rename".to_owned(),
-                    json!({ "pane_id": "p3", "label": TERM_LABEL })
+                    json!({
+                        "pane_id": "p3",
+                        "label": render_label(
+                            layout.panes[2].icon.as_deref(),
+                            layout.panes[2].label.as_deref().unwrap(),
+                        ),
+                    })
                 ),
                 (
                     "pane.send_input".to_owned(),
@@ -1329,7 +1674,7 @@ mod popup {
             let client = FakeClient::default();
             queue_popup_create(&client);
             queue_popup_splits(&client);
-            create_popup_tab(&client, &popup_choice(), workspace).unwrap();
+            create_popup_tab(&client, &default_layout(), &popup_choice(), workspace).unwrap();
             assert_eq!(
                 client.calls.borrow()[0].1.get("workspace_id"),
                 expected.as_ref()
@@ -1398,7 +1743,8 @@ mod popup {
                 *count += 1;
             }
 
-            let error = create_popup_tab(&client, &popup_choice(), None).unwrap_err();
+            let error =
+                create_popup_tab(&client, &default_layout(), &popup_choice(), None).unwrap_err();
             let flow_error = error.downcast_ref::<FlowError>().unwrap();
             assert_eq!(flow_error.title(), Some("Agent tab failed"));
             assert_eq!(flow_error.prefix(), Some("The incomplete tab was closed."));
@@ -1417,7 +1763,7 @@ mod popup {
         let client = FakeClient::default();
         let choice: Option<AgentChoice> = None;
         if let Some(choice) = choice {
-            create_popup_tab(&client, &choice, None).unwrap();
+            create_popup_tab(&client, &default_layout(), &choice, None).unwrap();
         }
         assert!(client.calls.into_inner().is_empty());
     }
@@ -1425,50 +1771,56 @@ mod popup {
     #[test]
     fn popup_extra_args_preserve_toml_array_boundaries_and_bypass_is_opt_in() {
         let mut config = config();
-        config.codex_extra_args = Vec::new();
+        config.agents[1].extra_args = Vec::new();
+        assert_eq!(build_launch(&config, "codex", None).unwrap(), ["codex"]);
+        config.agents[1].extra_args = vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()];
         assert_eq!(
-            build_launch(&config, HARNESS_CODEX, None).unwrap(),
-            ["codex"]
+            build_launch(&config, "codex", None).unwrap(),
+            ["codex", "--dangerously-bypass-approvals-and-sandbox"]
         );
-        config.codex_extra_args = vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()];
-        assert_eq!(build_launch(&config, HARNESS_CODEX, None).unwrap().len(), 2);
-        config.codex_extra_args = ["--search", "--profile", "work"]
+        config.agents[1].extra_args = ["--search", "--profile", "work"]
             .map(str::to_owned)
             .to_vec();
-        assert_eq!(build_launch(&config, HARNESS_CODEX, None).unwrap().len(), 4);
-        config.codex_extra_args = vec!["--profile work".to_owned()];
         assert_eq!(
-            build_launch(&config, HARNESS_CODEX, None).unwrap(),
+            build_launch(&config, "codex", None).unwrap(),
+            ["codex", "--search", "--profile", "work"]
+        );
+        config.agents[1].extra_args = vec!["--profile work".to_owned()];
+        assert_eq!(
+            build_launch(&config, "codex", None).unwrap(),
             ["codex", "--profile work"]
         );
     }
 
+    /// The shipped defaults plus the two `extra_args` values these tests pin, so a change
+    /// to `default_agents()` cannot silently diverge from a hand-written parallel copy.
     fn config() -> Config {
-        Config {
-            dashboard_workspace: String::new(),
-            claude_extra_args: vec!["argument with space".to_owned()],
-            codex_extra_args: vec!["--search".to_owned()],
-            project_registry_file: String::new(),
-            projects_root: String::new(),
-            ssh_registry_file: String::new(),
-            ssh_config_file: String::new(),
-            ssh_history_file: String::new(),
-            order: ["Opus", "OpusPlan (Sonnet)", "CCR", "Fable 5"]
-                .map(str::to_owned)
-                .to_vec(),
-            models: [
-                ("Opus", "claude-opus-4-8"),
-                ("OpusPlan (Sonnet)", "opusplan"),
-                ("CCR", "CCR"),
-                ("Fable 5", "claude-fable-5"),
-            ]
-            .map(|(key, value)| (key.to_owned(), value.to_owned()))
-            .into(),
-            model_args: [(
-                "OpusPlan (Sonnet)".to_owned(),
-                vec!["--effort".to_owned(), "medium".to_owned()],
-            )]
-            .into(),
+        let mut config = Config::test_default();
+        config.tab_layouts = Vec::new();
+        config.default_tab_layout = String::new();
+        config.agents[0].extra_args = vec!["argument with space".to_owned()];
+        config.agents[1].extra_args = vec!["--search".to_owned()];
+        config
+    }
+
+    /// A layout whose only pane is a bare agent root: nothing pinned, so every menu runs.
+    fn bare_layout(name: &str) -> TabLayout {
+        TabLayout {
+            name: name.to_owned(),
+            tab_label: None,
+            panes: vec![LayoutPane {
+                name: "agent".to_owned(),
+                label: None,
+                icon: None,
+                pane_type: PaneType::Agent,
+                agent: None,
+                option_name: None,
+                command: None,
+                direction: None,
+                ratio: None,
+                split_from: None,
+                env: BTreeMap::new(),
+            }],
         }
     }
 
@@ -1476,16 +1828,18 @@ mod popup {
     struct FakeMenu {
         answers: VecDeque<Option<String>>,
         options: Vec<Vec<String>>,
+        titles: Vec<String>,
     }
 
     impl FakeMenu {
-        fn new<const N: usize>(answers: [Option<&str>; N]) -> Self {
+        fn new<'a>(answers: impl IntoIterator<Item = Option<&'a str>>) -> Self {
             Self {
                 answers: answers
                     .into_iter()
                     .map(|answer| answer.map(str::to_owned))
                     .collect(),
                 options: Vec::new(),
+                titles: Vec::new(),
             }
         }
 
@@ -1497,11 +1851,12 @@ mod popup {
     impl Menu for FakeMenu {
         fn choose(
             &mut self,
-            _: &str,
+            title: &str,
             _: &str,
             options: &[String],
             _: u8,
         ) -> Result<Option<String>> {
+            self.titles.push(title.to_owned());
             self.options.push(options.to_vec());
             Ok(self.answers.pop_front().flatten())
         }
@@ -1521,17 +1876,152 @@ mod popup {
     }
 
     #[test]
-    fn use_last_is_first_and_skips_model_and_usage_menus() {
+    fn layout_omissions_drive_three_menus_in_order() {
         let config = config();
-        let entry = format!("{USE_LAST_PREFIX}claude code · Opus");
+        let layout = bare_layout("ask");
+        let mut menu = FakeMenu::new([Some(TEST_CLAUDE_LABEL), Some("Opus"), Some(USAGE_DISCUSS)]);
+
+        let choice = choose_agent_with(
+            &config,
+            &layout,
+            Path::new("/project"),
+            false,
+            None,
+            &mut menu,
+            &FakeGit::nowhere(),
+        )
+        .unwrap();
+
+        assert!(choice.is_some());
+        assert_eq!(menu.titles.len(), 3);
+        assert_eq!(menu.titles, [HARNESS_TITLE, TEST_CLAUDE_LABEL, USAGE_TITLE]);
+    }
+
+    #[test]
+    fn pinned_layout_drives_zero_menus() {
+        let config = config();
+        let layout = {
+            let mut layout = bare_layout("pinned");
+            layout.tab_label = Some("Personal Assistant".to_owned());
+            layout.panes[0].agent = Some("claude code".to_owned());
+            layout.panes[0].option_name = Some("Opus".to_owned());
+            layout
+        };
+        let mut menu = FakeMenu::new([]);
+
+        let choice = choose_agent_with(
+            &config,
+            &layout,
+            Path::new("/project"),
+            false,
+            None,
+            &mut menu,
+            &FakeGit::nowhere(),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(menu.titles.is_empty());
+        assert_eq!(choice.agent_name, "claude code");
+        assert_eq!(choice.option_name.as_deref(), Some("Opus"));
+        assert_eq!(choice.label, "Personal Assistant");
+    }
+
+    #[test]
+    fn empty_options_skip_the_model_menu() {
+        let config = config();
+        let layout = bare_layout("ask");
+        let mut menu = FakeMenu::new([Some(TEST_CODEX_LABEL), Some(USAGE_REVIEW)]);
+
+        let choice = choose_agent_with(
+            &config,
+            &layout,
+            Path::new("/project"),
+            false,
+            None,
+            &mut menu,
+            &FakeGit::nowhere(),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(menu.titles, [HARNESS_TITLE, USAGE_TITLE]);
+        assert_eq!(choice.option_name, None);
+    }
+
+    #[test]
+    fn model_menu_title_follows_the_chosen_agent() {
+        let mut config = config();
+        config.agents[0].label = Some("Claude Custom".to_owned());
+        let rendered_label = render_label(Some("\u{f15ce}"), "Claude Custom");
+        let layout = {
+            let mut layout = bare_layout("ask");
+            layout.tab_label = Some("Assistant".to_owned());
+            layout
+        };
+        let mut menu = FakeMenu::new([Some(rendered_label.as_str()), Some("Opus")]);
+
+        let choice = choose_agent_with(
+            &config,
+            &layout,
+            Path::new("/project"),
+            false,
+            None,
+            &mut menu,
+            &FakeGit::nowhere(),
+        )
+        .unwrap();
+
+        assert!(choice.is_some());
+        assert_eq!(menu.titles[1], rendered_label);
+    }
+
+    #[test]
+    fn cancellation_at_harness_model_or_usage_is_clean() {
+        let config = config();
+        let cases = [
+            vec![None],
+            vec![Some(TEST_CLAUDE_LABEL), None],
+            vec![Some(TEST_CLAUDE_LABEL), Some("Opus"), None],
+        ];
+        let layout = bare_layout("ask");
+        for answers in cases {
+            let mut menu = FakeMenu::new(answers);
+
+            let choice = choose_agent_with(
+                &config,
+                &layout,
+                Path::new("/project"),
+                false,
+                None,
+                &mut menu,
+                &FakeGit::nowhere(),
+            )
+            .unwrap();
+
+            assert_eq!(choice, None);
+        }
+    }
+
+    #[test]
+    fn use_last_is_first_and_skips_model_and_usage_menus() {
+        let mut config = config();
+        config.tab_layouts.push(default_layout());
+        let entry = format!("{USE_LAST_PREFIX}{TEST_CLAUDE_LABEL} · Opus");
         let mut menu = FakeMenu::new([Some(entry.as_str())]);
 
         let choice = choose_agent_with_last(
             &config,
+            &default_layout(),
             Path::new("/project"),
             false,
             Some("review"),
-            Some((HARNESS_CLAUDE.to_owned(), Some("Opus".to_owned()))),
+            Some(state::LastAgentRecord {
+                agent: "claude code".to_owned(),
+                option: Some("Opus".to_owned()),
+                layout: "agentic-coding".to_owned(),
+                recorded_at: 1,
+            }),
             &mut menu,
             &FakeGit::nowhere(),
         )
@@ -1540,29 +2030,35 @@ mod popup {
 
         assert_eq!(menu.options.len(), 1);
         assert_eq!(menu.options[0][0], entry);
-        assert_eq!(choice.harness, HARNESS_CLAUDE);
-        assert_eq!(choice.model_label.as_deref(), Some("Opus"));
+        assert_eq!(choice.agent_name, "claude code");
+        assert_eq!(choice.option_name.as_deref(), Some("Opus"));
     }
 
     #[test]
     fn stale_last_choice_does_not_add_a_menu_entry() {
         let config = config();
-        let mut menu = FakeMenu::new([Some(HARNESS_CODEX)]);
+        let mut menu = FakeMenu::new([Some(TEST_CODEX_LABEL)]);
 
         let choice = choose_agent_with_last(
             &config,
+            &default_layout(),
             Path::new("/project"),
             false,
             Some("review"),
-            Some((HARNESS_CLAUDE.to_owned(), Some("Removed".to_owned()))),
+            Some(state::LastAgentRecord {
+                agent: "claude code".to_owned(),
+                option: Some("Removed".to_owned()),
+                layout: "agentic-coding".to_owned(),
+                recorded_at: 1,
+            }),
             &mut menu,
             &FakeGit::nowhere(),
         )
         .unwrap()
         .unwrap();
 
-        assert_eq!(menu.options[0][0], HARNESS_CLAUDE);
-        assert_eq!(choice.harness, HARNESS_CODEX);
+        assert_eq!(menu.options[0][0], TEST_CLAUDE_LABEL);
+        assert_eq!(choice.agent_name, "codex");
     }
 
     struct FakeGit {
@@ -1664,90 +2160,108 @@ mod popup {
 
     #[test]
     fn launch_commands_match_every_harness_and_model_rule() {
-        let config = config();
+        let config = Config::test_default();
+        assert_eq!(build_launch(&config, "codex", None).unwrap(), ["codex"]);
         assert_eq!(
-            build_launch(&config, HARNESS_CODEX, None).unwrap(),
-            ["codex", "--search"]
-        );
-        assert_eq!(
-            build_launch(&config, HARNESS_OPENCODE, None).unwrap(),
+            build_launch(&config, "opencode", None).unwrap(),
             ["opencode"]
         );
-        // CCR takes neither a model flag nor the claude extra args.
         assert_eq!(
-            build_launch(&config, HARNESS_CLAUDE, Some("CCR")).unwrap(),
+            build_launch(&config, "claude code", Some("CCR")).unwrap(),
             ["ccr", "code"]
         );
         assert_eq!(
-            build_launch(&config, HARNESS_CLAUDE, Some("Opus")).unwrap(),
-            [
-                "claude",
-                "--model",
-                "claude-opus-4-8",
-                "argument with space"
-            ]
+            build_launch(&config, "claude code", Some("Opus")).unwrap(),
+            ["claude", "--model", "claude-opus-4-8"]
         );
         assert_eq!(
-            build_launch(&config, HARNESS_CLAUDE, Some("OpusPlan (Sonnet)")).unwrap(),
-            [
-                "claude",
-                "--model",
-                "opusplan",
-                "--effort",
-                "medium",
-                "argument with space"
-            ]
+            build_launch(&config, "claude code", Some("OpusPlan (Sonnet)")).unwrap(),
+            ["claude", "--model", "opusplan", "--effort", "medium"]
         );
         assert_eq!(
-            build_launch(&config, HARNESS_CLAUDE, Some("Fable 5")).unwrap(),
-            ["claude", "--model", "claude-fable-5", "argument with space"]
+            build_launch(&config, "claude code", Some("Fable 5")).unwrap(),
+            ["claude", "--model", "claude-fable-5"]
         );
     }
 
     #[test]
-    fn an_extra_argument_containing_a_space_stays_one_entry() {
+    fn extra_args_reach_plain_and_command_override_options() {
         let mut config = config();
-        config.claude_extra_args = vec![
-            "--add-dir".to_owned(),
-            "/Users/q/My Projects".to_owned(),
-            "--dangerously-skip-permissions".to_owned(),
-        ];
-        config.codex_extra_args = vec!["--cd".to_owned(), "/Users/q/My Projects".to_owned()];
+        config.agents[0].extra_args = ["--search", "--profile", "work"]
+            .map(str::to_owned)
+            .to_vec();
 
-        let claude = build_launch(&config, HARNESS_CLAUDE, Some("Opus")).unwrap();
         assert_eq!(
-            claude,
+            build_launch(&config, "claude code", Some("Opus")).unwrap(),
             [
                 "claude",
                 "--model",
                 "claude-opus-4-8",
-                "--add-dir",
-                "/Users/q/My Projects",
-                "--dangerously-skip-permissions"
+                "--search",
+                "--profile",
+                "work"
             ]
         );
-        let codex = build_launch(&config, HARNESS_CODEX, None).unwrap();
-        assert_eq!(codex, ["codex", "--cd", "/Users/q/My Projects"]);
+        assert_eq!(
+            build_launch(&config, "claude code", Some("CCR")).unwrap(),
+            ["ccr", "code", "--search", "--profile", "work"]
+        );
+    }
+
+    #[test]
+    fn command_override_still_takes_its_option_args() {
+        let mut config = config();
+        config.agents[0].extra_args.clear();
+        config.agents[0].options[2].args = vec!["--flag".to_owned()];
+
+        assert_eq!(
+            build_launch(&config, "claude code", Some("CCR")).unwrap(),
+            ["ccr", "code", "--flag"]
+        );
+    }
+
+    #[test]
+    fn a_spaced_option_argument_survives_as_one_argument() {
+        let mut config = config();
+        config.agents[0].extra_args.clear();
+        config.agents[0].command.push("code".to_owned());
+        config.agents[0].options[0].args =
+            ["--cd", "/Users/q/My Projects"].map(str::to_owned).to_vec();
+
+        assert_eq!(
+            build_launch(&config, "claude code", Some("Opus")).unwrap(),
+            ["claude", "code", "--cd", "/Users/q/My Projects"]
+        );
+    }
+
+    #[test]
+    fn missing_launch_names_are_named_errors() {
+        let config = config();
+
+        let error = build_launch(&config, "missing agent", None).unwrap_err();
+        assert!(error.to_string().contains("missing agent"));
+        let error = build_launch(&config, "claude code", Some("missing option")).unwrap_err();
+        assert!(error.to_string().contains("missing option"));
+        let agent_name = "claude code";
+        let error = build_launch(&config, agent_name, None).unwrap_err();
+        assert!(error.to_string().contains(agent_name));
     }
 
     #[test]
     fn bypass_flags_are_absent_unless_configured() {
         let mut config = config();
-        config.claude_extra_args = Vec::new();
-        config.codex_extra_args = Vec::new();
+        config.agents[0].extra_args = Vec::new();
+        config.agents[1].extra_args = Vec::new();
         assert_eq!(
-            build_launch(&config, HARNESS_CLAUDE, Some("Opus")).unwrap(),
+            build_launch(&config, "claude code", Some("Opus")).unwrap(),
             ["claude", "--model", "claude-opus-4-8"]
         );
-        assert_eq!(
-            build_launch(&config, HARNESS_CODEX, None).unwrap(),
-            ["codex"]
-        );
+        assert_eq!(build_launch(&config, "codex", None).unwrap(), ["codex"]);
 
-        config.claude_extra_args = vec!["--dangerously-skip-permissions".to_owned()];
-        config.codex_extra_args = vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()];
+        config.agents[0].extra_args = vec!["--dangerously-skip-permissions".to_owned()];
+        config.agents[1].extra_args = vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()];
         assert_eq!(
-            build_launch(&config, HARNESS_CLAUDE, Some("Opus")).unwrap(),
+            build_launch(&config, "claude code", Some("Opus")).unwrap(),
             [
                 "claude",
                 "--model",
@@ -1756,7 +2270,7 @@ mod popup {
             ]
         );
         assert_eq!(
-            build_launch(&config, HARNESS_CODEX, None).unwrap(),
+            build_launch(&config, "codex", None).unwrap(),
             ["codex", "--dangerously-bypass-approvals-and-sandbox"]
         );
     }
@@ -1792,11 +2306,12 @@ mod popup {
 
         let mut menu = FakeMenu::new([
             Some("feature/menu"),
-            Some(HARNESS_CODEX),
+            Some(TEST_CODEX_LABEL),
             Some(USAGE_DISCUSS),
         ]);
         let with_worktree = choose_agent_with(
             &config,
+            &default_layout(),
             Path::new("/projects/example"),
             true,
             None,
@@ -1811,9 +2326,10 @@ mod popup {
             Path::new("/projects/example-wt/feature-menu")
         );
 
-        let mut menu = FakeMenu::new([Some(HARNESS_CODEX), Some(USAGE_DISCUSS)]);
+        let mut menu = FakeMenu::new([Some(TEST_CODEX_LABEL), Some(USAGE_DISCUSS)]);
         let never_a_worktree = choose_agent_with(
             &config,
+            &default_layout(),
             Path::new("/projects/example"),
             false,
             None,
@@ -1837,8 +2353,8 @@ mod popup {
             project_dir: PathBuf::from("/projects/example-wt/menu"),
             branch: Some("menu".to_owned()),
             launch: vec!["codex".to_owned()],
-            harness: HARNESS_CODEX.to_owned(),
-            model_label: None,
+            agent_name: "codex".to_owned(),
+            option_name: None,
         };
         let normalised = without_worktree(choice, Path::new("/projects/example"));
         assert_eq!(normalised.label, "review menu");
@@ -1848,12 +2364,13 @@ mod popup {
     fn the_free_text_usage_path_names_the_tab() {
         let config = config();
         let mut menu = FakeMenu::new([
-            Some(HARNESS_OPENCODE),
+            Some(TEST_OPENCODE_LABEL),
             Some(USAGE_WRITE),
             Some("ship the rewrite"),
         ]);
         let choice = choose_agent_with(
             &config,
+            &default_layout(),
             Path::new("/projects/example"),
             false,
             None,
@@ -1864,8 +2381,8 @@ mod popup {
         .unwrap();
         assert_eq!(choice.label, "ship the rewrite");
         assert_eq!(choice.launch, ["opencode"]);
-        assert_eq!(choice.harness, HARNESS_OPENCODE);
-        assert_eq!(choice.model_label, None);
+        assert_eq!(choice.agent_name, "opencode");
+        assert_eq!(choice.option_name, None);
     }
 
     #[test]
@@ -1874,9 +2391,10 @@ mod popup {
 
         // Only the harness answer is scripted: a usage menu would read past the end and
         // cancel the flow.
-        let mut menu = FakeMenu::new([Some(HARNESS_CODEX)]);
+        let mut menu = FakeMenu::new([Some(TEST_CODEX_LABEL)]);
         let choice = choose_agent_with(
             &config,
+            &default_layout(),
             Path::new("/projects/example"),
             false,
             Some("\u{f09d1}  main"),
@@ -1888,9 +2406,10 @@ mod popup {
         assert_eq!(choice.label, "\u{f09d1}  main");
         assert!(menu.answered_everything());
 
-        let mut menu = FakeMenu::new([Some(HARNESS_CLAUDE), Some("Opus")]);
+        let mut menu = FakeMenu::new([Some(TEST_CLAUDE_LABEL), Some("Opus")]);
         let choice = choose_agent_with(
             &config,
+            &default_layout(),
             Path::new("/projects/example"),
             false,
             Some("\u{f442}  discuss"),
@@ -1900,16 +2419,17 @@ mod popup {
         .unwrap()
         .unwrap();
         assert_eq!(choice.label, "\u{f442}  discuss");
-        assert_eq!(choice.model_label.as_deref(), Some("Opus"));
+        assert_eq!(choice.option_name.as_deref(), Some("Opus"));
         assert!(menu.answered_everything());
     }
 
     #[test]
     fn an_empty_branch_name_becomes_a_timestamped_one() {
         let config = config();
-        let mut menu = FakeMenu::new([Some("   "), Some(HARNESS_CODEX), Some(USAGE_DEBUG)]);
+        let mut menu = FakeMenu::new([Some("   "), Some(TEST_CODEX_LABEL), Some(USAGE_DEBUG)]);
         let choice = choose_agent_with(
             &config,
+            &default_layout(),
             Path::new("/projects/example"),
             true,
             None,
@@ -1931,13 +2451,13 @@ mod popup {
             ("harness", vec![Some("feature/menu"), None]),
             (
                 "model",
-                vec![Some("feature/menu"), Some(HARNESS_CLAUDE), None],
+                vec![Some("feature/menu"), Some(TEST_CLAUDE_LABEL), None],
             ),
             (
                 "usage",
                 vec![
                     Some("feature/menu"),
-                    Some(HARNESS_CLAUDE),
+                    Some(TEST_CLAUDE_LABEL),
                     Some("Opus"),
                     None,
                 ],
@@ -1950,9 +2470,11 @@ mod popup {
                     .map(|answer| answer.map(str::to_owned))
                     .collect(),
                 options: Vec::new(),
+                titles: Vec::new(),
             };
             let choice = choose_agent_with(
                 &config,
+                &default_layout(),
                 Path::new("/projects/example"),
                 true,
                 None,
@@ -1970,6 +2492,7 @@ mod popup {
         let mut menu = FakeMenu::new([None]);
         let choice = choose_agent_with(
             &config,
+            &default_layout(),
             Path::new("/not-a-repository"),
             true,
             None,
@@ -1995,13 +2518,13 @@ mod popup {
             ("harness", vec![Some("feature/menu"), None]),
             (
                 "model",
-                vec![Some("feature/menu"), Some(HARNESS_CLAUDE), None],
+                vec![Some("feature/menu"), Some(TEST_CLAUDE_LABEL), None],
             ),
             (
                 "usage",
                 vec![
                     Some("feature/menu"),
-                    Some(HARNESS_CLAUDE),
+                    Some(TEST_CLAUDE_LABEL),
                     Some("Opus"),
                     None,
                 ],
@@ -2014,10 +2537,18 @@ mod popup {
                     .map(|answer| answer.map(str::to_owned))
                     .collect(),
                 options: Vec::new(),
+                titles: Vec::new(),
             };
-            let choice =
-                choose_agent_with(&config, &fixture.repo(), true, None, &mut menu, &RealGit)
-                    .unwrap();
+            let choice = choose_agent_with(
+                &config,
+                &default_layout(),
+                &fixture.repo(),
+                true,
+                None,
+                &mut menu,
+                &RealGit,
+            )
+            .unwrap();
             assert_eq!(choice, None, "cancelling at the {menu_name} menu");
             assert_eq!(
                 fixture.worktrees(),
@@ -2039,12 +2570,20 @@ mod popup {
         let config = config();
         let mut menu = FakeMenu::new([
             Some("feature/menu"),
-            Some(HARNESS_CODEX),
+            Some(TEST_CODEX_LABEL),
             Some(USAGE_REVIEW),
         ]);
-        let choice = choose_agent_with(&config, &fixture.repo(), true, None, &mut menu, &RealGit)
-            .unwrap()
-            .unwrap();
+        let choice = choose_agent_with(
+            &config,
+            &default_layout(),
+            &fixture.repo(),
+            true,
+            None,
+            &mut menu,
+            &RealGit,
+        )
+        .unwrap()
+        .unwrap();
 
         // git reports the toplevel with symlinks resolved, so the expected directory is
         // built from that path rather than from the fixture's own.
@@ -2109,9 +2648,9 @@ mod popup {
     fn the_option_block_is_centered_on_its_widest_option() {
         let menu = GumMenu::new(80, 40);
         let options = [
-            HARNESS_CLAUDE.to_owned(),
-            HARNESS_CODEX.to_owned(),
-            HARNESS_OPENCODE.to_owned(),
+            TEST_CLAUDE_LABEL.to_owned(),
+            TEST_CODEX_LABEL.to_owned(),
+            TEST_OPENCODE_LABEL.to_owned(),
         ];
         // The widest option is 14 columns, so the block starts at 33 and ends at 47.
         let padded = menu.padded(&options);
@@ -2135,7 +2674,7 @@ mod popup {
         assert_eq!(display_width("こんにちは"), 10);
         assert_eq!(display_width("feat/中文"), 9);
         // A Nerd Font glyph is one column, so these labels measure as plain text.
-        assert_eq!(display_width(HARNESS_CLAUDE), 14);
+        assert_eq!(display_width(TEST_CLAUDE_LABEL), 14);
         assert_eq!(display_width(USAGE_WRITE), 16);
     }
 

@@ -24,10 +24,10 @@ use crate::registry::project::{ProjectEntry, ProjectRegistry};
 use crate::registry::ssh;
 use crate::shell::shell_quote;
 
-const PROJECT_ICON: &str = "󰉋";
+const PROJECT_ICON: &str = "\u{f024b}";
 const PROJECT_PICKER_TITLE: &str = "Project picker";
-const PROJECT_MAIN_LABEL: &str = "󰧑  main";
-const SSH_ICON: &str = "󰢩";
+const PROJECT_MAIN_LABEL: &str = "\u{f09d1}  main";
+const SSH_ICON: &str = "\u{f08a9}";
 const SSH_PICKER_TITLE: &str = "SSH picker";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -46,20 +46,28 @@ struct ProjectSelection {
 /// painted under fzf's alternate screen and destroyed with the pane, so the user never
 /// saw it — the old code reported nothing at all in these two cases.
 pub fn project_pick(
+    config: &Config,
     registry_path: &Path,
     projects_root: &Path,
     client: &dyn HerdrClient,
 ) -> FlowResult {
-    project_pick_with_fzf(registry_path, projects_root, client, Path::new("fzf"))
+    project_pick_with_fzf(
+        config,
+        registry_path,
+        projects_root,
+        client,
+        Path::new("fzf"),
+    )
 }
 
 fn project_pick_with_fzf(
+    config: &Config,
     registry_path: &Path,
     projects_root: &Path,
     client: &dyn HerdrClient,
     fzf: &Path,
 ) -> FlowResult {
-    project_pick_inner(registry_path, projects_root, client, fzf).map_err(|error| {
+    project_pick_inner(config, registry_path, projects_root, client, fzf).map_err(|error| {
         if error.downcast_ref::<FlowError>().is_some() {
             error
         } else {
@@ -69,6 +77,7 @@ fn project_pick_with_fzf(
 }
 
 fn project_pick_inner(
+    config: &Config,
     registry_path: &Path,
     projects_root: &Path,
     client: &dyn HerdrClient,
@@ -124,7 +133,7 @@ fn project_pick_inner(
             return Err(FlowError::complete(PROJECT_PICKER_TITLE, message).into());
         }
     };
-    focus_or_create_project(&path, &selection.key, registry_path, client)?;
+    focus_or_create_project(config, &path, &selection.key, registry_path, client)?;
     crate::registry::project::use_project(
         registry_path,
         Some(&path),
@@ -212,6 +221,7 @@ fn resolve_project_path(
 }
 
 fn focus_or_create_project(
+    config: &Config,
     path: &Path,
     key: &str,
     registry_path: &Path,
@@ -262,13 +272,15 @@ fn focus_or_create_project(
                     "label": PROJECT_MAIN_LABEL,
                 }))
                 .context("project pick: tab.rename")?;
-            agent::inject(
+            agent::inject_with_config(
                 client,
+                config,
                 &InjectOptions {
                     pane_id: created.root_pane.pane_id,
                     tab_id: None,
                     usage: Some(PROJECT_MAIN_LABEL.to_owned()),
                     worktree: false,
+                    layout: None,
                 },
             )
             .context("project pick: inject agent")?;
@@ -809,7 +821,8 @@ mod tests {
         let client = FakeClient::default();
         queue_snapshot(&client, json!([{"workspace_id": "w-open", "cwd": project}]));
 
-        focus_or_create_project(&project, "", &registry, &client).expect("focus workspace");
+        focus_or_create_project(&Config::test_default(), &project, "", &registry, &client)
+            .expect("focus workspace");
 
         assert_eq!(
             client
@@ -840,7 +853,8 @@ mod tests {
         queue_snapshot(&client, json!([]));
         queue_created_workspace(&client);
 
-        focus_or_create_project(&project, "", &registry, &client).expect("create workspace");
+        focus_or_create_project(&Config::test_default(), &project, "", &registry, &client)
+            .expect("create workspace");
 
         let calls = client.calls.into_inner();
         assert_eq!(
@@ -864,7 +878,7 @@ mod tests {
         assert!(calls[4].1["text"]
             .as_str()
             .expect("launcher command")
-            .contains("'--usage' '󰧑  main'"));
+            .contains("'--usage' '\u{f09d1}  main'"));
     }
 
     #[test]
@@ -877,8 +891,14 @@ mod tests {
         queue_snapshot(&client, json!([]));
         queue_created_workspace(&client);
 
-        focus_or_create_project(&project, "alt-enter", &registry, &client)
-            .expect("create plain workspace");
+        focus_or_create_project(
+            &Config::test_default(),
+            &project,
+            "alt-enter",
+            &registry,
+            &client,
+        )
+        .expect("create plain workspace");
 
         assert_eq!(
             client
@@ -943,7 +963,7 @@ mod tests {
         assert_eq!(
             ssh_tab_create_params("host", Some("workspace-7")),
             json!({
-                "label": "󰢩  host",
+                "label": "\u{f08a9}  host",
                 "env": {"Q_NO_BANNER": "1"},
                 "focus": false,
                 "workspace_id": "workspace-7",
@@ -1115,10 +1135,10 @@ mod tests {
             .copied()
             .chain(used.display().to_string().bytes())
             .chain([0])
-            .chain("󰉋  Alpha\n   ~/Alpha\n   codex\t".bytes())
+            .chain("\u{f024b}  Alpha\n   ~/Alpha\n   codex\t".bytes())
             .chain(alpha.display().to_string().bytes())
             .chain([0])
-            .chain("󰉋  Beta | A | C\n   ~/Aliased\n   claude · filesystem\t".bytes())
+            .chain("\u{f024b}  Beta | A | C\n   ~/Aliased\n   claude · filesystem\t".bytes())
             .chain(aliased.display().to_string().bytes())
             .chain([0])
             .collect::<Vec<_>>();
@@ -1142,7 +1162,7 @@ mod tests {
 
         assert_eq!(
             output,
-            format!("󰉋  Home\n   ~\n   filesystem\t{}\0", home.display()).into_bytes()
+            format!("\u{f024b}  Home\n   ~\n   filesystem\t{}\0", home.display()).into_bytes()
         );
     }
 
@@ -1207,7 +1227,7 @@ mod tests {
         assert_eq!(
             output,
             format!(
-                "󰉋  Zoxide\n   ~/Zoxide\n   zoxide\t{}\0",
+                "\u{f024b}  Zoxide\n   ~/Zoxide\n   zoxide\t{}\0",
                 resolved.display()
             )
             .into_bytes()
@@ -1231,8 +1251,8 @@ mod tests {
         let missing = directory.0.join("missing.json");
         let client = FakeClient::default();
 
-        let error =
-            project_pick(&missing, &directory.0, &client).expect_err("reject missing registry");
+        let error = project_pick(&Config::test_default(), &missing, &directory.0, &client)
+            .expect_err("reject missing registry");
         let flow_error = error.downcast_ref::<FlowError>().unwrap();
         let expected = format!("project picker: registry not found: {}", missing.display());
 
@@ -1264,8 +1284,14 @@ mod tests {
         let client = FakeClient::default();
         client.queue_error("session.snapshot", "unavailable", "socket closed");
 
-        let error = project_pick_with_fzf(&registry, &directory.0, &client, &fzf)
-            .expect_err("reject snapshot failure");
+        let error = project_pick_with_fzf(
+            &Config::test_default(),
+            &registry,
+            &directory.0,
+            &client,
+            &fzf,
+        )
+        .expect_err("reject snapshot failure");
         let flow_error = error.downcast_ref::<FlowError>().unwrap();
 
         assert_eq!(flow_error.title(), Some("Project picker"));
@@ -1287,13 +1313,23 @@ mod tests {
 
     #[test]
     fn both_pickers_return_cancelled_without_notifying() {
+        // `adopt_invoking_cwd` reads HERDR_ACTIVE_PANE_ID, so a concurrent test that sets
+        // it would turn this "no socket calls" assertion into a pane.get.
+        let _guard = crate::state::env_lock();
         let directory = TestDirectory::new();
         let registry = write_registry(&directory.0, BTreeMap::new());
         let fzf = write_fzf(&directory.0, "exit 1");
 
         let project_client = FakeClient::default();
         assert_eq!(
-            project_pick_with_fzf(&registry, &directory.0, &project_client, &fzf).unwrap(),
+            project_pick_with_fzf(
+                &Config::test_default(),
+                &registry,
+                &directory.0,
+                &project_client,
+                &fzf
+            )
+            .unwrap(),
             Outcome::Cancelled
         );
         assert!(project_client.calls.into_inner().is_empty());

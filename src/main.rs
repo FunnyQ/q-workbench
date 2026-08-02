@@ -50,6 +50,10 @@ enum Command {
         #[command(subcommand)]
         command: HerdrCommand,
     },
+    Pane {
+        #[command(subcommand)]
+        command: PaneCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -150,6 +154,15 @@ enum HerdrCommand {
     Ping,
 }
 
+#[derive(Debug, Subcommand)]
+enum PaneCommand {
+    /// Even out the split ratios in the current pane's row or column.
+    Even {
+        #[arg(long)]
+        pane: Option<String>,
+    },
+}
+
 impl Cli {
     /// Classify parsed commands against the fixed parity-contract lists.
     /// Command identity, rather than error text, determines the reporting surface.
@@ -203,6 +216,9 @@ impl Cli {
             Command::Herdr {
                 command: HerdrCommand::Ping,
             } => Channel::Stderr { uses_herdr: true },
+            Command::Pane {
+                command: PaneCommand::Even { .. },
+            } => Channel::Notification("Even out panes failed"),
         }
     }
 
@@ -237,6 +253,9 @@ impl Cli {
             Command::Dashboard => "dashboard",
             Command::Config { .. } => "config migrate",
             Command::Herdr { .. } => "herdr ping",
+            Command::Pane { command } => match command {
+                PaneCommand::Even { .. } => "pane even",
+            },
         }
     }
 
@@ -449,6 +468,12 @@ impl Cli {
                     }
                 };
             }
+            Command::Pane { command } => match command {
+                PaneCommand::Even { pane } => {
+                    let client = client.context("Herdr client is required for pane even")?;
+                    return flows::layout::even_out(client, pane.as_deref());
+                }
+            },
         }
     }
 

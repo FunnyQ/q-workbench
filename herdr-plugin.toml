@@ -41,6 +41,12 @@ title = "Restart agent"
 contexts = ["workspace"]
 command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench", "--entrypoint", "restart-agent", "--placement", "popup", "--width", "72", "--height", "16"]
 
+[[actions]]
+id = "even-out-panes"
+title = "Even out panes"
+contexts = ["workspace"]
+command = ["./bin/workbench", "pane", "even"]
+
 [[panes]]
 id = "agent"
 title = "󱚟  new agent"

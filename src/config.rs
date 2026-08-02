@@ -7,38 +7,113 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 // Tests only: production code must reach a Config through `load`, which is the one
 // place the documented defaults live.
 #[cfg_attr(test, derive(Default))]
 pub struct Config {
     pub dashboard_workspace: String,
-    pub claude_extra_args: Vec<String>,
-    pub codex_extra_args: Vec<String>,
+    pub default_tab_layout: String,
     pub project_registry_file: String,
     pub projects_root: String,
     pub ssh_registry_file: String,
     pub ssh_config_file: String,
     pub ssh_history_file: String,
-    pub order: Vec<String>,
-    pub models: BTreeMap<String, String>,
-    pub model_args: BTreeMap<String, Vec<String>>,
+    pub tab_layouts: Vec<TabLayout>,
+    pub agents: Vec<Agent>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileConfig {
     dashboard_workspace: Option<String>,
-    claude_extra_args: Option<Vec<String>>,
-    codex_extra_args: Option<Vec<String>>,
+    default_tab_layout: Option<String>,
     project_registry_file: Option<String>,
     projects_root: Option<String>,
     ssh_registry_file: Option<String>,
     ssh_config_file: Option<String>,
     ssh_history_file: Option<String>,
-    order: Option<Vec<String>>,
-    models: Option<BTreeMap<String, String>>,
-    model_args: Option<BTreeMap<String, Vec<String>>>,
+    tab_layouts: Option<Vec<TabLayout>>,
+    agents: Option<Vec<Agent>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TabLayout {
+    pub name: String,
+    pub tab_label: Option<String>,
+    // Defaulted, not required: a layout with no pane tables must deserialize to an empty
+    // vec so validation can reject it by name, rather than serde reporting a generic
+    // missing-field error that never says which layout.
+    #[serde(default)]
+    pub panes: Vec<LayoutPane>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LayoutPane {
+    pub name: String,
+    pub label: Option<String>,
+    pub icon: Option<String>,
+    // Rename: type is a Rust keyword.
+    #[serde(rename = "type")]
+    pub pane_type: PaneType,
+    pub agent: Option<String>,
+    // Rename: Option is a standard-library type; reads ambiguously at every use site.
+    #[serde(rename = "option")]
+    pub option_name: Option<String>,
+    pub command: Option<String>,
+    pub direction: Option<Direction>,
+    pub ratio: Option<f64>,
+    pub split_from: Option<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneType {
+    Agent,
+    Command,
+    Shell,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Direction {
+    Right,
+    Down,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Agent {
+    pub name: String,
+    pub label: Option<String>,
+    pub icon: Option<String>,
+    pub command: Vec<String>,
+    #[serde(default)]
+    pub extra_args: Vec<String>,
+    #[serde(default)]
+    pub options: Vec<AgentOption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentOption {
+    pub name: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    pub command: Option<Vec<String>>,
+}
+
+/// Icon and label joined by exactly two spaces, matching every existing menu label.
+/// A missing icon renders the label alone, with no leading whitespace.
+pub fn render_label(icon: Option<&str>, label: &str) -> String {
+    match icon {
+        Some(icon) => format!("{icon}  {label}"),
+        None => label.to_owned(),
+    }
 }
 
 impl Config {
@@ -66,17 +141,15 @@ impl Config {
             }
         };
 
-        let order_from_file = file.order.is_some();
-        let models_from_file = file.models.is_some();
-        let model_args_from_file = file.model_args.is_some();
-        let mut config = Self {
+        let config = Self {
             dashboard_workspace: resolve_string(
                 file.dashboard_workspace,
                 "Q_DASHBOARD_WORKSPACE",
                 "personal-assistant",
             ),
-            claude_extra_args: resolve_args(file.claude_extra_args, "Q_CLAUDE_EXTRA_ARGS"),
-            codex_extra_args: resolve_args(file.codex_extra_args, "Q_CODEX_EXTRA_ARGS"),
+            default_tab_layout: file
+                .default_tab_layout
+                .unwrap_or_else(|| "agentic-coding".to_owned()),
             project_registry_file: expand_home(
                 resolve_string(
                     file.project_registry_file,
@@ -113,28 +186,31 @@ impl Config {
                 ),
                 &home,
             ),
-            order: file.order.unwrap_or_else(default_order),
-            models: file.models.unwrap_or_else(default_models),
-            model_args: file.model_args.unwrap_or_else(default_model_args),
+            tab_layouts: file.tab_layouts.unwrap_or_default(),
+            agents: file.agents.unwrap_or_default(),
         };
-
-        apply_model_environment(
-            &mut config,
-            order_from_file,
-            models_from_file,
-            model_args_from_file,
-        )?;
         config.validate()?;
         Ok(config)
     }
 
     fn validate(&self) -> Result<()> {
-        for label in &self.order {
-            if !self.models.contains_key(label) {
-                bail!("model order label has no model entry: {label}");
-            }
-        }
         Ok(())
+    }
+
+    pub fn layout(&self, name: &str) -> Option<&TabLayout> {
+        self.tab_layouts.iter().find(|layout| layout.name == name)
+    }
+
+    pub fn agent(&self, name: &str) -> Option<&Agent> {
+        self.agents.iter().find(|agent| agent.name == name)
+    }
+
+    /// Bridge to the pre-schema call sites: the one agent that carries a model menu.
+    ///
+    /// Temporary. The launch flow resolves its agent from the layout instead, and this
+    /// goes away with the last caller.
+    pub(crate) fn menu_agent(&self) -> Option<&Agent> {
+        self.agents.iter().find(|agent| !agent.options.is_empty())
     }
 }
 
@@ -160,14 +236,6 @@ fn resolve_string(file: Option<String>, environment: &str, default: &str) -> Str
         .unwrap_or_else(|| default.to_owned())
 }
 
-fn resolve_args(file: Option<Vec<String>>, environment: &str) -> Vec<String> {
-    file.unwrap_or_else(|| {
-        non_empty_env(environment)
-            .map(|value| value.split_whitespace().map(str::to_owned).collect())
-            .unwrap_or_default()
-    })
-}
-
 fn expand_home(value: String, home: &str) -> String {
     if value == "$HOME" {
         return home.to_owned();
@@ -176,69 +244,6 @@ fn expand_home(value: String, home: &str) -> String {
         return format!("{home}/{rest}");
     }
     value
-}
-
-fn default_order() -> Vec<String> {
-    ["Opus", "OpusPlan (Sonnet)", "CCR", "Fable 5"]
-        .map(str::to_owned)
-        .to_vec()
-}
-
-fn default_models() -> BTreeMap<String, String> {
-    [
-        ("Opus", "claude-opus-4-8"),
-        ("OpusPlan (Sonnet)", "opusplan"),
-        ("CCR", "CCR"),
-        ("Fable 5", "claude-fable-5"),
-    ]
-    .map(|(label, model)| (label.to_owned(), model.to_owned()))
-    .into()
-}
-
-fn default_model_args() -> BTreeMap<String, Vec<String>> {
-    [(
-        "OpusPlan (Sonnet)".to_owned(),
-        vec!["--effort".to_owned(), "medium".to_owned()],
-    )]
-    .into()
-}
-
-fn apply_model_environment(
-    config: &mut Config,
-    order_from_file: bool,
-    models_from_file: bool,
-    model_args_from_file: bool,
-) -> Result<()> {
-    if !order_from_file {
-        if let Some(value) = non_empty_env("Q_AGENT_MODEL_ORDER") {
-            config.order = parse_environment_toml("Q_AGENT_MODEL_ORDER", &value)?;
-        }
-    }
-    if !models_from_file {
-        if let Some(value) = non_empty_env("Q_AGENT_MODELS") {
-            config.models = parse_environment_toml("Q_AGENT_MODELS", &value)?;
-        }
-    }
-    if !model_args_from_file {
-        if let Some(value) = non_empty_env("Q_AGENT_MODEL_ARGS") {
-            config.model_args = parse_environment_toml("Q_AGENT_MODEL_ARGS", &value)?;
-        }
-    }
-    Ok(())
-}
-
-fn parse_environment_toml<T>(name: &str, value: &str) -> Result<T>
-where
-    T: for<'de> Deserialize<'de>,
-{
-    #[derive(Deserialize)]
-    struct Wrapper<T> {
-        value: T,
-    }
-
-    toml::from_str::<Wrapper<T>>(&format!("value = {value}"))
-        .map(|wrapper| wrapper.value)
-        .with_context(|| format!("{name} must contain a TOML value"))
 }
 
 #[cfg(test)]
@@ -276,16 +281,11 @@ mod tests {
                 "XDG_CONFIG_HOME",
                 "Q_WORKBENCH_LOCAL_CONFIG",
                 "Q_DASHBOARD_WORKSPACE",
-                "Q_CLAUDE_EXTRA_ARGS",
-                "Q_CODEX_EXTRA_ARGS",
                 "Q_PROJECT_REGISTRY_FILE",
                 "Q_PROJECTS_ROOT",
                 "Q_SSH_REGISTRY_FILE",
                 "Q_SSH_CONFIG_FILE",
                 "Q_SSH_HISTORY_FILE",
-                "Q_AGENT_MODEL_ORDER",
-                "Q_AGENT_MODELS",
-                "Q_AGENT_MODEL_ARGS",
             ];
             let saved = names
                 .into_iter()
@@ -328,7 +328,7 @@ mod tests {
     fn a_zsh_override_names_the_real_problem_instead_of_failing_to_parse_toml() {
         let environment = TestEnvironment::new();
         let legacy = environment.directory.join("config.zsh");
-        fs::write(&legacy, "typeset -gA Q_AGENT_MODELS\n").expect("write legacy config");
+        fs::write(&legacy, "typeset -gA LEGACY_CONFIG\n").expect("write legacy config");
         env::set_var("Q_WORKBENCH_LOCAL_CONFIG", &legacy);
 
         let error = format!("{:#}", Config::load().expect_err("reject a zsh config"));
@@ -345,8 +345,7 @@ mod tests {
         let config = Config::load().expect("load defaults");
 
         assert_eq!(config.dashboard_workspace, "personal-assistant");
-        assert!(config.claude_extra_args.is_empty());
-        assert!(config.codex_extra_args.is_empty());
+        assert_eq!(config.default_tab_layout, "agentic-coding");
         assert_eq!(
             config.project_registry_file,
             format!("{home}/.local/state/herdr-projects/registry.json")
@@ -358,42 +357,33 @@ mod tests {
         );
         assert_eq!(config.ssh_config_file, format!("{home}/.config/ssh/config"));
         assert_eq!(config.ssh_history_file, format!("{home}/.zsh_history"));
-        assert_eq!(config.order, default_order());
-        assert_eq!(config.models, default_models());
-        assert_eq!(config.model_args, default_model_args());
+        assert!(config.tab_layouts.is_empty());
+        assert!(config.agents.is_empty());
     }
 
     #[test]
-    fn environment_overrides_built_in_defaults_and_splits_extra_args() {
+    fn environment_overrides_built_in_defaults() {
         let _environment = TestEnvironment::new();
         env::set_var("Q_DASHBOARD_WORKSPACE", "from-environment");
-        env::set_var("Q_CODEX_EXTRA_ARGS", "--search --profile work");
 
         let config = Config::load().expect("load environment");
 
         assert_eq!(config.dashboard_workspace, "from-environment");
-        assert_eq!(
-            config.codex_extra_args,
-            ["--search", "--profile", "work"].map(str::to_owned)
-        );
     }
 
     #[test]
     fn file_overrides_environment_including_with_empty_values() {
         let environment = TestEnvironment::new();
         env::set_var("Q_DASHBOARD_WORKSPACE", "from-environment");
-        env::set_var("Q_CODEX_EXTRA_ARGS", "--from-environment");
         environment.write(
             r#"
 dashboard_workspace = "from-file"
-codex_extra_args = []
 "#,
         );
 
         let config = Config::load().expect("load file");
 
         assert_eq!(config.dashboard_workspace, "from-file");
-        assert!(config.codex_extra_args.is_empty());
     }
 
     #[test]
@@ -424,40 +414,88 @@ codex_extra_args = []
     }
 
     #[test]
-    fn file_extra_args_preserve_spaces_inside_one_argument() {
-        let environment = TestEnvironment::new();
-        environment.write(r#"claude_extra_args = ["--prompt", "two words"]"#);
+    fn the_example_config_parses_with_no_unknown_fields() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config.example.toml");
+        let contents = fs::read_to_string(&path).expect("read config.example.toml");
+        let file: FileConfig = toml::from_str(&contents).expect("parse config.example.toml");
 
-        let config = Config::load().expect("load file arguments");
+        let layouts = file.tab_layouts.expect("example defines tab_layouts");
+        assert_eq!(layouts.len(), 2);
+        assert_eq!(layouts[0].name, "agentic-coding");
+        assert_eq!(layouts[0].panes.len(), 3);
+        assert_eq!(layouts[0].panes[0].pane_type, PaneType::Agent);
+        assert!(layouts[0].tab_label.is_none());
+        assert_eq!(layouts[1].tab_label.as_deref(), Some("Personal Assistant"));
 
+        let agents = file.agents.expect("example defines agents");
+        assert_eq!(agents.len(), 3);
+        assert_eq!(agents[0].name, "claude code");
+        assert_eq!(agents[0].options.len(), 4);
+        assert_eq!(agents[0].options[2].name, "CCR");
         assert_eq!(
-            config.claude_extra_args,
-            ["--prompt", "two words"].map(str::to_owned)
+            agents[0].options[2].command.as_deref(),
+            Some(["ccr".to_owned(), "code".to_owned()].as_slice())
         );
     }
 
     #[test]
-    fn extra_args_never_gain_implicit_bypass_flags() {
-        let _environment = TestEnvironment::new();
-
-        let config = Config::load().expect("load defaults");
-
-        assert!(config.claude_extra_args.is_empty());
-        assert!(config.codex_extra_args.is_empty());
-    }
-
-    #[test]
-    fn model_order_label_without_model_is_a_named_error() {
-        let environment = TestEnvironment::new();
-        environment.write(
+    fn a_mistyped_pane_field_is_a_named_error() {
+        let error = toml::from_str::<FileConfig>(
             r#"
-order = ["Missing"]
-models = {}
+[[tab_layouts]]
+name = "x"
+  [[tab_layouts.panes]]
+  name = "agent"
+  type = "agent"
+  direciton = "right"
 "#,
-        );
+        )
+        .expect_err("reject an unknown pane field");
 
-        let error = Config::load().expect_err("reject invalid model order");
+        assert!(error.to_string().contains("direciton"), "{error}");
+    }
 
-        assert!(error.to_string().contains("Missing"));
+    #[test]
+    fn render_label_with_icon_uses_two_spaces() {
+        let result = render_label(Some("\u{f15ce}"), "claude code");
+        assert_eq!(result, "\u{f15ce}  claude code");
+    }
+
+    #[test]
+    fn render_label_without_icon_returns_label_only() {
+        let result = render_label(None, "term");
+        assert_eq!(result, "term");
+    }
+
+    #[test]
+    fn config_layout_returns_none_for_unknown_name() {
+        let config = Config {
+            dashboard_workspace: "default".to_owned(),
+            default_tab_layout: "agentic-coding".to_owned(),
+            project_registry_file: "projects.json".to_owned(),
+            projects_root: "/home/user/projects".to_owned(),
+            ssh_registry_file: "ssh.json".to_owned(),
+            ssh_config_file: "~/.ssh/config".to_owned(),
+            ssh_history_file: "~/.ssh/history".to_owned(),
+            tab_layouts: vec![],
+            agents: vec![],
+        };
+        assert_eq!(config.layout("nonexistent"), None);
+    }
+
+    #[test]
+    fn config_agent_returns_none_for_unknown_name() {
+        let config = Config {
+            dashboard_workspace: "default".to_owned(),
+            default_tab_layout: "agentic-coding".to_owned(),
+            project_registry_file: "projects.json".to_owned(),
+            projects_root: "/home/user/projects".to_owned(),
+            ssh_registry_file: "ssh.json".to_owned(),
+            ssh_config_file: "~/.ssh/config".to_owned(),
+            ssh_history_file: "~/.ssh/history".to_owned(),
+            tab_layouts: vec![],
+            agents: vec![],
+        };
+        assert_eq!(config.agent("nonexistent"), None);
     }
 }

@@ -69,8 +69,11 @@ pub fn read_state() -> LastAgentState {
 /// Both the state reader and the harness menu ask this question, so it lives once.
 pub fn last_choice_is_valid(harness: &str, model: Option<&str>, config: &Config) -> bool {
     match harness {
-        HARNESS_CLAUDE => model
-            .is_some_and(|model| config.order.iter().any(|l| l == model) && config.models.contains_key(model)),
+        HARNESS_CLAUDE => model.is_some_and(|model| {
+            config
+                .menu_agent()
+                .is_some_and(|agent| agent.options.iter().any(|o| o.name == model))
+        }),
         HARNESS_CODEX | HARNESS_OPENCODE => model.is_none(),
         _ => false,
     }

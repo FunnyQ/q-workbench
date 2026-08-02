@@ -10,7 +10,7 @@
 
 # -- Paths and pointers -------------------------------------------------------
 
-# Workspace the dashboard tab opens in. Names a [[workspaces]] entry.
+# Herdr workspace label the dashboard tab opens in, matched against Herdr's workspace list.
 dashboard_workspace = "personal-assistant"
 
 # Layout used by a launch that does not come from a listed workspace: the project
@@ -31,23 +31,6 @@ ssh_config_file = "$HOME/.config/ssh/config"
 
 # Shell history used to seed SSH targets.
 ssh_history_file = "$HOME/.zsh_history"
-
-
-# -- Workspaces ---------------------------------------------------------------
-#
-#   name    Stable id. Referenced by dashboard_workspace.
-#   label   Display text.
-#   layout  Tab layout opened here. Names a [[tab_layouts]] entry.
-
-[[workspaces]]
-name = "personal-assistant"
-label = "Personal Assistant"
-layout = "personal-assistant"
-
-[[workspaces]]
-name = "project"
-label = "Project"
-layout = "agentic-coding"
 
 
 # -- Tab layouts --------------------------------------------------------------

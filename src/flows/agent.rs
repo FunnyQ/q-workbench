@@ -6,10 +6,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Map, Value};
 
 use crate::config::Config;
+#[cfg(test)]
+use crate::config::{Agent, AgentOption};
 use crate::flows::{invoking_pane_cwd, nonempty_env, FlowError, FlowResult, Outcome, PaneCwd};
 use crate::herdr::HerdrClient;
 use crate::shell::build_command;
@@ -543,8 +545,11 @@ fn choose_agent_with_last(
     let model_label = if selected_last {
         stored_model
     } else if harness.contains("claude code") {
-        let Some(model_label) = menu.choose(MODEL_TITLE, "Choose a model.", &config.order, 6)?
-        else {
+        let options: Vec<String> = config
+            .menu_agent()
+            .map(|agent| agent.options.iter().map(|o| o.name.clone()).collect())
+            .unwrap_or_default();
+        let Some(model_label) = menu.choose(MODEL_TITLE, "Choose a model.", &options, 6)? else {
             return Ok(None);
         };
         let model_label = strip_pad(&model_label);
@@ -615,31 +620,43 @@ fn select_usage(menu: &mut impl Menu) -> Result<Option<String>> {
 
 fn build_launch(config: &Config, harness: &str, model_label: Option<&str>) -> Result<Vec<String>> {
     if harness.contains("codex") {
-        let mut launch = vec!["codex".to_owned()];
-        launch.extend(config.codex_extra_args.clone());
+        let agent = config
+            .agents
+            .iter()
+            .find(|agent| harness.contains(&agent.name))
+            .context("codex harness has no agent entry")?;
+        let mut launch = agent.command.clone();
+        launch.extend(agent.extra_args.clone());
         return Ok(launch);
     }
     if harness.contains("opencode") {
-        return Ok(vec!["opencode".to_owned()]);
+        let agent = config
+            .agents
+            .iter()
+            .find(|agent| harness.contains(&agent.name))
+            .context("opencode harness has no agent entry")?;
+        let mut launch = agent.command.clone();
+        launch.extend(agent.extra_args.clone());
+        return Ok(launch);
     }
 
     let label = model_label.context("claude harness requires a model label")?;
-    let model = config
-        .models
-        .get(label)
-        .with_context(|| format!("model label has no model entry: {label}"))?;
-    // CCR is not a model: it dispatches to its own binary, with no model flag and none
-    // of the claude extra args.
-    if model == "CCR" {
-        return Ok(vec!["ccr".to_owned(), "code".to_owned()]);
+    if let Some(agent) = config.menu_agent() {
+        if let Some(option) = agent.options.iter().find(|o| o.name == label) {
+            if let Some(command) = &option.command {
+                return Ok(command.clone());
+            }
+            let mut launch = {
+                let mut cmd = agent.command.clone();
+                cmd.extend(option.args.clone());
+                cmd
+            };
+            launch.extend(agent.extra_args.clone());
+            return Ok(launch);
+        }
     }
 
-    let mut launch = vec!["claude".to_owned(), "--model".to_owned(), model.clone()];
-    if let Some(args) = config.model_args.get(label) {
-        launch.extend(args.clone());
-    }
-    launch.extend(config.claude_extra_args.clone());
-    Ok(launch)
+    bail!("model label has no agent option entry: {label}")
 }
 
 fn select_worktree(
@@ -1425,18 +1442,18 @@ mod popup {
     #[test]
     fn popup_extra_args_preserve_toml_array_boundaries_and_bypass_is_opt_in() {
         let mut config = config();
-        config.codex_extra_args = Vec::new();
+        config.agents[1].extra_args = Vec::new();
         assert_eq!(
             build_launch(&config, HARNESS_CODEX, None).unwrap(),
             ["codex"]
         );
-        config.codex_extra_args = vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()];
+        config.agents[1].extra_args = vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()];
         assert_eq!(build_launch(&config, HARNESS_CODEX, None).unwrap().len(), 2);
-        config.codex_extra_args = ["--search", "--profile", "work"]
+        config.agents[1].extra_args = ["--search", "--profile", "work"]
             .map(str::to_owned)
             .to_vec();
         assert_eq!(build_launch(&config, HARNESS_CODEX, None).unwrap().len(), 4);
-        config.codex_extra_args = vec!["--profile work".to_owned()];
+        config.agents[1].extra_args = vec!["--profile work".to_owned()];
         assert_eq!(
             build_launch(&config, HARNESS_CODEX, None).unwrap(),
             ["codex", "--profile work"]
@@ -1446,29 +1463,62 @@ mod popup {
     fn config() -> Config {
         Config {
             dashboard_workspace: String::new(),
-            claude_extra_args: vec!["argument with space".to_owned()],
-            codex_extra_args: vec!["--search".to_owned()],
+            default_tab_layout: String::new(),
             project_registry_file: String::new(),
             projects_root: String::new(),
             ssh_registry_file: String::new(),
             ssh_config_file: String::new(),
             ssh_history_file: String::new(),
-            order: ["Opus", "OpusPlan (Sonnet)", "CCR", "Fable 5"]
-                .map(str::to_owned)
-                .to_vec(),
-            models: [
-                ("Opus", "claude-opus-4-8"),
-                ("OpusPlan (Sonnet)", "opusplan"),
-                ("CCR", "CCR"),
-                ("Fable 5", "claude-fable-5"),
-            ]
-            .map(|(key, value)| (key.to_owned(), value.to_owned()))
-            .into(),
-            model_args: [(
-                "OpusPlan (Sonnet)".to_owned(),
-                vec!["--effort".to_owned(), "medium".to_owned()],
-            )]
-            .into(),
+            tab_layouts: Vec::new(),
+            agents: vec![
+                Agent {
+                    name: "claude code".to_owned(),
+                    label: None,
+                    icon: None,
+                    command: vec!["claude".to_owned()],
+                    extra_args: vec!["argument with space".to_owned()],
+                    options: vec![
+                        AgentOption {
+                            name: "Opus".to_owned(),
+                            args: ["--model", "claude-opus-4-8"].map(str::to_owned).to_vec(),
+                            command: None,
+                        },
+                        AgentOption {
+                            name: "OpusPlan (Sonnet)".to_owned(),
+                            args: ["--model", "opusplan", "--effort", "medium"]
+                                .map(str::to_owned)
+                                .to_vec(),
+                            command: None,
+                        },
+                        AgentOption {
+                            name: "CCR".to_owned(),
+                            args: Vec::new(),
+                            command: Some(["ccr", "code"].map(str::to_owned).to_vec()),
+                        },
+                        AgentOption {
+                            name: "Fable 5".to_owned(),
+                            args: ["--model", "claude-fable-5"].map(str::to_owned).to_vec(),
+                            command: None,
+                        },
+                    ],
+                },
+                Agent {
+                    name: "codex".to_owned(),
+                    label: None,
+                    icon: None,
+                    command: vec!["codex".to_owned()],
+                    extra_args: vec!["--search".to_owned()],
+                    options: Vec::new(),
+                },
+                Agent {
+                    name: "opencode".to_owned(),
+                    label: None,
+                    icon: None,
+                    command: vec!["opencode".to_owned()],
+                    extra_args: Vec::new(),
+                    options: Vec::new(),
+                },
+            ],
         }
     }
 
@@ -1673,7 +1723,7 @@ mod popup {
             build_launch(&config, HARNESS_OPENCODE, None).unwrap(),
             ["opencode"]
         );
-        // CCR takes neither a model flag nor the claude extra args.
+        // A command override replaces the agent command, option args, and extra args.
         assert_eq!(
             build_launch(&config, HARNESS_CLAUDE, Some("CCR")).unwrap(),
             ["ccr", "code"]
@@ -1707,12 +1757,12 @@ mod popup {
     #[test]
     fn an_extra_argument_containing_a_space_stays_one_entry() {
         let mut config = config();
-        config.claude_extra_args = vec![
+        config.agents[0].extra_args = vec![
             "--add-dir".to_owned(),
             "/Users/q/My Projects".to_owned(),
             "--dangerously-skip-permissions".to_owned(),
         ];
-        config.codex_extra_args = vec!["--cd".to_owned(), "/Users/q/My Projects".to_owned()];
+        config.agents[1].extra_args = vec!["--cd".to_owned(), "/Users/q/My Projects".to_owned()];
 
         let claude = build_launch(&config, HARNESS_CLAUDE, Some("Opus")).unwrap();
         assert_eq!(
@@ -1733,8 +1783,8 @@ mod popup {
     #[test]
     fn bypass_flags_are_absent_unless_configured() {
         let mut config = config();
-        config.claude_extra_args = Vec::new();
-        config.codex_extra_args = Vec::new();
+        config.agents[0].extra_args = Vec::new();
+        config.agents[1].extra_args = Vec::new();
         assert_eq!(
             build_launch(&config, HARNESS_CLAUDE, Some("Opus")).unwrap(),
             ["claude", "--model", "claude-opus-4-8"]
@@ -1744,8 +1794,8 @@ mod popup {
             ["codex"]
         );
 
-        config.claude_extra_args = vec!["--dangerously-skip-permissions".to_owned()];
-        config.codex_extra_args = vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()];
+        config.agents[0].extra_args = vec!["--dangerously-skip-permissions".to_owned()];
+        config.agents[1].extra_args = vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()];
         assert_eq!(
             build_launch(&config, HARNESS_CLAUDE, Some("Opus")).unwrap(),
             [

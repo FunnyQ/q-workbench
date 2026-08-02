@@ -6,7 +6,7 @@
 >
 > **Depends on**: config/01
 > **Blocks**: config/03
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -291,25 +291,25 @@ name = "x"
 
 ## Acceptance criteria
 
-- [ ] `TabLayout`, `LayoutPane`, `PaneType`, `Direction`, `Agent`, and `AgentOption` exist with the TOML field names the example file uses.
-- [ ] `deny_unknown_fields` is present on `FileConfig`, `TabLayout`, `LayoutPane`, `Agent`, and `AgentOption`.
-- [ ] `order`, `models`, `model_args`, `claude_extra_args`, and `codex_extra_args` no longer appear in `src/config.rs`.
-- [ ] `apply_model_environment`, `parse_environment_toml`, and the five environment variable names are gone, including from the test harness's clearing list.
-- [ ] `render_label(Some("\u{f15ce}"), "claude code")` returns `"\u{f15ce}  claude code"`, and `render_label(None, "term")` returns `"term"`.
-- [ ] `Config::layout()` and `Config::agent()` resolve by name and return `None` for an unknown name.
-- [ ] `config.example.toml` has no `[[workspaces]]` section, still has `dashboard_workspace`, and its icons are byte-identical to before the edit.
-- [ ] The example file parses through `FileConfig` with the assertions above passing.
+- [x] `TabLayout`, `LayoutPane`, `PaneType`, `Direction`, `Agent`, and `AgentOption` exist with the TOML field names the example file uses.
+- [x] `deny_unknown_fields` is present on `FileConfig`, `TabLayout`, `LayoutPane`, `Agent`, and `AgentOption`.
+- [x] `order`, `models`, `model_args`, `claude_extra_args`, and `codex_extra_args` no longer appear in `src/config.rs`.
+- [x] `apply_model_environment`, `parse_environment_toml`, and the five environment variable names are gone, including from the test harness's clearing list.
+- [x] `render_label(Some("\u{f15ce}"), "claude code")` returns `"\u{f15ce}  claude code"`, and `render_label(None, "term")` returns `"term"`.
+- [x] `Config::layout()` and `Config::agent()` resolve by name and return `None` for an unknown name.
+- [x] `config.example.toml` has no `[[workspaces]]` section, still has `dashboard_workspace`, and its icons are byte-identical to before the edit.
+- [x] The example file parses through `FileConfig` with the assertions above passing.
 
 ## Verification
 
-- [ ] `cargo test` passes.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] `cargo test config::tests::the_example_config_parses_with_no_unknown_fields` passes — this is the gate.
-- [ ] `rg 'Q_AGENT_MODEL|Q_CLAUDE_EXTRA_ARGS|Q_CODEX_EXTRA_ARGS' src/` returns no matches.
-- [ ] `rg 'workspaces' config.example.toml` returns no matches.
-- [ ] Run `git status --short` and quote it. Expect `src/config.rs`, `config.example.toml`, `src/flows/agent.rs`, and `src/state.rs`, plus at most this task file. Any OTHER path is a real scope violation.
-- [ ] Run `git diff src/flows/agent.rs src/state.rs` and confirm every hunk belongs to one of the three bridge sites named above: the model menu's option list, the `build_launch` body, and the claude arm of `last_choice_is_valid`.
-- [ ] Confirm the icons survived: `python3 -c "import sys;[print(hex(ord(c)),end=' ') for c in open('config.example.toml').read() if ord(c)>0xE000]"` prints the same codepoints as `git show HEAD:config.example.toml` piped through the same check, allowing for the removed section.
+- [x] `cargo test` passes.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] `cargo test config::tests::the_example_config_parses_with_no_unknown_fields` passes — this is the gate.
+- [x] `rg 'Q_AGENT_MODEL|Q_CLAUDE_EXTRA_ARGS|Q_CODEX_EXTRA_ARGS' src/` returns no matches.
+- [x] `rg 'workspaces' config.example.toml` returns no matches.
+- [x] Run `git status --short` and quote it. Expect `src/config.rs`, `config.example.toml`, `src/flows/agent.rs`, and `src/state.rs`, plus at most this task file. Any OTHER path is a real scope violation.
+- [x] Run `git diff src/flows/agent.rs src/state.rs` and confirm every hunk belongs to one of the three bridge sites named above: the model menu's option list, the `build_launch` body, and the claude arm of `last_choice_is_valid`.
+- [x] Confirm the icons survived: `python3 -c "import sys;[print(hex(ord(c)),end=' ') for c in open('config.example.toml').read() if ord(c)>0xE000]"` prints the same codepoints as `git show HEAD:config.example.toml` piped through the same check, allowing for the removed section.
 
 ## Eval rubric
 

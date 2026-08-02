@@ -10,7 +10,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Map, Value};
 
 use crate::config::Config;
-use crate::flows::{invoking_pane_cwd, FlowError, FlowResult, Outcome, PaneCwd};
+use crate::flows::{invoking_pane_cwd, nonempty_env, FlowError, FlowResult, Outcome, PaneCwd};
 use crate::herdr::HerdrClient;
 use crate::shell::build_command;
 use crate::state::{self, HARNESS_CLAUDE, HARNESS_CODEX, HARNESS_OPENCODE};
@@ -277,10 +277,6 @@ fn adopt_invoking_pane_cwd(client: &dyn HerdrClient) -> Result<()> {
             .with_context(|| format!("failed to adopt invoking pane cwd {}", cwd.display()))?;
     }
     Ok(())
-}
-
-fn nonempty_env(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
 fn popup_viewport() -> (u16, u16) {

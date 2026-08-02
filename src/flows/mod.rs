@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod dashboard;
+pub mod layout;
 pub mod picker;
 pub mod restart;
 pub mod ssh;
@@ -11,6 +12,10 @@ use std::path::PathBuf;
 use serde_json::json;
 
 use crate::herdr::HerdrClient;
+
+pub fn nonempty_env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
+}
 
 /// Ask the terminal itself how large it is.
 ///

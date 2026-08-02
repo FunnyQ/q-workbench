@@ -1,9 +1,9 @@
 {
   "mode": "whole-repo",
+  "workflow": "github-flow",
   "tag": "v{version}",
   "changelog": "CHANGELOG.md",
   "branches": {
-    "develop": "main",
     "main": "main"
   },
   "versionFiles": [

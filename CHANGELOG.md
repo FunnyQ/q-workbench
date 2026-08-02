@@ -5,6 +5,38 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-03
+
+_tracks tag `v0.5.0`_
+
+### Added
+- New `[[tab_layouts]]` and `[[agents]]` TOML sections replace the plugin's
+  configuration surface. A layout describes a tab's panes declaratively and the
+  launcher builds them, instead of five hardcoded Herdr socket calls. Adding or
+  reordering harnesses and model options no longer requires a recompile.
+- Omitting a choice in a layout still prompts for it at launch, so a layout that
+  pins nothing reproduces the original popup menus, while a fully-pinned layout
+  opens straight into the agent with no menus at all.
+- New `--layout <name>` flag reaches non-default layouts from both the CLI and
+  `herdr-plugin.toml` action bindings.
+- Agent state moves to v2 (`STATE_VERSION 2`), keyed on stable config ids instead
+  of rendered menu labels. Restarting a fully-pinned tab now asks nothing, and an
+  older v1 state record is discarded rather than misread against the new schema.
+- Every configuration error is now caught by `Config::load()` before the first
+  socket call, with 25 distinct rejection branches each covered by its own test.
+
+### Changed
+- The CCR harness's special-cased launch behavior is now an ordinary agent option
+  with a command override, removing a hardcoded branch from the launch path.
+
+### Removed
+- **BREAKING:** The five flat config fields — `order`, `models`, `model_args`,
+  `claude_extra_args`, `codex_extra_args` — are gone, replaced by the
+  `[[tab_layouts]]` and `[[agents]]` sections. There is no automatic migration;
+  `config.example.toml` is the executable specification for the new schema.
+- Removed `workbench config migrate` and the zsh-config migration surface it
+  supported. Existing configs must be rewritten by hand against the new schema.
+
 ## [Unreleased]
 
 ### Changed

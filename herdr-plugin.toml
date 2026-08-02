@@ -1,6 +1,6 @@
 id = "q.workbench"
 name = "Q Workbench"
-version = "0.3.0"
+version = "0.5.0"
 min_herdr_version = "0.7.4"
 description = "Q's Herdr workspace actions and launchers"
 platforms = ["macos"]

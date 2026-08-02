@@ -140,6 +140,12 @@ pub struct PaneLayoutResponse {
     pub fields: HashMap<String, Value>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LayoutExportResponse {
+    #[serde(flatten)]
+    pub fields: HashMap<String, Value>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ProcessInfo {
     #[serde(default)]

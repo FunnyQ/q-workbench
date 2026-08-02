@@ -13,9 +13,9 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use self::types::{
-    ErrorResponse, OkResponse, PaneLayoutResponse, PaneListResponse, PaneNeighborResponse,
-    PaneProcessInfoResponse, PaneResponse, PingResponse, Request, SessionSnapshotResponse,
-    TabCreateResponse, WorkspaceCreateResponse, WorkspaceListResponse,
+    ErrorResponse, LayoutExportResponse, OkResponse, PaneLayoutResponse, PaneListResponse,
+    PaneNeighborResponse, PaneProcessInfoResponse, PaneResponse, PingResponse, Request,
+    SessionSnapshotResponse, TabCreateResponse, WorkspaceCreateResponse, WorkspaceListResponse,
 };
 
 pub const EXPECTED_PROTOCOL: u64 = 17;
@@ -91,6 +91,17 @@ pub trait HerdrClient {
 
     fn pane_layout(&self, params: Value) -> Result<PaneLayoutResponse> {
         decode(self.call("pane.layout", params), "pane.layout")
+    }
+
+    fn layout_export(&self, params: Value) -> Result<LayoutExportResponse> {
+        decode(self.call("layout.export", params), "layout.export")
+    }
+
+    fn layout_set_split_ratio(&self, params: Value) -> Result<OkResponse> {
+        decode(
+            self.call("layout.set_split_ratio", params),
+            "layout.set_split_ratio",
+        )
     }
 
     fn pane_process_info(&self, params: Value) -> Result<PaneProcessInfoResponse> {

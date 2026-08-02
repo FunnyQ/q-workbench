@@ -11,17 +11,18 @@ use serde_json::{json, Map, Value};
 
 use crate::config::{render_label, Config, PaneType, TabLayout};
 #[cfg(test)]
-use crate::config::{Agent, AgentOption};
+use crate::config::{Agent, AgentOption, LayoutPane};
 use crate::flows::{invoking_pane_cwd, nonempty_env, FlowError, FlowResult, Outcome, PaneCwd};
 use crate::herdr::HerdrClient;
 use crate::shell::build_command;
-use crate::state::{self, HARNESS_CLAUDE, HARNESS_CODEX, HARNESS_OPENCODE};
+use crate::state;
+#[cfg(test)]
+use crate::state::{HARNESS_CLAUDE, HARNESS_CODEX, HARNESS_OPENCODE};
 
 const HARNESS_TITLE: &str = "\u{f169f}  Launch Agent";
 const USE_LAST_PREFIX: &str = "\u{f0709}  use last: ";
 // Two spaces after the glyph. `scripts/agent-launcher.zsh:183` used one; the unified
 // flow follows the popup and the parity contract (GLY-2).
-const MODEL_TITLE: &str = "\u{f09d1}  claude code";
 const USAGE_TITLE: &str = "\u{f27b}  Usage";
 const USAGE_DISCUSS: &str = "\u{f442}  discuss";
 const USAGE_REVIEW: &str = "\u{f4af}  review";
@@ -66,8 +67,12 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
             std::env::current_dir().context("failed to read the current directory")
         })?;
     let (cols, lines) = pane_viewport(client, &options.pane_id);
+    let layout = config
+        .layout(&config.default_tab_layout)
+        .expect("validated at load");
     let Some(mut choice) = choose_agent(
         config,
+        layout,
         &cwd,
         options.worktree,
         options.usage.as_deref(),
@@ -88,9 +93,6 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
             None => choice = without_worktree(choice, &repo_root),
         }
     }
-    let layout = config
-        .layout(&config.default_tab_layout)
-        .expect("validated at load");
     apply_launch_layout(client, layout, options, &choice)?;
     std::env::set_current_dir(&choice.project_dir)
         .with_context(|| format!("failed to enter {}", choice.project_dir.display()))?;
@@ -98,11 +100,16 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
         .status()
         .context("failed to clear the terminal before launching the agent")?;
 
+    let agent = config.agent(&choice.agent_name).expect("validated at load");
+    let harness = render_label(
+        agent.icon.as_deref(),
+        agent.label.as_deref().unwrap_or(&agent.name),
+    );
     let _ = state::write_state(
         client,
         &options.pane_id,
-        &choice.harness,
-        choice.model_label.as_deref(),
+        &harness,
+        choice.option_name.as_deref(),
     );
 
     // A child wrapper breaks restart-in-place. exec only returns when execvp fails.
@@ -191,8 +198,9 @@ fn build_side_panes(
             crate::config::Direction::Right => "right",
             crate::config::Direction::Down => "down",
         };
-        // Config ratios are each pane's own share; Herdr expects the original pane's
-        // share. For example, the defaults convert 0.62 to 0.38 and 0.1 to 0.9.
+        // Config ratios are self-describing as each new pane's share, while Herdr's
+        // ratio is the original pane's share after the split. For example, `files`
+        // uses 0.62 so Files takes 62%, the agent keeps 38%, and Herdr receives 38%.
         let ratio = 1.0 - pane.ratio.expect("validated at load");
         let mut params = Map::from_iter([
             ("target_pane_id".to_owned(), json!(target_pane_id)),
@@ -267,7 +275,11 @@ pub fn popup(client: &dyn HerdrClient, worktree: bool) -> FlowResult {
     let cwd = std::env::current_dir().context("failed to read popup working directory")?;
     let config = Config::load().context("failed to load config")?;
     let (cols, lines) = popup_viewport();
-    let Some(mut choice) = choose_agent(&config, &cwd, worktree, None, cols, lines, None)? else {
+    let layout = config
+        .layout(&config.default_tab_layout)
+        .expect("validated at load");
+    let Some(mut choice) = choose_agent(&config, layout, &cwd, worktree, None, cols, lines, None)?
+    else {
         return Ok(Outcome::Cancelled);
     };
 
@@ -278,10 +290,13 @@ pub fn popup(client: &dyn HerdrClient, worktree: bool) -> FlowResult {
         }
     }
 
-    let layout = config
-        .layout(&config.default_tab_layout)
-        .expect("validated at load");
-    create_popup_tab(client, layout, &choice, nonempty_env("HERDR_WORKSPACE_ID"))?;
+    create_popup_tab(
+        client,
+        &config,
+        layout,
+        &choice,
+        nonempty_env("HERDR_WORKSPACE_ID"),
+    )?;
     Ok(Outcome::Done)
 }
 
@@ -331,6 +346,7 @@ fn viewport_dimension(variable: &str, tput_capability: &str) -> u16 {
 
 fn create_popup_tab(
     client: &dyn HerdrClient,
+    config: &Config,
     layout: &TabLayout,
     choice: &AgentChoice,
     workspace_id: Option<String>,
@@ -355,7 +371,7 @@ fn create_popup_tab(
     let result = if tab_id.is_empty() || agent_pane.is_empty() {
         Err(anyhow!("tab.create returned an empty tab or pane id"))
     } else {
-        build_popup_tab(client, layout, choice, &tab_id, &agent_pane)
+        build_popup_tab(client, config, layout, choice, &tab_id, &agent_pane)
     };
     if let Err(error) = result {
         if !tab_id.is_empty() {
@@ -373,6 +389,7 @@ fn create_popup_tab(
 
 fn build_popup_tab(
     client: &dyn HerdrClient,
+    config: &Config,
     layout: &TabLayout,
     choice: &AgentChoice,
     tab_id: &str,
@@ -396,12 +413,12 @@ fn build_popup_tab(
     client
         .tab_focus(json!({ "tab_id": tab_id }))
         .context("failed to focus agent tab")?;
-    let _ = state::write_state(
-        client,
-        agent_pane,
-        &choice.harness,
-        choice.model_label.as_deref(),
+    let agent = config.agent(&choice.agent_name).expect("validated at load");
+    let harness = render_label(
+        agent.icon.as_deref(),
+        agent.label.as_deref().unwrap_or(&agent.name),
     );
+    let _ = state::write_state(client, agent_pane, &harness, choice.option_name.as_deref());
     Ok(())
 }
 
@@ -419,14 +436,10 @@ pub struct AgentChoice {
     pub branch: Option<String>,
     /// argv, ready for `exec` or for a pane command.
     pub launch: Vec<String>,
-    /// The pad-stripped harness menu label, not a resolved binary name.
-    pub harness: String,
-    /// The pad-stripped model menu label; `None` for codex and opencode.
-    ///
-    /// The menu label is stored rather than the resolved model value: the label is what
-    /// resolves through the config maps, so a renamed menu entry must not silently keep
-    /// pointing at an old model.
-    pub model_label: Option<String>,
+    /// The [[agents]] entry's `name`, not its rendered label.
+    pub agent_name: String,
+    /// The chosen [[agents.options]] entry's `name`; None for an agent with no options.
+    pub option_name: Option<String>,
 }
 
 /// Run every menu and return one decision.
@@ -437,8 +450,10 @@ pub struct AgentChoice {
 /// orphaned worktree directory and branch behind — deviation 6 in the parity contract.
 /// Creating the chosen worktree is the caller's job, through [`realise_worktree`], once
 /// a choice actually came back.
+#[allow(clippy::too_many_arguments)]
 pub fn choose_agent(
     config: &Config,
+    layout: &TabLayout,
     cwd: &Path,
     worktree: bool,
     fixed_usage: Option<&str>,
@@ -449,6 +464,7 @@ pub fn choose_agent(
     let mut menu = GumMenu::new(cols, lines);
     choose_agent_with_last(
         config,
+        layout,
         cwd,
         worktree,
         fixed_usage,
@@ -499,17 +515,20 @@ enum InputIndent {
 #[cfg(test)]
 fn choose_agent_with(
     config: &Config,
+    layout: &TabLayout,
     cwd: &Path,
     worktree: bool,
     fixed_usage: Option<&str>,
     menu: &mut impl Menu,
     git: &impl Git,
 ) -> Result<Option<AgentChoice>> {
-    choose_agent_with_last(config, cwd, worktree, fixed_usage, None, menu, git)
+    choose_agent_with_last(config, layout, cwd, worktree, fixed_usage, None, menu, git)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn choose_agent_with_last(
     config: &Config,
+    layout: &TabLayout,
     cwd: &Path,
     worktree: bool,
     fixed_usage: Option<&str>,
@@ -530,11 +549,16 @@ fn choose_agent_with_last(
         _ => None,
     };
 
-    let regular_harnesses = [
-        HARNESS_CLAUDE.to_owned(),
-        HARNESS_CODEX.to_owned(),
-        HARNESS_OPENCODE.to_owned(),
-    ];
+    let regular_harnesses = config
+        .agents
+        .iter()
+        .map(|agent| {
+            render_label(
+                agent.icon.as_deref(),
+                agent.label.as_deref().unwrap_or(&agent.name),
+            )
+        })
+        .collect::<Vec<_>>();
     let last = last
         .filter(|(harness, model)| state::last_choice_is_valid(harness, model.as_deref(), config));
     let use_last = last.as_ref().map(|(harness, model)| {
@@ -546,61 +570,73 @@ fn choose_agent_with_last(
             None => format!("{USE_LAST_PREFIX}{name}"),
         }
     });
-    let mut harness_options = regular_harnesses.to_vec();
+    let mut harness_options = regular_harnesses;
     if let Some(option) = &use_last {
         harness_options.insert(0, option.clone());
     }
-    let Some(harness) = menu.choose(HARNESS_TITLE, "Choose a harness.", &harness_options, 8)?
-    else {
-        return Ok(None);
-    };
-    let harness = strip_pad(&harness);
-    if harness.is_empty() {
-        return Ok(None);
-    }
-
-    // harness → model → usage. The popup already asked in this order; the in-pane
-    // launcher asked harness → usage → model. Deviation 1 in the parity contract picks
-    // the popup's order so both entry points can share this one flow.
-    let selected_last = use_last.as_deref() == Some(harness.as_str());
-    let (harness, stored_model) = if selected_last {
-        last.expect("use-last entry requires a stored choice")
+    let (agent_name, stored_option) = if let Some(agent_name) = &layout.panes[0].agent {
+        (agent_name.clone(), None)
     } else {
-        (harness, None)
-    };
-    let agent_name = config
-        .agents
-        .iter()
-        .find(|agent| {
-            render_label(
-                agent.icon.as_deref(),
-                agent.label.as_deref().unwrap_or(&agent.name),
-            ) == harness
-        })
-        .map(|agent| agent.name.clone())
-        .with_context(|| format!("no agent entry for: {harness}"))?;
-    let model_label = if selected_last {
-        stored_model
-    } else if harness.contains("claude code") {
-        let options: Vec<String> = config
-            .menu_agent()
-            .map(|agent| agent.options.iter().map(|o| o.name.clone()).collect())
-            .unwrap_or_default();
-        let Some(model_label) = menu.choose(MODEL_TITLE, "Choose a model.", &options, 6)? else {
+        let Some(harness) = menu.choose(HARNESS_TITLE, "Choose a harness.", &harness_options, 8)?
+        else {
             return Ok(None);
         };
-        let model_label = strip_pad(&model_label);
-        if model_label.is_empty() {
+        let harness = strip_pad(&harness);
+        if harness.is_empty() {
             return Ok(None);
         }
-        Some(model_label)
-    } else {
+        let selected_last = use_last.as_deref() == Some(harness.as_str());
+        let (harness, stored_option) = if selected_last {
+            // Bridge until src/state.rs stores stable ids in v2
+            last.expect("use-last entry requires a stored choice")
+        } else {
+            (harness, None)
+        };
+        let agent_name = config
+            .agents
+            .iter()
+            .find(|agent| {
+                render_label(
+                    agent.icon.as_deref(),
+                    agent.label.as_deref().unwrap_or(&agent.name),
+                ) == harness
+            })
+            .map(|agent| agent.name.clone())
+            .expect("validated at load");
+        (agent_name, stored_option)
+    };
+    let agent = config.agent(&agent_name).expect("validated at load");
+    let rendered_agent_label = render_label(
+        agent.icon.as_deref(),
+        agent.label.as_deref().unwrap_or(&agent.name),
+    );
+    let option_name = if let Some(option_name) = &layout.panes[0].option_name {
+        Some(option_name.clone())
+    } else if stored_option.is_some() {
+        stored_option
+    } else if agent.options.is_empty() {
         None
+    } else {
+        let options = agent
+            .options
+            .iter()
+            .map(|option| option.name.clone())
+            .collect::<Vec<_>>();
+        let Some(option_name) =
+            menu.choose(&rendered_agent_label, "Choose a model.", &options, 6)?
+        else {
+            return Ok(None);
+        };
+        let option_name = strip_pad(&option_name);
+        if option_name.is_empty() {
+            return Ok(None);
+        }
+        Some(option_name)
     };
 
     // A fixed usage skips the menu and is used verbatim: the restart path passes the
     // pane's current label, and the project picker passes its pinned tab label.
-    let usage = match fixed_usage {
+    let usage = match fixed_usage.or(layout.tab_label.as_deref()) {
         Some(usage) => usage.to_owned(),
         None => match select_usage(menu)? {
             Some(usage) => usage,
@@ -614,15 +650,15 @@ fn choose_agent_with_last(
         (None, _) => cwd.to_path_buf(),
     };
     let label = compose_label(&usage, branch.as_deref());
-    let launch = build_launch(config, &agent_name, model_label.as_deref())?;
+    let launch = build_launch(config, &agent_name, option_name.as_deref())?;
 
     Ok(Some(AgentChoice {
         label,
         project_dir,
         branch,
         launch,
-        harness,
-        model_label,
+        agent_name,
+        option_name,
     }))
 }
 
@@ -1155,8 +1191,8 @@ mod popup {
             project_dir: PathBuf::from("/projects/example"),
             branch: None,
             launch: vec!["codex".to_owned(), "--profile work".to_owned()],
-            harness: HARNESS_CODEX.to_owned(),
-            model_label: None,
+            agent_name: "codex".to_owned(),
+            option_name: None,
         }
     }
 
@@ -1485,7 +1521,14 @@ mod popup {
         queue_popup_splits(&client);
 
         let layout = default_layout();
-        create_popup_tab(&client, &layout, &popup_choice(), None).unwrap();
+        create_popup_tab(
+            &client,
+            &Config::test_default(),
+            &layout,
+            &popup_choice(),
+            None,
+        )
+        .unwrap();
 
         assert_eq!(
             client.calls.into_inner(),
@@ -1562,7 +1605,14 @@ mod popup {
             let client = FakeClient::default();
             queue_popup_create(&client);
             queue_popup_splits(&client);
-            create_popup_tab(&client, &default_layout(), &popup_choice(), workspace).unwrap();
+            create_popup_tab(
+                &client,
+                &Config::test_default(),
+                &default_layout(),
+                &popup_choice(),
+                workspace,
+            )
+            .unwrap();
             assert_eq!(
                 client.calls.borrow()[0].1.get("workspace_id"),
                 expected.as_ref()
@@ -1631,8 +1681,14 @@ mod popup {
                 *count += 1;
             }
 
-            let error =
-                create_popup_tab(&client, &default_layout(), &popup_choice(), None).unwrap_err();
+            let error = create_popup_tab(
+                &client,
+                &Config::test_default(),
+                &default_layout(),
+                &popup_choice(),
+                None,
+            )
+            .unwrap_err();
             let flow_error = error.downcast_ref::<FlowError>().unwrap();
             assert_eq!(flow_error.title(), Some("Agent tab failed"));
             assert_eq!(flow_error.prefix(), Some("The incomplete tab was closed."));
@@ -1651,7 +1707,14 @@ mod popup {
         let client = FakeClient::default();
         let choice: Option<AgentChoice> = None;
         if let Some(choice) = choice {
-            create_popup_tab(&client, &default_layout(), &choice, None).unwrap();
+            create_popup_tab(
+                &client,
+                &Config::test_default(),
+                &default_layout(),
+                &choice,
+                None,
+            )
+            .unwrap();
         }
         assert!(client.calls.into_inner().is_empty());
     }
@@ -1746,6 +1809,7 @@ mod popup {
     struct FakeMenu {
         answers: VecDeque<Option<String>>,
         options: Vec<Vec<String>>,
+        titles: Vec<String>,
     }
 
     impl FakeMenu {
@@ -1756,6 +1820,7 @@ mod popup {
                     .map(|answer| answer.map(str::to_owned))
                     .collect(),
                 options: Vec::new(),
+                titles: Vec::new(),
             }
         }
 
@@ -1767,11 +1832,12 @@ mod popup {
     impl Menu for FakeMenu {
         fn choose(
             &mut self,
-            _: &str,
+            title: &str,
             _: &str,
             options: &[String],
             _: u8,
         ) -> Result<Option<String>> {
+            self.titles.push(title.to_owned());
             self.options.push(options.to_vec());
             Ok(self.answers.pop_front().flatten())
         }
@@ -1791,6 +1857,210 @@ mod popup {
     }
 
     #[test]
+    fn layout_omissions_drive_three_menus_in_order() {
+        let config = config();
+        let layout = TabLayout {
+            name: "ask".to_owned(),
+            tab_label: None,
+            panes: vec![LayoutPane {
+                name: "agent".to_owned(),
+                label: None,
+                icon: None,
+                pane_type: PaneType::Agent,
+                agent: None,
+                option_name: None,
+                command: None,
+                direction: None,
+                ratio: None,
+                split_from: None,
+                env: BTreeMap::new(),
+            }],
+        };
+        let mut menu = FakeMenu::new([Some(HARNESS_CLAUDE), Some("Opus"), Some(USAGE_DISCUSS)]);
+
+        let choice = choose_agent_with(
+            &config,
+            &layout,
+            Path::new("/project"),
+            false,
+            None,
+            &mut menu,
+            &FakeGit::nowhere(),
+        )
+        .unwrap();
+
+        assert!(choice.is_some());
+        assert_eq!(menu.titles, [HARNESS_TITLE, HARNESS_CLAUDE, USAGE_TITLE]);
+    }
+
+    #[test]
+    fn pinned_layout_drives_zero_menus() {
+        let config = config();
+        let layout = TabLayout {
+            name: "pinned".to_owned(),
+            tab_label: Some("Personal Assistant".to_owned()),
+            panes: vec![LayoutPane {
+                name: "agent".to_owned(),
+                label: None,
+                icon: None,
+                pane_type: PaneType::Agent,
+                agent: Some("claude code".to_owned()),
+                option_name: Some("Opus".to_owned()),
+                command: None,
+                direction: None,
+                ratio: None,
+                split_from: None,
+                env: BTreeMap::new(),
+            }],
+        };
+        let mut menu = FakeMenu::new([]);
+
+        let choice = choose_agent_with(
+            &config,
+            &layout,
+            Path::new("/project"),
+            false,
+            None,
+            &mut menu,
+            &FakeGit::nowhere(),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(menu.titles.is_empty());
+        assert_eq!(choice.agent_name, "claude code");
+        assert_eq!(choice.option_name.as_deref(), Some("Opus"));
+        assert_eq!(choice.label, "Personal Assistant");
+    }
+
+    #[test]
+    fn empty_options_skip_the_model_menu() {
+        let config = config();
+        let layout = TabLayout {
+            name: "ask".to_owned(),
+            tab_label: None,
+            panes: vec![LayoutPane {
+                name: "agent".to_owned(),
+                label: None,
+                icon: None,
+                pane_type: PaneType::Agent,
+                agent: None,
+                option_name: None,
+                command: None,
+                direction: None,
+                ratio: None,
+                split_from: None,
+                env: BTreeMap::new(),
+            }],
+        };
+        let mut menu = FakeMenu::new([Some(HARNESS_CODEX), Some(USAGE_REVIEW)]);
+
+        let choice = choose_agent_with(
+            &config,
+            &layout,
+            Path::new("/project"),
+            false,
+            None,
+            &mut menu,
+            &FakeGit::nowhere(),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(menu.titles, [HARNESS_TITLE, USAGE_TITLE]);
+        assert_eq!(choice.option_name, None);
+    }
+
+    #[test]
+    fn model_menu_title_follows_the_chosen_agent() {
+        let mut config = config();
+        config.agents[0].label = Some("Claude Custom".to_owned());
+        let rendered_label = render_label(Some("\u{f15ce}"), "Claude Custom");
+        let layout = TabLayout {
+            name: "ask".to_owned(),
+            tab_label: Some("Assistant".to_owned()),
+            panes: vec![LayoutPane {
+                name: "agent".to_owned(),
+                label: None,
+                icon: None,
+                pane_type: PaneType::Agent,
+                agent: None,
+                option_name: None,
+                command: None,
+                direction: None,
+                ratio: None,
+                split_from: None,
+                env: BTreeMap::new(),
+            }],
+        };
+        let mut menu = FakeMenu::new([Some(&rendered_label), Some("Opus")]);
+
+        let choice = choose_agent_with(
+            &config,
+            &layout,
+            Path::new("/project"),
+            false,
+            None,
+            &mut menu,
+            &FakeGit::nowhere(),
+        )
+        .unwrap();
+
+        assert!(choice.is_some());
+        assert_eq!(menu.titles[1], rendered_label);
+    }
+
+    #[test]
+    fn cancellation_at_harness_model_or_usage_is_clean() {
+        let config = config();
+        let cases = [
+            vec![None],
+            vec![Some(HARNESS_CLAUDE), None],
+            vec![Some(HARNESS_CLAUDE), Some("Opus"), None],
+        ];
+        for answers in cases {
+            let layout = TabLayout {
+                name: "ask".to_owned(),
+                tab_label: None,
+                panes: vec![LayoutPane {
+                    name: "agent".to_owned(),
+                    label: None,
+                    icon: None,
+                    pane_type: PaneType::Agent,
+                    agent: None,
+                    option_name: None,
+                    command: None,
+                    direction: None,
+                    ratio: None,
+                    split_from: None,
+                    env: BTreeMap::new(),
+                }],
+            };
+            let mut menu = FakeMenu {
+                answers: answers
+                    .into_iter()
+                    .map(|answer| answer.map(str::to_owned))
+                    .collect(),
+                options: Vec::new(),
+                titles: Vec::new(),
+            };
+
+            let choice = choose_agent_with(
+                &config,
+                &layout,
+                Path::new("/project"),
+                false,
+                None,
+                &mut menu,
+                &FakeGit::nowhere(),
+            )
+            .unwrap();
+
+            assert_eq!(choice, None);
+        }
+    }
+
+    #[test]
     fn use_last_is_first_and_skips_model_and_usage_menus() {
         let config = config();
         let entry = format!("{USE_LAST_PREFIX}claude code · Opus");
@@ -1798,6 +2068,7 @@ mod popup {
 
         let choice = choose_agent_with_last(
             &config,
+            &default_layout(),
             Path::new("/project"),
             false,
             Some("review"),
@@ -1810,8 +2081,8 @@ mod popup {
 
         assert_eq!(menu.options.len(), 1);
         assert_eq!(menu.options[0][0], entry);
-        assert_eq!(choice.harness, HARNESS_CLAUDE);
-        assert_eq!(choice.model_label.as_deref(), Some("Opus"));
+        assert_eq!(choice.agent_name, "claude code");
+        assert_eq!(choice.option_name.as_deref(), Some("Opus"));
     }
 
     #[test]
@@ -1821,6 +2092,7 @@ mod popup {
 
         let choice = choose_agent_with_last(
             &config,
+            &default_layout(),
             Path::new("/project"),
             false,
             Some("review"),
@@ -1832,7 +2104,7 @@ mod popup {
         .unwrap();
 
         assert_eq!(menu.options[0][0], HARNESS_CLAUDE);
-        assert_eq!(choice.harness, HARNESS_CODEX);
+        assert_eq!(choice.agent_name, "codex");
     }
 
     struct FakeGit {
@@ -2016,8 +2288,9 @@ mod popup {
         assert!(error.to_string().contains("missing agent"));
         let error = build_launch(&config, "claude code", Some("missing option")).unwrap_err();
         assert!(error.to_string().contains("missing option"));
-        let error = build_launch(&config, "claude code", None).unwrap_err();
-        assert!(error.to_string().contains("claude code"));
+        let agent_name = "claude code";
+        let error = build_launch(&config, agent_name, None).unwrap_err();
+        assert!(error.to_string().contains(agent_name));
     }
 
     #[test]
@@ -2084,6 +2357,7 @@ mod popup {
         ]);
         let with_worktree = choose_agent_with(
             &config,
+            &default_layout(),
             Path::new("/projects/example"),
             true,
             None,
@@ -2101,6 +2375,7 @@ mod popup {
         let mut menu = FakeMenu::new([Some(HARNESS_CODEX), Some(USAGE_DISCUSS)]);
         let never_a_worktree = choose_agent_with(
             &config,
+            &default_layout(),
             Path::new("/projects/example"),
             false,
             None,
@@ -2124,8 +2399,8 @@ mod popup {
             project_dir: PathBuf::from("/projects/example-wt/menu"),
             branch: Some("menu".to_owned()),
             launch: vec!["codex".to_owned()],
-            harness: HARNESS_CODEX.to_owned(),
-            model_label: None,
+            agent_name: "codex".to_owned(),
+            option_name: None,
         };
         let normalised = without_worktree(choice, Path::new("/projects/example"));
         assert_eq!(normalised.label, "review menu");
@@ -2141,6 +2416,7 @@ mod popup {
         ]);
         let choice = choose_agent_with(
             &config,
+            &default_layout(),
             Path::new("/projects/example"),
             false,
             None,
@@ -2151,8 +2427,8 @@ mod popup {
         .unwrap();
         assert_eq!(choice.label, "ship the rewrite");
         assert_eq!(choice.launch, ["opencode"]);
-        assert_eq!(choice.harness, HARNESS_OPENCODE);
-        assert_eq!(choice.model_label, None);
+        assert_eq!(choice.agent_name, "opencode");
+        assert_eq!(choice.option_name, None);
     }
 
     #[test]
@@ -2164,6 +2440,7 @@ mod popup {
         let mut menu = FakeMenu::new([Some(HARNESS_CODEX)]);
         let choice = choose_agent_with(
             &config,
+            &default_layout(),
             Path::new("/projects/example"),
             false,
             Some("\u{f09d1}  main"),
@@ -2178,6 +2455,7 @@ mod popup {
         let mut menu = FakeMenu::new([Some(HARNESS_CLAUDE), Some("Opus")]);
         let choice = choose_agent_with(
             &config,
+            &default_layout(),
             Path::new("/projects/example"),
             false,
             Some("\u{f442}  discuss"),
@@ -2187,7 +2465,7 @@ mod popup {
         .unwrap()
         .unwrap();
         assert_eq!(choice.label, "\u{f442}  discuss");
-        assert_eq!(choice.model_label.as_deref(), Some("Opus"));
+        assert_eq!(choice.option_name.as_deref(), Some("Opus"));
         assert!(menu.answered_everything());
     }
 
@@ -2197,6 +2475,7 @@ mod popup {
         let mut menu = FakeMenu::new([Some("   "), Some(HARNESS_CODEX), Some(USAGE_DEBUG)]);
         let choice = choose_agent_with(
             &config,
+            &default_layout(),
             Path::new("/projects/example"),
             true,
             None,
@@ -2237,9 +2516,11 @@ mod popup {
                     .map(|answer| answer.map(str::to_owned))
                     .collect(),
                 options: Vec::new(),
+                titles: Vec::new(),
             };
             let choice = choose_agent_with(
                 &config,
+                &default_layout(),
                 Path::new("/projects/example"),
                 true,
                 None,
@@ -2257,6 +2538,7 @@ mod popup {
         let mut menu = FakeMenu::new([None]);
         let choice = choose_agent_with(
             &config,
+            &default_layout(),
             Path::new("/not-a-repository"),
             true,
             None,
@@ -2301,10 +2583,18 @@ mod popup {
                     .map(|answer| answer.map(str::to_owned))
                     .collect(),
                 options: Vec::new(),
+                titles: Vec::new(),
             };
-            let choice =
-                choose_agent_with(&config, &fixture.repo(), true, None, &mut menu, &RealGit)
-                    .unwrap();
+            let choice = choose_agent_with(
+                &config,
+                &default_layout(),
+                &fixture.repo(),
+                true,
+                None,
+                &mut menu,
+                &RealGit,
+            )
+            .unwrap();
             assert_eq!(choice, None, "cancelling at the {menu_name} menu");
             assert_eq!(
                 fixture.worktrees(),
@@ -2329,9 +2619,17 @@ mod popup {
             Some(HARNESS_CODEX),
             Some(USAGE_REVIEW),
         ]);
-        let choice = choose_agent_with(&config, &fixture.repo(), true, None, &mut menu, &RealGit)
-            .unwrap()
-            .unwrap();
+        let choice = choose_agent_with(
+            &config,
+            &default_layout(),
+            &fixture.repo(),
+            true,
+            None,
+            &mut menu,
+            &RealGit,
+        )
+        .unwrap()
+        .unwrap();
 
         // git reports the toplevel with symlinks resolved, so the expected directory is
         // built from that path rather than from the fixture's own.

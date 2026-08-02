@@ -6,7 +6,7 @@
 >
 > **Depends on**: config/04
 > **Blocks**: wiring/01
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -141,22 +141,22 @@ The socket-sequence assertion is the only way to prove layout correctness withou
 
 ## Acceptance criteria
 
-- [ ] `build_side_panes(client, layout, root_pane, cwd)` iterates `layout.panes[1..]` and makes no hardcoded call.
-- [ ] `split_from` resolves to the named earlier pane; omitting it targets the pane directly above.
-- [ ] Herdr receives `1.0 - pane.ratio`, and a comment explains that config ratios are self-describing.
-- [ ] `env` is sent on `pane.split` only when the pane's `env` map is non-empty.
-- [ ] A pane without a `label` produces no `pane.rename` call; a non-`Command` pane produces no `pane.send_input` call.
-- [ ] An empty `pane_id` from `pane.split` is an error naming the pane.
-- [ ] `create_popup_tab` sources the root pane's `env` from the layout instead of the hardcoded `{"Q_NO_BANNER": "1"}`, omitting the key when empty.
-- [ ] The default layout's recorded call sequence matches today's five calls exactly, including the absent `env` on the second split.
+- [x] `build_side_panes(client, layout, root_pane, cwd)` iterates `layout.panes[1..]` and makes no hardcoded call.
+- [x] `split_from` resolves to the named earlier pane; omitting it targets the pane directly above.
+- [x] Herdr receives `1.0 - pane.ratio`, and a comment explains that config ratios are self-describing.
+- [x] `env` is sent on `pane.split` only when the pane's `env` map is non-empty.
+- [x] A pane without a `label` produces no `pane.rename` call; a non-`Command` pane produces no `pane.send_input` call.
+- [x] An empty `pane_id` from `pane.split` is an error naming the pane.
+- [x] `create_popup_tab` sources the root pane's `env` from the layout instead of the hardcoded `{"Q_NO_BANNER": "1"}`, omitting the key when empty.
+- [x] The default layout's recorded call sequence matches today's five calls exactly, including the absent `env` on the second split.
 
 ## Verification
 
-- [ ] `cargo test` passes.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] `cargo test flows::agent::` — the five tests above are present and passing.
-- [ ] `grep -n '0\.38\|0\.9\|Q_NO_BANNER' src/flows/agent.rs` shows those literals only inside tests, never in the pane-building path.
-- [ ] Run `git status --short` and quote it. Expect `src/flows/agent.rs`, plus at most this task file. Any OTHER path is a real scope violation.
+- [x] `cargo test` passes.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] `cargo test flows::agent::` — the five tests above are present and passing.
+- [x] `grep -n '0\.38\|0\.9\|Q_NO_BANNER' src/flows/agent.rs` shows those literals only inside tests, never in the pane-building path.
+- [x] Run `git status --short` and quote it. Expect `src/flows/agent.rs`, plus at most this task file. Any OTHER path is a real scope violation.
 
 ## Eval rubric
 

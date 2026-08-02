@@ -6,7 +6,7 @@
 >
 > **Depends on**: none — foundation task
 > **Blocks**: config/02
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -114,20 +114,20 @@ Use `trash`, not `rm`. If `tests/fixtures/` is then empty, leave the directory �
 
 ## Acceptance criteria
 
-- [ ] `src/config.rs` contains no `migrate`, `PartialConfig`, `SCALAR_SETTINGS`, or NUL-dump parsing code.
-- [ ] `src/main.rs` has no `Config` variant, no `ConfigCommand` enum, and no `guard_write_destination` / `write_atomically`.
-- [ ] `workbench config migrate` is no longer a parseable subcommand — `Cli::try_parse_from(["workbench", "config", "migrate"])` returns an error.
-- [ ] The zsh-extension guard in `Config::load()` still fires, and its message names `Q_WORKBENCH_LOCAL_CONFIG` and `config.toml` but not a `config migrate` command.
-- [ ] `tests/fixtures/config.fixture` is gone.
-- [ ] No behaviour outside the migration path changed: `dashboard_workspace`, the path scalars, `order`, `models`, and `model_args` all still load exactly as before.
+- [x] `src/config.rs` contains no `migrate`, `PartialConfig`, `SCALAR_SETTINGS`, or NUL-dump parsing code.
+- [x] `src/main.rs` has no `Config` variant, no `ConfigCommand` enum, and no `guard_write_destination` / `write_atomically`.
+- [x] `workbench config migrate` is no longer a parseable subcommand — `Cli::try_parse_from(["workbench", "config", "migrate"])` returns an error.
+- [x] The zsh-extension guard in `Config::load()` still fires, and its message names `Q_WORKBENCH_LOCAL_CONFIG` and `config.toml` but not a `config migrate` command.
+- [x] `tests/fixtures/config.fixture` is gone.
+- [x] No behaviour outside the migration path changed: `dashboard_workspace`, the path scalars, `order`, `models`, and `model_args` all still load exactly as before.
 
 ## Verification
 
-- [ ] `cargo test` passes.
-- [ ] `cargo clippy -- -D warnings` is clean — this is the real check for leftover imports and dead helpers.
-- [ ] `rg 'config migrate|PartialConfig|serialize_migration|SCALAR_SETTINGS' src/` returns no matches.
-- [ ] `rg 'config.fixture' .` returns no matches outside `docs/`.
-- [ ] Run `git status --short` and quote it. Expect `src/config.rs`, `src/main.rs`, the deleted `tests/fixtures/config.fixture`, plus at most this task file. Any OTHER path is a real scope violation.
+- [x] `cargo test` passes.
+- [x] `cargo clippy -- -D warnings` is clean — this is the real check for leftover imports and dead helpers.
+- [x] `rg 'config migrate|PartialConfig|serialize_migration|SCALAR_SETTINGS' src/` returns no matches.
+- [x] `rg 'config.fixture' .` returns no matches outside `docs/`.
+- [x] Run `git status --short` and quote it. Expect `src/config.rs`, `src/main.rs`, the deleted `tests/fixtures/config.fixture`, plus at most this task file. Any OTHER path is a real scope violation.
 
 ## Eval rubric
 

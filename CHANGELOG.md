@@ -5,6 +5,22 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-02
+
+_tracks tag `v0.3.0`_
+
+### Added
+- New `workbench pane even` command (Herdr action `even-out-panes`, default
+  keybinding `prefix+e`) evens out a pane's split ratios. Splitting a pane twice
+  commonly leaves widths like 50/25/25 instead of even thirds; this walks the
+  maximal same-direction split chain containing the target pane and rebalances it,
+  while leaving orthogonal nested splits (for example a Files/terminal stack)
+  untouched.
+- Built on two Herdr socket RPCs, `layout.export` and `layout.set_split_ratio`,
+  discovered via `herdr api schema --json` and verified against a live Herdr
+  session.
+- README documents the new action and its default keybinding.
+
 ## [0.2.0] - 2026-08-01
 
 _tracks tag `v0.2.0`_

@@ -8,7 +8,7 @@ A Rust binary is committed to the repository, so installing requires no build. H
 
 ## What it does
 
-The plugin exposes six actions. Keys are yours to choose — see [Bind it](#bind-it).
+The plugin exposes seven actions. Keys are yours to choose — see [Bind it](#bind-it).
 
 | Action | What happens |
 | --- | --- |
@@ -18,6 +18,7 @@ The plugin exposes six actions. Keys are yours to choose — see [Bind it](#bind
 | `ssh` | Fuzzy-find an SSH host; connect in a dedicated tab that closes itself on disconnect |
 | `restart-agent` | Confirm, then relaunch the agent **in place** — the yazi/terminal side panes survive |
 | `dashboard` | Open a tab that starts Claude with the usage-dashboard prompt |
+| `even-out-panes` | Even out the split ratios in the focused pane's row or column, leaving any orthogonal split (e.g. a Files/term stack in one slot) untouched |
 
 Harnesses offered: Claude Code (Opus / OpusPlan / CCR / Fable 5), Codex, opencode.
 
@@ -60,6 +61,7 @@ The bindings below are the set I use — copy them or pick your own:
 | `alt+s` | `ssh` |
 | `alt+r` | `restart-agent` |
 | `prefix+d` | `dashboard` |
+| `prefix+e` | `even-out-panes` |
 
 Pairing the two agent actions on `alt+c` / `alt+shift+c` is worth keeping whatever keys
 you pick: the worktree-vs-normal choice *is* the keybinding, which is why neither action

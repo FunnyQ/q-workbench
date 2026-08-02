@@ -5,6 +5,23 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **BREAKING:** The flat model and extra-argument settings are gone. Two declarative
+  sections now describe tab layouts and their panes, and agents and their options.
+  A layout that omits a choice asks for it, so a layout that pins nothing behaves
+  exactly as before. There is no automatic conversion from the old file; an old
+  config now fails to load with an unknown-field error that names the offending key.
+
+### Removed
+- Removed the zsh-to-TOML `workbench config migrate` subcommand because the zsh era
+  is over and its only user has already converted.
+- Removed the `Q_AGENT_MODEL_ORDER`, `Q_AGENT_MODELS`, `Q_AGENT_MODEL_ARGS`,
+  `Q_CLAUDE_EXTRA_ARGS`, and `Q_CODEX_EXTRA_ARGS` environment-variable overrides
+  with the settings they belonged to. Path settings and `Q_DASHBOARD_WORKSPACE`
+  keep their environment overrides.
+
 ## [0.3.0] - 2026-08-02
 
 _tracks tag `v0.3.0`_

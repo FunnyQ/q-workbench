@@ -22,11 +22,13 @@ zsh scripts/build.zsh
 
 ### CLI and configuration
 
-`src/main.rs` is the single command router. Herdr actions and internal reinjections use the same `agent`, `project`, `ssh`, `dashboard`, and `config` command tree, so add behavior there before wiring a manifest entry.
+`src/main.rs` is the single command router. Herdr actions and internal reinjections use the same `agent`, `project`, `ssh`, `dashboard`, `herdr`, and `pane` command tree, so add behavior there before wiring a manifest entry.
 
-`src/config.rs` loads TOML from the per-plugin config path. TOML arrays preserve extra-argument boundaries, including values that contain spaces. Keep bypass flags opt-in through `claude_extra_args` and `codex_extra_args`; never add an unconditional default.
+`src/config.rs` loads TOML from the per-plugin config path. The config has two array-of-tables sections: `[[tab_layouts]]` describes tab layouts and their panes, while `[[agents]]` describes agents and their options. TOML arrays preserve argument boundaries, including values that contain spaces. Keep bypass flags opt-in through an agent's `extra_args` array; nothing adds them unconditionally.
 
-`workbench config migrate` is the only compatibility boundary with the old zsh config. It executes the source file because that file can contain shell logic, then emits equivalent TOML. Keep that execution explicit in help and errors.
+Omitting a pane's agent, a pane's option, or a layout's tab label makes the launcher ask for that choice at launch time. Select a layout with `--layout <name>`; launches without the flag use `default_tab_layout`.
+
+All validation runs at config load, before the first socket call. The popup path closes its tab when construction fails, but the in-pane path has no such cleanup, so deferred validation could leave a half-built layout on screen.
 
 ### Herdr socket contract
 
@@ -38,7 +40,7 @@ Requests and responses are newline-delimited JSON. A response can arrive in mult
 
 ### Agent launch and restart
 
-The popup gathers worktree, harness, model, and usage choices before it creates the final layout. The launcher deliberately defers the yazi and terminal split until every menu is complete. Splitting sooner resizes the agent pane while menus are drawing, and the chosen worktree must determine the cwd of all three panes.
+The popup gathers any choices that the selected layout leaves open before it creates the final layout. The launcher deliberately defers non-agent panes until every menu is complete. Splitting sooner resizes the agent pane while menus are drawing, and a chosen worktree must determine the cwd of every pane.
 
 The injected launcher ends with `exec` so the harness replaces the launcher process. Restart depends on this: terminating the foreground harness returns the pane to its interactive shell, then the restart worker can inject a new launcher without destroying the side panes.
 

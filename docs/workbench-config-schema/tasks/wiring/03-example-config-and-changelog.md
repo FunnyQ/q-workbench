@@ -6,7 +6,7 @@
 >
 > **Depends on**: launch/02, wiring/01
 > **Blocks**: wiring/04
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -110,25 +110,25 @@ The sentence below the table reads "Harnesses offered: Claude Code (Opus / OpusP
 
 ## Acceptance criteria
 
-- [ ] `config.example.toml` has no `[[workspaces]]` section and no comment referring to one; `dashboard_workspace` is documented as naming a Herdr workspace label directly.
-- [ ] `config.example.toml` documents `--layout <name>` and the `default_tab_layout` fallback.
-- [ ] `CHANGELOG.md` has an `## [Unreleased]` section above the 0.3.0 entry, with a **BREAKING** `### Changed` item and a `### Removed` item naming the subcommand and all five environment variables.
-- [ ] No version number changed anywhere.
-- [ ] `CLAUDE.md` no longer describes the zsh migration subcommand or the two deleted extra-argument fields, and states that all validation runs at config load before the first socket call.
-- [ ] `README.md`'s actions table includes the new action, and its Configuration section documents only settings that exist.
-- [ ] Outside `docs/` and the changelog's Removed entry, no Markdown or TOML file in the repository mentions the removed subcommand, the two deleted extra-argument fields, the deleted model-argument field, or a `Q_AGENT_MODEL` variable.
-- [ ] No plane-15 codepoint in any edited file was altered.
+- [x] `config.example.toml` has no `[[workspaces]]` section and no comment referring to one; `dashboard_workspace` is documented as naming a Herdr workspace label directly.
+- [x] `config.example.toml` documents `--layout <name>` and the `default_tab_layout` fallback.
+- [x] `CHANGELOG.md` has an `## [Unreleased]` section above the 0.3.0 entry, with a **BREAKING** `### Changed` item and a `### Removed` item naming the subcommand and all five environment variables.
+- [x] No version number changed anywhere.
+- [x] `CLAUDE.md` no longer describes the zsh migration subcommand or the two deleted extra-argument fields, and states that all validation runs at config load before the first socket call.
+- [x] `README.md`'s actions table includes the new action, and its Configuration section documents only settings that exist.
+- [x] Outside `docs/` and the changelog's Removed entry, no Markdown or TOML file in the repository mentions the removed subcommand, the two deleted extra-argument fields, the deleted model-argument field, or a `Q_AGENT_MODEL` variable.
+- [x] No plane-15 codepoint in any edited file was altered.
 
 ## Verification
 
-- [ ] Run the codepoint dump shown above and confirm no `0xf169` appears.
-- [ ] Run:
+- [x] Run the codepoint dump shown above and confirm no `0xf169` appears.
+- [x] Run:
       `rg -n 'config migrate|claude_extra_args|codex_extra_args|model_args|Q_AGENT_MODEL' --glob '!docs/**' --glob '*.md' --glob '*.toml' .`
       Expect hits only inside the changelog's Removed entry. Any other hit is a stale document.
-- [ ] `git diff --stat CHANGELOG.md` shows additions only above the 0.3.0 heading, and no change to any existing entry.
-- [ ] Read `config.example.toml` end to end and confirm the argv-bearing `[[agents]]` entries and the pane geometry values are untouched — the test suite compares against them.
-- [ ] `cargo test` passes. It should be unaffected, which is the point: if a documentation change broke a test, a test was asserting on prose.
-- [ ] Run `git status --short` and quote it. Expect `config.example.toml`, `CHANGELOG.md`, `CLAUDE.md`, `README.md`, plus at most this task file. Any OTHER path is a real scope violation.
+- [x] `git diff --stat CHANGELOG.md` shows additions only above the 0.3.0 heading, and no change to any existing entry.
+- [x] Read `config.example.toml` end to end and confirm the argv-bearing `[[agents]]` entries and the pane geometry values are untouched — the test suite compares against them.
+- [x] `cargo test` passes. It should be unaffected, which is the point: if a documentation change broke a test, a test was asserting on prose.
+- [x] Run `git status --short` and quote it. Expect `config.example.toml`, `CHANGELOG.md`, `CLAUDE.md`, `README.md`, plus at most this task file. Any OTHER path is a real scope violation.
 
 ## Eval rubric
 

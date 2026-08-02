@@ -10,7 +10,7 @@
 
 # -- Paths and pointers -------------------------------------------------------
 
-# Herdr workspace label the dashboard tab opens in, matched against Herdr's workspace list.
+# Names a Herdr workspace label directly, not a config entry; matched against Herdr's workspace list.
 dashboard_workspace = "personal-assistant"
 
 # Layout used by a launch that does not come from a listed workspace: the project
@@ -34,6 +34,10 @@ ssh_history_file = "$HOME/.zsh_history"
 
 
 # -- Tab layouts --------------------------------------------------------------
+#
+# A layout is selected with `--layout <name>` — `workbench agent popup --layout
+# personal-assistant`, or a Herdr action whose command carries the flag. Without the
+# flag the launcher uses `default_tab_layout`.
 #
 # LEAVING A CHOICE OUT MEANS ASKING FOR IT. Write agent, option, or tab_label to pin
 # that choice and skip its menu. Omit it and the launcher asks, exactly as it does

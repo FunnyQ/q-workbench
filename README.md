@@ -8,19 +8,20 @@ A Rust binary is committed to the repository, so installing requires no build. H
 
 ## What it does
 
-The plugin exposes seven actions. Keys are yours to choose — see [Bind it](#bind-it).
+The plugin exposes eight actions. Keys are yours to choose — see [Bind it](#bind-it).
 
 | Action | What happens |
 | --- | --- |
 | `new-agent` | Pick harness → model → usage, then open a tab laid out as **agent \| yazi + terminal** |
 | `new-worktree-agent` | Same, but first picks/creates a branch and starts every pane in a fresh `git worktree` |
+| `new-assistant` | Open a tab from the `personal-assistant` layout — every choice pinned, so no menus |
 | `project` | Fuzzy-find a registered project; focus its workspace or create one (falls back to `zoxide`) |
 | `ssh` | Fuzzy-find an SSH host; connect in a dedicated tab that closes itself on disconnect |
 | `restart-agent` | Confirm, then relaunch the agent **in place** — the yazi/terminal side panes survive |
 | `dashboard` | Open a tab that starts Claude with the usage-dashboard prompt |
 | `even-out-panes` | Even out the split ratios in the focused pane's row or column, leaving any orthogonal split (e.g. a Files/term stack in one slot) untouched |
 
-Harnesses offered: Claude Code (Opus / OpusPlan / CCR / Fable 5), Codex, opencode.
+The defaults offer Claude Code (Opus / OpusPlan / CCR / Fable 5), Codex, and opencode; agents and their options are configurable.
 
 ## Install
 
@@ -108,32 +109,33 @@ cannot be committed by accident. Create this file when you need an override:
 ~/.config/herdr/plugins/config/q.workbench/config.toml
 ```
 
-Existing users can preview a migration from zsh to TOML, then write it after review:
+`Q_WORKBENCH_LOCAL_CONFIG` overrides the resolved config path. Point it at a TOML file;
+the binary rejects a path with a `.zsh` extension and explains how to correct it.
 
-```zsh
-./bin/workbench config migrate
-./bin/workbench config migrate --write
-```
-
-The zsh version exported `Q_WORKBENCH_LOCAL_CONFIG` pointing at `config.zsh`, and that
-export still overrides the resolved path. Unset it, or point it at the new
-`config.toml`, in every shell that has it. Until you do, the binary refuses to run and
-names this step.
-
-TOML arrays preserve argument boundaries. Put each flag and value in its own entry:
+The config contains `[[tab_layouts]]` entries with nested panes and `[[agents]]`
+entries with nested options. Omitting a layout choice makes the launcher ask for it.
+This minimal config keeps the built-in layout and defines one agent option:
 
 ```toml
 dashboard_workspace = "my-workspace"
-claude_extra_args = ["--dangerously-load-development-channels", "plugin:monitor@my-marketplace"]
-codex_extra_args = ["--dangerously-bypass-approvals-and-sandbox"]
+default_tab_layout = "agentic-coding"
+
+[[agents]]
+name = "claude code"
+command = ["claude"]
+
+  [[agents.options]]
+  name = "Opus"
+  args = ["--model", "claude-opus-4-8"]
 ```
+
+See [`config.example.toml`](config.example.toml) for the full schema and built-in
+defaults.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `dashboard_workspace` | `personal-assistant` | Workspace the dashboard tab opens in |
-| `claude_extra_args` | `[]` | Array appended to every `claude` launch |
-| `codex_extra_args` | `[]` | Array appended to every `codex` launch |
-| `order` / `models` / `model_args` | Opus, OpusPlan, CCR, Fable 5 | The Claude model menu; `order` and each `model_args` value are arrays |
+| `default_tab_layout` | `agentic-coding` | Layout used when a launch does not pass `--layout` |
 | `project_registry_file` | `~/.local/state/herdr-projects/registry.json` | Project registry path |
 | `projects_root` | `~/Projects` | Root of the `.git` discovery sweep |
 | `ssh_registry_file` | `~/.local/state/ssh-targets/registry.json` | SSH registry path |
@@ -142,8 +144,8 @@ codex_extra_args = ["--dangerously-bypass-approvals-and-sandbox"]
 
 **On the bypass flags:** `--dangerously-bypass-approvals-and-sandbox` (Codex) and
 `--dangerously-skip-permissions` (Claude) hand the agent unrestricted execution on your
-host. Nothing adds them for you — put them in the `claude_extra_args` or
-`codex_extra_args` TOML array deliberately, per machine.
+host. Nothing adds them for you — put them in the agent's `extra_args` array
+deliberately, per machine.
 
 ## Development
 

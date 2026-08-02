@@ -6,7 +6,7 @@
 >
 > **Depends on**: config/02
 > **Blocks**: config/04
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -245,23 +245,23 @@ The existing `missing_file_resolves_every_documented_default` test asserts the p
 
 ## Acceptance criteria
 
-- [ ] `Config::load()` with no config file yields three agents named `claude code`, `codex`, `opencode`, in that order.
-- [ ] Their rendered labels equal `"\u{f15ce}  claude code"`, `"\u{ee0d}  codex"`, `"\u{f169f}  opencode"` byte for byte.
-- [ ] The claude agent has four options in the order `Opus`, `OpusPlan (Sonnet)`, `CCR`, `Fable 5`; `CCR` carries `command = Some(["ccr", "code"])` and empty `args`.
-- [ ] Every default agent's `extra_args` is empty — no implicit bypass flag.
-- [ ] The default layout is named `agentic-coding`, has `tab_label: None`, and three panes matching the names, icons, labels, types, directions, ratios, and env maps specified above.
-- [ ] The root pane has `direction: None`, `ratio: None`, `split_from: None`, and `env` containing `Q_NO_BANNER = "1"`.
-- [ ] A config file with one `[[agents]]` entry yields exactly one agent; a config file with one `[[tab_layouts]]` entry yields exactly one layout.
-- [ ] `Config` no longer derives `Default`; every former `Config::default()` call site builds a config that carries the real defaults.
-- [ ] All icons in `src/config.rs` are written as `\u{...}` escapes; no literal glyph appears in the file.
+- [x] `Config::load()` with no config file yields three agents named `claude code`, `codex`, `opencode`, in that order.
+- [x] Their rendered labels equal `"\u{f15ce}  claude code"`, `"\u{ee0d}  codex"`, `"\u{f169f}  opencode"` byte for byte.
+- [x] The claude agent has four options in the order `Opus`, `OpusPlan (Sonnet)`, `CCR`, `Fable 5`; `CCR` carries `command = Some(["ccr", "code"])` and empty `args`.
+- [x] Every default agent's `extra_args` is empty — no implicit bypass flag.
+- [x] The default layout is named `agentic-coding`, has `tab_label: None`, and three panes matching the names, icons, labels, types, directions, ratios, and env maps specified above.
+- [x] The root pane has `direction: None`, `ratio: None`, `split_from: None`, and `env` containing `Q_NO_BANNER = "1"`.
+- [x] A config file with one `[[agents]]` entry yields exactly one agent; a config file with one `[[tab_layouts]]` entry yields exactly one layout.
+- [x] `Config` no longer derives `Default`; every former `Config::default()` call site builds a config that carries the real defaults.
+- [x] All icons in `src/config.rs` are written as `\u{...}` escapes; no literal glyph appears in the file.
 
 ## Verification
 
-- [ ] `cargo test` passes.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] `cargo test config::` passes, including the byte-equality label test.
-- [ ] `rg 'Config::default\(\)' src/` returns no matches.
-- [ ] `rg -n 'icon' src/config.rs` shows only `\u{...}` escapes on the default-agent and default-layout lines, never a raw glyph.
+- [x] `cargo test` passes.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] `cargo test config::` passes, including the byte-equality label test.
+- [x] `rg 'Config::default\(\)' src/` returns no matches.
+- [x] `rg -n 'icon' src/config.rs` shows only `\u{...}` escapes on the default-agent and default-layout lines, never a raw glyph.
 
 ## Eval rubric
 

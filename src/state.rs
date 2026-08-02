@@ -159,7 +159,7 @@ mod tests {
         write_state(&client, "w2N:p1", HARNESS_CODEX, None).unwrap();
 
         assert_eq!(
-            get_for_pane("w2N:p1", &Config::default()),
+            get_for_pane("w2N:p1", &Config::test_default()),
             Some((HARNESS_CODEX.to_owned(), None))
         );
         assert!(!read_state().panes.contains_key("dead"));
@@ -191,7 +191,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(get_for_pane("p1", &Config::default()), None);
+        assert_eq!(get_for_pane("p1", &Config::test_default()), None);
         assert!(!read_state().panes.contains_key("p1"));
         fs::remove_file(path).unwrap();
         env::remove_var("Q_WORKBENCH_STATE_FILE");

@@ -8,9 +8,6 @@ use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq)]
-// Tests only: production code must reach a Config through `load`, which is the one
-// place the documented defaults live.
-#[cfg_attr(test, derive(Default))]
 pub struct Config {
     pub dashboard_workspace: String,
     pub default_tab_layout: String,
@@ -21,6 +18,23 @@ pub struct Config {
     pub ssh_history_file: String,
     pub tab_layouts: Vec<TabLayout>,
     pub agents: Vec<Agent>,
+}
+
+impl Config {
+    #[cfg(test)]
+    pub fn test_default() -> Self {
+        Self {
+            dashboard_workspace: "personal-assistant".to_owned(),
+            default_tab_layout: "agentic-coding".to_owned(),
+            project_registry_file: String::new(),
+            projects_root: String::new(),
+            ssh_registry_file: String::new(),
+            ssh_config_file: String::new(),
+            ssh_history_file: String::new(),
+            tab_layouts: default_tab_layouts(),
+            agents: default_agents(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -107,6 +121,109 @@ pub struct AgentOption {
     pub command: Option<Vec<String>>,
 }
 
+fn default_agents() -> Vec<Agent> {
+    vec![
+        Agent {
+            name: "claude code".to_owned(),
+            label: None,
+            icon: Some("\u{f15ce}".to_owned()),
+            command: vec!["claude".to_owned()],
+            extra_args: Vec::new(),
+            options: vec![
+                AgentOption {
+                    name: "Opus".to_owned(),
+                    args: vec!["--model".to_owned(), "claude-opus-4-8".to_owned()],
+                    command: None,
+                },
+                AgentOption {
+                    name: "OpusPlan (Sonnet)".to_owned(),
+                    args: vec![
+                        "--model".to_owned(),
+                        "opusplan".to_owned(),
+                        "--effort".to_owned(),
+                        "medium".to_owned(),
+                    ],
+                    command: None,
+                },
+                AgentOption {
+                    name: "CCR".to_owned(),
+                    args: Vec::new(),
+                    command: Some(vec!["ccr".to_owned(), "code".to_owned()]),
+                },
+                AgentOption {
+                    name: "Fable 5".to_owned(),
+                    args: vec!["--model".to_owned(), "claude-fable-5".to_owned()],
+                    command: None,
+                },
+            ],
+        },
+        Agent {
+            name: "codex".to_owned(),
+            label: None,
+            icon: Some("\u{ee0d}".to_owned()),
+            command: vec!["codex".to_owned()],
+            extra_args: Vec::new(),
+            options: Vec::new(),
+        },
+        Agent {
+            name: "opencode".to_owned(),
+            label: None,
+            icon: Some("\u{f169f}".to_owned()),
+            command: vec!["opencode".to_owned()],
+            extra_args: Vec::new(),
+            options: Vec::new(),
+        },
+    ]
+}
+
+fn default_tab_layouts() -> Vec<TabLayout> {
+    vec![TabLayout {
+        name: "agentic-coding".to_owned(),
+        tab_label: None,
+        panes: vec![
+            LayoutPane {
+                name: "agent".to_owned(),
+                label: None,
+                icon: None,
+                pane_type: PaneType::Agent,
+                agent: None,
+                option_name: None,
+                command: None,
+                direction: None,
+                ratio: None,
+                split_from: None,
+                env: BTreeMap::from([("Q_NO_BANNER".to_owned(), "1".to_owned())]),
+            },
+            LayoutPane {
+                name: "files".to_owned(),
+                label: Some("Files".to_owned()),
+                icon: Some("\u{f0968}".to_owned()),
+                pane_type: PaneType::Command,
+                agent: None,
+                option_name: None,
+                command: Some("yazi .".to_owned()),
+                direction: Some(Direction::Right),
+                ratio: Some(0.62),
+                split_from: None,
+                env: BTreeMap::from([("Q_NO_BANNER".to_owned(), "1".to_owned())]),
+            },
+            LayoutPane {
+                name: "term".to_owned(),
+                label: Some("term".to_owned()),
+                icon: Some("\u{f489}".to_owned()),
+                pane_type: PaneType::Shell,
+                agent: None,
+                option_name: None,
+                command: None,
+                direction: Some(Direction::Down),
+                ratio: Some(0.1),
+                split_from: None,
+                env: BTreeMap::new(),
+            },
+        ],
+    }]
+}
+
 /// Icon and label joined by exactly two spaces, matching every existing menu label.
 /// A missing icon renders the label alone, with no leading whitespace.
 pub fn render_label(icon: Option<&str>, label: &str) -> String {
@@ -131,10 +248,10 @@ impl Config {
                 path.display()
             );
         }
-        let file = match fs::read_to_string(&path) {
+        let file: FileConfig = match fs::read_to_string(&path) {
             Ok(contents) => toml::from_str(&contents)
                 .with_context(|| format!("failed to parse config file {}", path.display()))?,
-            Err(error) if error.kind() == ErrorKind::NotFound => FileConfig::default(),
+            Err(error) if error.kind() == ErrorKind::NotFound => Default::default(),
             Err(error) => {
                 return Err(error)
                     .with_context(|| format!("failed to read config file {}", path.display()));
@@ -186,8 +303,11 @@ impl Config {
                 ),
                 &home,
             ),
-            tab_layouts: file.tab_layouts.unwrap_or_default(),
-            agents: file.agents.unwrap_or_default(),
+            // User-written sections replace the built-in defaults entirely.
+            // This is deliberate: "I only want codex" must be expressible.
+            // Do not merge by name.
+            tab_layouts: file.tab_layouts.unwrap_or_else(default_tab_layouts),
+            agents: file.agents.unwrap_or_else(default_agents),
         };
         config.validate()?;
         Ok(config)
@@ -357,8 +477,161 @@ mod tests {
         );
         assert_eq!(config.ssh_config_file, format!("{home}/.config/ssh/config"));
         assert_eq!(config.ssh_history_file, format!("{home}/.zsh_history"));
-        assert!(config.tab_layouts.is_empty());
-        assert!(config.agents.is_empty());
+        assert_eq!(config.tab_layouts, default_tab_layouts());
+        assert_eq!(config.agents, default_agents());
+    }
+
+    #[test]
+    fn missing_file_yields_the_shipping_harnesses_in_menu_order() {
+        let _environment = TestEnvironment::new();
+        let config = Config::load().expect("load defaults");
+        let labels = config
+            .agents
+            .iter()
+            .map(|agent| {
+                render_label(
+                    agent.icon.as_deref(),
+                    agent.label.as_deref().unwrap_or(&agent.name),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            labels,
+            [
+                "\u{f15ce}  claude code",
+                "\u{ee0d}  codex",
+                "\u{f169f}  opencode",
+            ]
+        );
+    }
+
+    #[test]
+    fn default_agents_have_correct_options() {
+        let agents = default_agents();
+        let claude = &agents[0];
+
+        assert_eq!(
+            claude
+                .options
+                .iter()
+                .map(|option| option.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Opus", "OpusPlan (Sonnet)", "CCR", "Fable 5"]
+        );
+        assert_eq!(claude.options[0].args, ["--model", "claude-opus-4-8"]);
+        assert_eq!(
+            claude.options[1].args,
+            ["--model", "opusplan", "--effort", "medium"]
+        );
+        assert!(claude.options[2].args.is_empty());
+        assert_eq!(
+            claude.options[2].command.as_deref(),
+            Some(["ccr".to_owned(), "code".to_owned()].as_slice())
+        );
+        assert_eq!(claude.options[3].args, ["--model", "claude-fable-5"]);
+        assert!(claude.options[0].command.is_none());
+        assert!(claude.options[1].command.is_none());
+        assert!(claude.options[3].command.is_none());
+        assert!(agents[1].options.is_empty());
+        assert!(agents[2].options.is_empty());
+    }
+
+    #[test]
+    fn default_agents_have_empty_extra_args() {
+        assert!(default_agents()
+            .iter()
+            .all(|agent| agent.extra_args.is_empty()));
+    }
+
+    #[test]
+    fn user_agents_section_replaces_defaults() {
+        let environment = TestEnvironment::new();
+        environment.write(
+            r#"
+[[agents]]
+name = "custom"
+command = ["custom-agent"]
+"#,
+        );
+
+        let config = Config::load().expect("load custom agents");
+
+        assert_eq!(config.agents.len(), 1);
+        assert_eq!(config.agents[0].name, "custom");
+        assert!(config.agent("claude code").is_none());
+    }
+
+    #[test]
+    fn user_tab_layouts_section_replaces_defaults() {
+        let environment = TestEnvironment::new();
+        environment.write(
+            r#"
+[[tab_layouts]]
+name = "custom"
+
+  [[tab_layouts.panes]]
+  name = "shell"
+  type = "shell"
+"#,
+        );
+
+        let config = Config::load().expect("load custom layouts");
+
+        assert_eq!(config.tab_layouts.len(), 1);
+        assert_eq!(config.tab_layouts[0].name, "custom");
+        assert!(config.layout("agentic-coding").is_none());
+    }
+
+    #[test]
+    fn default_layout_has_correct_structure() {
+        let layouts = default_tab_layouts();
+        let layout = &layouts[0];
+
+        assert_eq!(layouts.len(), 1);
+        assert_eq!(layout.name, "agentic-coding");
+        assert!(layout.tab_label.is_none());
+        assert_eq!(layout.panes.len(), 3);
+
+        let agent = &layout.panes[0];
+        assert_eq!(agent.name, "agent");
+        assert!(agent.label.is_none());
+        assert!(agent.icon.is_none());
+        assert_eq!(agent.pane_type, PaneType::Agent);
+        assert!(agent.direction.is_none());
+        assert!(agent.ratio.is_none());
+        assert!(agent.split_from.is_none());
+        assert_eq!(agent.env.get("Q_NO_BANNER").map(String::as_str), Some("1"));
+
+        let files = &layout.panes[1];
+        assert_eq!(files.name, "files");
+        assert_eq!(files.label.as_deref(), Some("Files"));
+        assert_eq!(files.icon.as_deref(), Some("\u{f0968}"));
+        assert_eq!(files.pane_type, PaneType::Command);
+        assert_eq!(files.command.as_deref(), Some("yazi ."));
+        assert_eq!(files.direction, Some(Direction::Right));
+        assert_eq!(files.ratio, Some(0.62));
+        assert!(files.split_from.is_none());
+        assert_eq!(files.env.get("Q_NO_BANNER").map(String::as_str), Some("1"));
+
+        let term = &layout.panes[2];
+        assert_eq!(term.name, "term");
+        assert_eq!(term.label.as_deref(), Some("term"));
+        assert_eq!(term.icon.as_deref(), Some("\u{f489}"));
+        assert_eq!(term.pane_type, PaneType::Shell);
+        assert!(term.command.is_none());
+        assert_eq!(term.direction, Some(Direction::Down));
+        assert_eq!(term.ratio, Some(0.1));
+        assert!(term.split_from.is_none());
+        assert!(term.env.is_empty());
+    }
+
+    #[test]
+    fn default_tab_layout_resolves() {
+        let config = Config::test_default();
+
+        assert_eq!(config.default_tab_layout, "agentic-coding");
+        assert!(config.layout(&config.default_tab_layout).is_some());
     }
 
     #[test]

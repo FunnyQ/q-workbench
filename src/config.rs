@@ -322,9 +322,23 @@ impl Config {
         }
 
         let mut agent_names = BTreeSet::new();
+        let mut agent_labels: BTreeMap<String, &str> = BTreeMap::new();
         for agent in &self.agents {
             if !agent_names.insert(agent.name.as_str()) {
                 bail!("duplicate agent name: {}", agent.name);
+            }
+
+            // The harness menu returns the rendered row and maps it back to an agent by
+            // that string. Two agents rendering the same row would both be listed while
+            // only the first could ever be selected.
+            let label = agent.menu_label();
+            if let Some(other) = agent_labels.insert(label.clone(), agent.name.as_str()) {
+                bail!(
+                    "agents '{}' and '{}' render the same menu label: {}",
+                    other,
+                    agent.name,
+                    label
+                );
             }
 
             let mut option_names = BTreeSet::new();
@@ -473,6 +487,25 @@ impl Config {
             }
 
             for pane in &layout.panes {
+                // Only the agent pane launches a harness, so a pin on any other pane would
+                // be accepted here and then silently dropped by the launch flow.
+                if pane.pane_type != PaneType::Agent {
+                    if pane.agent.is_some() {
+                        bail!(
+                            "layout '{}' pane '{}': agent is only valid for type = \"agent\"",
+                            layout.name,
+                            pane.name
+                        );
+                    }
+                    if pane.option_name.is_some() {
+                        bail!(
+                            "layout '{}' pane '{}': option is only valid for type = \"agent\"",
+                            layout.name,
+                            pane.name
+                        );
+                    }
+                }
+
                 match (&pane.agent, &pane.option_name) {
                     (Some(agent_name), option_name) => {
                         let Some(agent) = self.agent(agent_name) else {
@@ -484,7 +517,7 @@ impl Config {
                             );
                         };
                         if let Some(option_name) = option_name {
-                            if !agent.options.iter().any(|option| option.name == *option_name) {
+                            if agent.option(option_name).is_none() {
                                 bail!(
                                     "layout '{}' pane '{}': agent '{}' has no option: {}",
                                     layout.name,
@@ -507,11 +540,22 @@ impl Config {
         }
 
         for agent in &self.agents {
-            if agent.command.is_empty() {
+            // An empty executable is as unlaunchable as an empty vector, and both fail
+            // only at exec time — after the tab is already on screen. Later argv entries
+            // may legitimately be empty strings, so only the executable is checked.
+            if agent
+                .command
+                .first()
+                .is_none_or(|executable| executable.trim().is_empty())
+            {
                 bail!("agent '{}': command is empty", agent.name);
             }
             for option in &agent.options {
-                if option.command.as_ref().is_some_and(Vec::is_empty) {
+                if option.command.as_ref().is_some_and(|command| {
+                    command
+                        .first()
+                        .is_none_or(|executable| executable.trim().is_empty())
+                }) {
                     bail!(
                         "agent '{}' option '{}': command override is empty",
                         agent.name,
@@ -531,7 +575,21 @@ impl Config {
     pub fn agent(&self, name: &str) -> Option<&Agent> {
         self.agents.iter().find(|agent| agent.name == name)
     }
+}
 
+impl Agent {
+    /// The harness menu row for this agent. The reverse lookup in the harness menu matches
+    /// on this exact string, so every site that renders an agent must go through here.
+    pub fn menu_label(&self) -> String {
+        render_label(
+            self.icon.as_deref(),
+            self.label.as_deref().unwrap_or(&self.name),
+        )
+    }
+
+    pub fn option(&self, name: &str) -> Option<&AgentOption> {
+        self.options.iter().find(|option| option.name == name)
+    }
 }
 
 fn config_path(home: &str) -> PathBuf {
@@ -570,10 +628,8 @@ fn expand_home(value: String, home: &str) -> String {
 mod tests {
     use super::*;
     use std::ffi::OsString;
-    use std::sync::{Mutex, MutexGuard};
+    use std::sync::MutexGuard;
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    static ENVIRONMENT: Mutex<()> = Mutex::new(());
 
     struct TestEnvironment {
         _guard: MutexGuard<'static, ()>,
@@ -583,9 +639,7 @@ mod tests {
 
     impl TestEnvironment {
         fn new() -> Self {
-            let guard = ENVIRONMENT
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let guard = crate::state::env_lock();
             let directory = env::temp_dir().join(format!(
                 "workbench-config-{}-{}",
                 std::process::id(),
@@ -688,12 +742,7 @@ mod tests {
         let labels = config
             .agents
             .iter()
-            .map(|agent| {
-                render_label(
-                    agent.icon.as_deref(),
-                    agent.label.as_deref().unwrap_or(&agent.name),
-                )
-            })
+            .map(Agent::menu_label)
             .collect::<Vec<_>>();
 
         assert_eq!(
@@ -944,34 +993,23 @@ name = "x"
 
     #[test]
     fn config_layout_returns_none_for_unknown_name() {
-        let config = Config {
-            dashboard_workspace: "default".to_owned(),
-            default_tab_layout: "agentic-coding".to_owned(),
-            project_registry_file: "projects.json".to_owned(),
-            projects_root: "/home/user/projects".to_owned(),
-            ssh_registry_file: "ssh.json".to_owned(),
-            ssh_config_file: "~/.ssh/config".to_owned(),
-            ssh_history_file: "~/.ssh/history".to_owned(),
-            tab_layouts: vec![],
-            agents: vec![],
-        };
-        assert_eq!(config.layout("nonexistent"), None);
+        assert_eq!(Config::test_default().layout("nonexistent"), None);
     }
 
     #[test]
     fn config_agent_returns_none_for_unknown_name() {
-        let config = Config {
-            dashboard_workspace: "default".to_owned(),
-            default_tab_layout: "agentic-coding".to_owned(),
-            project_registry_file: "projects.json".to_owned(),
-            projects_root: "/home/user/projects".to_owned(),
-            ssh_registry_file: "ssh.json".to_owned(),
-            ssh_config_file: "~/.ssh/config".to_owned(),
-            ssh_history_file: "~/.ssh/history".to_owned(),
-            tab_layouts: vec![],
-            agents: vec![],
-        };
-        assert_eq!(config.agent("nonexistent"), None);
+        assert_eq!(Config::test_default().agent("nonexistent"), None);
+    }
+
+    #[test]
+    fn agent_option_returns_none_for_unknown_name() {
+        let config = Config::test_default();
+        let agent = config.agent("claude code").expect("default agent");
+        assert_eq!(agent.option("nonexistent"), None);
+        assert_eq!(
+            agent.option("Opus").map(|option| option.name.as_str()),
+            Some("Opus")
+        );
     }
 
     fn validation_error(config: &Config) -> String {
@@ -1230,6 +1268,63 @@ name = "x"
 
         assert!(error.contains("claude code"), "{error}");
         assert!(error.contains("Opus"), "{error}");
+    }
+
+    #[test]
+    fn whitespace_agent_command_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.agents[0].command = vec![" ".to_owned(), "--model".to_owned()];
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("claude code"), "{error}");
+    }
+
+    #[test]
+    fn whitespace_option_command_override_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.agents[0].options[0].command = Some(vec![String::new(), "code".to_owned()]);
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("claude code"), "{error}");
+        assert!(error.contains("Opus"), "{error}");
+    }
+
+    #[test]
+    fn agent_on_a_non_agent_pane_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[1].agent = Some("codex".to_owned());
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("files"), "{error}");
+        assert!(error.contains("agent"), "{error}");
+    }
+
+    #[test]
+    fn option_on_a_non_agent_pane_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes[1].option_name = Some("Opus".to_owned());
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("agentic-coding"), "{error}");
+        assert!(error.contains("files"), "{error}");
+        assert!(error.contains("option"), "{error}");
+    }
+
+    #[test]
+    fn duplicate_rendered_agent_label_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.agents[1].icon = config.agents[0].icon.clone();
+        config.agents[1].label = Some("claude code".to_owned());
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("claude code"), "{error}");
+        assert!(error.contains("codex"), "{error}");
     }
 
     #[test]

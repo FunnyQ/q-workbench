@@ -6,7 +6,7 @@
 >
 > **Depends on**: launch/01, launch/03
 > **Blocks**: wiring/02, wiring/03
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -153,24 +153,24 @@ Note the `[[panes]]` entry's `id` is what the action's `--entrypoint` names. The
 
 ## Acceptance criteria
 
-- [ ] `LaunchOptions` and `InjectOptions` each carry `layout: Option<String>`, and every construction site compiles with it set.
-- [ ] `agent popup`, `agent launch`, and `agent inject` each accept an optional `--layout <NAME>`.
-- [ ] An unknown `--layout` value produces an error whose message contains that value.
-- [ ] Omitting `--layout` resolves `default_tab_layout`.
-- [ ] `inject()` forwards `--layout` into the argv it builds, quoted through `build_command()`.
-- [ ] `inject()` names the pane from the layout's root-pane label when one is set, else from the existing `AGENT_LABEL` constant, with a comment explaining the fallback.
-- [ ] `herdr-plugin.toml` gains a `new-assistant` action and an `assistant` popup pane whose `--entrypoint` and `id` match, and whose title glyph is byte-identical to U+F169F followed by two spaces.
-- [ ] The project picker's inject call passes `layout: None`.
+- [x] `LaunchOptions` and `InjectOptions` each carry `layout: Option<String>`, and every construction site compiles with it set.
+- [x] `agent popup`, `agent launch`, and `agent inject` each accept an optional `--layout <NAME>`.
+- [x] An unknown `--layout` value produces an error whose message contains that value.
+- [x] Omitting `--layout` resolves `default_tab_layout`.
+- [x] `inject()` forwards `--layout` into the argv it builds, quoted through `build_command()`.
+- [x] `inject()` names the pane from the layout's root-pane label when one is set, else from the existing `AGENT_LABEL` constant, with a comment explaining the fallback.
+- [x] `herdr-plugin.toml` gains a `new-assistant` action and an `assistant` popup pane whose `--entrypoint` and `id` match, and whose title glyph is byte-identical to U+F169F followed by two spaces.
+- [x] The project picker's inject call passes `layout: None`.
 
 ## Verification
 
-- [ ] `cargo test` passes.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] A test asserts that `launch` with an unknown layout name returns an error naming it and that the `FakeClient` recorded **zero** calls.
-- [ ] A test asserts that omitting the flag resolves the layout named by `default_tab_layout`.
-- [ ] A test round-trips an inject argv through `build_command()` with a layout name containing a space, then splits it back with `zsh -c 'set -- ...; printf "%s\0" "$@"'` and asserts the layout name arrives as exactly one argument. The existing round-trip test in `src/flows/dashboard.rs` is the shape to copy.
-- [ ] Run `python3 -c "print([hex(ord(c)) for c in open('herdr-plugin.toml').read() if ord(c) > 0xFFFF])"` and confirm every result is `0xf169f` or another intended plane-15 glyph — no `0xf169`.
-- [ ] Run `git status --short` and quote it. Expect `src/flows/agent.rs`, `src/main.rs`, `src/flows/picker.rs`, `herdr-plugin.toml`, plus at most this task file. Any OTHER path is a real scope violation.
+- [x] `cargo test` passes.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] A test asserts that `launch` with an unknown layout name returns an error naming it and that the `FakeClient` recorded **zero** calls.
+- [x] A test asserts that omitting the flag resolves the layout named by `default_tab_layout`.
+- [x] A test round-trips an inject argv through `build_command()` with a layout name containing a space, then splits it back with `zsh -c 'set -- ...; printf "%s\0" "$@"'` and asserts the layout name arrives as exactly one argument. The existing round-trip test in `src/flows/dashboard.rs` is the shape to copy.
+- [x] Run `python3 -c "print([hex(ord(c)) for c in open('herdr-plugin.toml').read() if ord(c) > 0xFFFF])"` and confirm every result is `0xf169f` or another intended plane-15 glyph — no `0xf169`.
+- [x] Run `git status --short` and quote it. Expect `src/flows/agent.rs`, `src/main.rs`, `src/flows/picker.rs`, `herdr-plugin.toml`, plus at most this task file. Any OTHER path is a real scope violation.
 
 ## Eval rubric
 

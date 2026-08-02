@@ -532,13 +532,6 @@ impl Config {
         self.agents.iter().find(|agent| agent.name == name)
     }
 
-    /// Bridge to the pre-schema call sites: the one agent that carries a model menu.
-    ///
-    /// Temporary. The launch flow resolves its agent from the layout instead, and this
-    /// goes away with the last caller.
-    pub(crate) fn menu_agent(&self) -> Option<&Agent> {
-        self.agents.iter().find(|agent| !agent.options.is_empty())
-    }
 }
 
 fn config_path(home: &str) -> PathBuf {

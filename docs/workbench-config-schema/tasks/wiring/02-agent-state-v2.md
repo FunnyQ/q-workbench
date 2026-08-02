@@ -6,7 +6,7 @@
 >
 > **Depends on**: launch/01, wiring/01
 > **Blocks**: wiring/04
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -134,26 +134,26 @@ Keep quoting every argument separately through `build_command()` from `src/shell
 
 ## Acceptance criteria
 
-- [ ] `LastAgentRecord` carries `agent`, `option`, `layout`, and `recorded_at`, with `option` skipped when `None`.
-- [ ] `STATE_VERSION` is `2`, and a v1 state file yields the default state rather than an error or a partial read.
-- [ ] The three harness label constants and every import of them are gone from the crate.
-- [ ] `last_choice_is_valid` enforces all three rules, including the both-directions option rule.
-- [ ] `write_state()` records the layout name; `get_for_pane()` returns the record and prunes an invalid one.
-- [ ] `injected_command()` emits `--layout <name>` when a record exists and omits it when none does, with `TTY_RESET` still leading and `--no-layout` still present.
-- [ ] Every argument in the injected command is quoted separately through `build_command()`.
+- [x] `LastAgentRecord` carries `agent`, `option`, `layout`, and `recorded_at`, with `option` skipped when `None`.
+- [x] `STATE_VERSION` is `2`, and a v1 state file yields the default state rather than an error or a partial read.
+- [x] The three harness label constants and every import of them are gone from the crate.
+- [x] `last_choice_is_valid` enforces all three rules, including the both-directions option rule.
+- [x] `write_state()` records the layout name; `get_for_pane()` returns the record and prunes an invalid one.
+- [x] `injected_command()` emits `--layout <name>` when a record exists and omits it when none does, with `TTY_RESET` still leading and `--no-layout` still present.
+- [x] Every argument in the injected command is quoted separately through `build_command()`.
 
 ## Verification
 
-- [ ] `cargo test` passes.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] A test writes a `{"version":1,...}` file and asserts `read_state()` returns the default.
-- [ ] A test stores a record whose agent name is absent from the config, asserts the lookup returns `None`, and asserts the file was rewritten without that pane.
-- [ ] A test stores a record whose option name is absent from that agent's options and asserts it is dropped.
-- [ ] A test stores a record with no option for an agent that *has* options and asserts it is dropped.
-- [ ] A test asserts the injected command for a pane whose record names the pinned layout contains `--layout personal-assistant`, and that the string still starts with the TTY reset sequence.
-- [ ] A test asserts the injected command for a pane with no record contains no `--layout`.
-- [ ] `rg 'HARNESS_CLAUDE|HARNESS_CODEX|HARNESS_OPENCODE' src/` returns nothing.
-- [ ] Run `git status --short` and quote it. Expect `src/state.rs`, `src/flows/agent.rs`, `src/flows/restart.rs`, plus at most this task file. Any OTHER path is a real scope violation.
+- [x] `cargo test` passes.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] A test writes a `{"version":1,...}` file and asserts `read_state()` returns the default.
+- [x] A test stores a record whose agent name is absent from the config, asserts the lookup returns `None`, and asserts the file was rewritten without that pane.
+- [x] A test stores a record whose option name is absent from that agent's options and asserts it is dropped.
+- [x] A test stores a record with no option for an agent that *has* options and asserts it is dropped.
+- [x] A test asserts the injected command for a pane whose record names the pinned layout contains `--layout personal-assistant`, and that the string still starts with the TTY reset sequence.
+- [x] A test asserts the injected command for a pane with no record contains no `--layout`.
+- [x] `rg 'HARNESS_CLAUDE|HARNESS_CODEX|HARNESS_OPENCODE' src/` returns nothing.
+- [x] Run `git status --short` and quote it. Expect `src/state.rs`, `src/flows/agent.rs`, `src/flows/restart.rs`, plus at most this task file. Any OTHER path is a real scope violation.
 
 ## Eval rubric
 

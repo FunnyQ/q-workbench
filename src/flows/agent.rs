@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::io::{self, IsTerminal, Write};
 use std::os::unix::process::CommandExt;
@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Map, Value};
 
-use crate::config::Config;
+use crate::config::{render_label, Config, PaneType, TabLayout};
 #[cfg(test)]
 use crate::config::{Agent, AgentOption};
 use crate::flows::{invoking_pane_cwd, nonempty_env, FlowError, FlowResult, Outcome, PaneCwd};
@@ -30,8 +30,6 @@ const USAGE_DEBUG: &str = "\u{ead8}  debug";
 const USAGE_WRITE: &str = "\u{f19b9}  let me write…";
 const WORKTREE_TITLE: &str = "  New Worktree";
 const WORKTREE_SUBTITLE: &str = "Filter a branch, or name a new one.";
-const FILES_LABEL: &str = "\u{f0968}  Files";
-const TERM_LABEL: &str = "\u{f489}  term";
 const AGENT_LABEL: &str = "\u{f169f}  agent";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,7 +88,10 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
             None => choice = without_worktree(choice, &repo_root),
         }
     }
-    apply_launch_layout(client, options, &choice)?;
+    let layout = config
+        .layout(&config.default_tab_layout)
+        .expect("validated at load");
+    apply_launch_layout(client, layout, options, &choice)?;
     std::env::set_current_dir(&choice.project_dir)
         .with_context(|| format!("failed to enter {}", choice.project_dir.display()))?;
     Command::new("clear")
@@ -149,6 +150,7 @@ pub fn inject(client: &dyn HerdrClient, options: &InjectOptions) -> FlowResult {
 
 fn apply_launch_layout(
     client: &dyn HerdrClient,
+    layout: &TabLayout,
     options: &LaunchOptions,
     choice: &AgentChoice,
 ) -> Result<()> {
@@ -167,55 +169,72 @@ fn apply_launch_layout(
 
     // Splitting earlier resizes menus and prevents the selected worktree from driving
     // every pane's cwd, so both splits remain after the decision flow.
-    build_side_panes(client, &options.pane_id, &cwd)?;
+    build_side_panes(client, layout, &options.pane_id, &cwd)?;
     Ok(())
 }
 
-/// The Files/term half of the three-pane layout, shared by both entry points.
-///
-/// The popup builds the tab first and the in-pane launcher defers the splits until
-/// after its menus, but the six calls between them are identical — same ratios, same
-/// labels, same `Q_NO_BANNER` on the first split only — so they are written once. A
-/// drift in ratio or label between the two would be an accident, never a decision.
-fn build_side_panes(client: &dyn HerdrClient, agent_pane: &str, cwd: &str) -> Result<()> {
-    let files_pane = client
-        .pane_split(json!({
-            "target_pane_id": agent_pane,
-            "direction": "right",
-            "ratio": 0.38,
-            "cwd": cwd,
-            "env": { "Q_NO_BANNER": "1" },
-            "focus": false,
-        }))
-        .context("failed to create files pane")?
-        .pane
-        .pane_id;
-    if files_pane.is_empty() {
-        return Err(anyhow!("first pane.split returned an empty pane id"));
+fn build_side_panes(
+    client: &dyn HerdrClient,
+    layout: &TabLayout,
+    root_pane: &str,
+    cwd: &str,
+) -> Result<()> {
+    let mut pane_ids = BTreeMap::from([(layout.panes[0].name.as_str(), root_pane.to_owned())]);
+    let mut previous_pane_id = root_pane.to_owned();
+    for pane in &layout.panes[1..] {
+        let target_pane_id = pane
+            .split_from
+            .as_deref()
+            .map(|name| pane_ids.get(name).expect("validated at load"))
+            .unwrap_or(&previous_pane_id);
+        let direction = match pane.direction.expect("validated at load") {
+            crate::config::Direction::Right => "right",
+            crate::config::Direction::Down => "down",
+        };
+        // Config ratios are each pane's own share; Herdr expects the original pane's
+        // share. For example, the defaults convert 0.62 to 0.38 and 0.1 to 0.9.
+        let ratio = 1.0 - pane.ratio.expect("validated at load");
+        let mut params = Map::from_iter([
+            ("target_pane_id".to_owned(), json!(target_pane_id)),
+            ("direction".to_owned(), json!(direction)),
+            ("ratio".to_owned(), json!(ratio)),
+            ("cwd".to_owned(), json!(cwd)),
+            ("focus".to_owned(), json!(false)),
+        ]);
+        if !pane.env.is_empty() {
+            params.insert("env".to_owned(), json!(pane.env));
+        }
+        let pane_id = client
+            .pane_split(Value::Object(params))
+            .with_context(|| format!("failed to create pane {}", pane.name))?
+            .pane
+            .pane_id;
+        if pane_id.is_empty() {
+            return Err(anyhow!(
+                "pane.split returned an empty pane id for pane {}",
+                pane.name
+            ));
+        }
+        pane_ids.insert(pane.name.as_str(), pane_id.clone());
+        previous_pane_id = pane_id.clone();
+        if let Some(label) = &pane.label {
+            client
+                .pane_rename(json!({
+                    "pane_id": pane_id,
+                    "label": render_label(pane.icon.as_deref(), label),
+                }))
+                .with_context(|| format!("failed to rename pane {}", pane.name))?;
+        }
+        if pane.pane_type == PaneType::Command {
+            client
+                .pane_send_input(json!({
+                    "pane_id": pane_id,
+                    "text": pane.command.as_deref().expect("validated at load"),
+                    "keys": ["enter"],
+                }))
+                .with_context(|| format!("failed to start command in pane {}", pane.name))?;
+        }
     }
-    client
-        .pane_rename(json!({ "pane_id": files_pane, "label": FILES_LABEL }))
-        .context("failed to rename files pane")?;
-    client
-        .pane_send_input(json!({ "pane_id": files_pane, "text": "yazi .", "keys": ["enter"] }))
-        .context("failed to start yazi")?;
-    let term_pane = client
-        .pane_split(json!({
-            "target_pane_id": files_pane,
-            "direction": "down",
-            "ratio": 0.9,
-            "cwd": cwd,
-            "focus": false,
-        }))
-        .context("failed to create terminal pane")?
-        .pane
-        .pane_id;
-    if term_pane.is_empty() {
-        return Err(anyhow!("second pane.split returned an empty pane id"));
-    }
-    client
-        .pane_rename(json!({ "pane_id": term_pane, "label": TERM_LABEL }))
-        .context("failed to rename terminal pane")?;
     Ok(())
 }
 
@@ -259,7 +278,10 @@ pub fn popup(client: &dyn HerdrClient, worktree: bool) -> FlowResult {
         }
     }
 
-    create_popup_tab(client, &choice, nonempty_env("HERDR_WORKSPACE_ID"))?;
+    let layout = config
+        .layout(&config.default_tab_layout)
+        .expect("validated at load");
+    create_popup_tab(client, layout, &choice, nonempty_env("HERDR_WORKSPACE_ID"))?;
     Ok(Outcome::Done)
 }
 
@@ -309,6 +331,7 @@ fn viewport_dimension(variable: &str, tput_capability: &str) -> u16 {
 
 fn create_popup_tab(
     client: &dyn HerdrClient,
+    layout: &TabLayout,
     choice: &AgentChoice,
     workspace_id: Option<String>,
 ) -> Result<()> {
@@ -316,9 +339,11 @@ fn create_popup_tab(
     let mut params = Map::from_iter([
         ("label".to_owned(), json!(choice.label)),
         ("cwd".to_owned(), json!(cwd)),
-        ("env".to_owned(), json!({ "Q_NO_BANNER": "1" })),
         ("focus".to_owned(), json!(false)),
     ]);
+    if !layout.panes[0].env.is_empty() {
+        params.insert("env".to_owned(), json!(layout.panes[0].env));
+    }
     if let Some(workspace_id) = workspace_id {
         params.insert("workspace_id".to_owned(), json!(workspace_id));
     }
@@ -330,7 +355,7 @@ fn create_popup_tab(
     let result = if tab_id.is_empty() || agent_pane.is_empty() {
         Err(anyhow!("tab.create returned an empty tab or pane id"))
     } else {
-        build_popup_tab(client, choice, &tab_id, &agent_pane)
+        build_popup_tab(client, layout, choice, &tab_id, &agent_pane)
     };
     if let Err(error) = result {
         if !tab_id.is_empty() {
@@ -348,6 +373,7 @@ fn create_popup_tab(
 
 fn build_popup_tab(
     client: &dyn HerdrClient,
+    layout: &TabLayout,
     choice: &AgentChoice,
     tab_id: &str,
     agent_pane: &str,
@@ -359,7 +385,7 @@ fn build_popup_tab(
     client
         .tab_rename(json!({ "tab_id": tab_id, "label": choice.label }))
         .context("failed to rename agent tab")?;
-    build_side_panes(client, agent_pane, &cwd)?;
+    build_side_panes(client, layout, agent_pane, &cwd)?;
     client
         .pane_send_input(json!({
             "pane_id": agent_pane,
@@ -542,6 +568,17 @@ fn choose_agent_with_last(
     } else {
         (harness, None)
     };
+    let agent_name = config
+        .agents
+        .iter()
+        .find(|agent| {
+            render_label(
+                agent.icon.as_deref(),
+                agent.label.as_deref().unwrap_or(&agent.name),
+            ) == harness
+        })
+        .map(|agent| agent.name.clone())
+        .with_context(|| format!("no agent entry for: {harness}"))?;
     let model_label = if selected_last {
         stored_model
     } else if harness.contains("claude code") {
@@ -577,7 +614,7 @@ fn choose_agent_with_last(
         (None, _) => cwd.to_path_buf(),
     };
     let label = compose_label(&usage, branch.as_deref());
-    let launch = build_launch(config, &harness, model_label.as_deref())?;
+    let launch = build_launch(config, &agent_name, model_label.as_deref())?;
 
     Ok(Some(AgentChoice {
         label,
@@ -618,45 +655,35 @@ fn select_usage(menu: &mut impl Menu) -> Result<Option<String>> {
     Ok(if label.is_empty() { None } else { Some(label) })
 }
 
-fn build_launch(config: &Config, harness: &str, model_label: Option<&str>) -> Result<Vec<String>> {
-    if harness.contains("codex") {
-        let agent = config
-            .agents
-            .iter()
-            .find(|agent| harness.contains(&agent.name))
-            .context("codex harness has no agent entry")?;
-        let mut launch = agent.command.clone();
-        launch.extend(agent.extra_args.clone());
-        return Ok(launch);
-    }
-    if harness.contains("opencode") {
-        let agent = config
-            .agents
-            .iter()
-            .find(|agent| harness.contains(&agent.name))
-            .context("opencode harness has no agent entry")?;
-        let mut launch = agent.command.clone();
-        launch.extend(agent.extra_args.clone());
-        return Ok(launch);
-    }
+fn build_launch(
+    config: &Config,
+    agent_name: &str,
+    option_name: Option<&str>,
+) -> Result<Vec<String>> {
+    let agent = config
+        .agent(agent_name)
+        .with_context(|| format!("no agent entry for: {agent_name}"))?;
+    let option = match option_name {
+        Some(option_name) => Some(
+            agent
+                .options
+                .iter()
+                .find(|option| option.name == option_name)
+                .with_context(|| format!("agent {agent_name} has no option: {option_name}"))?,
+        ),
+        None if agent.options.is_empty() => None,
+        None => bail!("agent {agent_name} requires an option"),
+    };
 
-    let label = model_label.context("claude harness requires a model label")?;
-    if let Some(agent) = config.menu_agent() {
-        if let Some(option) = agent.options.iter().find(|o| o.name == label) {
-            if let Some(command) = &option.command {
-                return Ok(command.clone());
-            }
-            let mut launch = {
-                let mut cmd = agent.command.clone();
-                cmd.extend(option.args.clone());
-                cmd
-            };
-            launch.extend(agent.extra_args.clone());
-            return Ok(launch);
-        }
-    }
-
-    bail!("model label has no agent option entry: {label}")
+    let mut launch = option
+        .and_then(|option| option.command.as_ref())
+        .unwrap_or(&agent.command)
+        .clone();
+    launch.extend(option.into_iter().flat_map(|option| option.args.clone()));
+    // A command override changes only the executable; extra args apply to every
+    // launch of the agent, including overridden commands.
+    launch.extend(agent.extra_args.clone());
+    Ok(launch)
 }
 
 fn select_worktree(
@@ -1133,6 +1160,11 @@ mod popup {
         }
     }
 
+    fn default_layout() -> TabLayout {
+        let config = Config::test_default();
+        config.layout(&config.default_tab_layout).unwrap().clone()
+    }
+
     fn queue_popup_create(client: &FakeClient) {
         client.queue_response(
             "tab.create",
@@ -1147,6 +1179,152 @@ mod popup {
     fn queue_popup_splits(client: &FakeClient) {
         client.queue_response("pane.split", json!({ "pane": { "pane_id": "p2" } }));
         client.queue_response("pane.split", json!({ "pane": { "pane_id": "p3" } }));
+    }
+
+    #[test]
+    fn default_layout_reproduces_side_pane_calls() {
+        let client = FakeClient::default();
+        queue_popup_splits(&client);
+
+        build_side_panes(&client, &default_layout(), "root", "/projects/example").unwrap();
+
+        let calls = client.calls.into_inner();
+        assert_eq!(calls.len(), 5);
+        assert_eq!(calls[0].0, "pane.split");
+        assert_eq!(calls[0].1["target_pane_id"], "root");
+        assert_eq!(calls[0].1["direction"], "right");
+        assert!((calls[0].1["ratio"].as_f64().unwrap() - 0.38).abs() < 1e-9);
+        assert_eq!(calls[0].1["cwd"], "/projects/example");
+        assert_eq!(calls[0].1["env"], json!({ "Q_NO_BANNER": "1" }));
+        assert_eq!(calls[0].1["focus"], false);
+        assert_eq!(
+            calls[1],
+            (
+                "pane.rename".to_owned(),
+                json!({ "pane_id": "p2", "label": "\u{f0968}  Files" }),
+            )
+        );
+        assert_eq!(
+            calls[2],
+            (
+                "pane.send_input".to_owned(),
+                json!({ "pane_id": "p2", "text": "yazi .", "keys": ["enter"] }),
+            )
+        );
+        assert_eq!(calls[3].0, "pane.split");
+        assert_eq!(calls[3].1["target_pane_id"], "p2");
+        assert_eq!(calls[3].1["direction"], "down");
+        assert!((calls[3].1["ratio"].as_f64().unwrap() - 0.9).abs() < 1e-9);
+        assert_eq!(calls[3].1["cwd"], "/projects/example");
+        assert_eq!(calls[3].1["focus"], false);
+        assert!(calls[3].1.get("env").is_none());
+        assert_eq!(
+            calls[4],
+            (
+                "pane.rename".to_owned(),
+                json!({ "pane_id": "p3", "label": "\u{f489}  term" }),
+            )
+        );
+        assert_eq!(
+            calls,
+            vec![
+                (
+                    "pane.split".to_owned(),
+                    json!({
+                        "target_pane_id": "root", "direction": "right", "ratio": 0.38,
+                        "cwd": "/projects/example", "env": { "Q_NO_BANNER": "1" },
+                        "focus": false,
+                    }),
+                ),
+                (
+                    "pane.rename".to_owned(),
+                    json!({ "pane_id": "p2", "label": "\u{f0968}  Files" }),
+                ),
+                (
+                    "pane.send_input".to_owned(),
+                    json!({ "pane_id": "p2", "text": "yazi .", "keys": ["enter"] }),
+                ),
+                (
+                    "pane.split".to_owned(),
+                    json!({
+                        "target_pane_id": "p2", "direction": "down", "ratio": 0.9,
+                        "cwd": "/projects/example", "focus": false,
+                    }),
+                ),
+                (
+                    "pane.rename".to_owned(),
+                    json!({ "pane_id": "p3", "label": "\u{f489}  term" }),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn split_from_branches_back_to_named_pane() {
+        let client = FakeClient::default();
+        let mut layout = default_layout();
+        let mut fourth = layout.panes[2].clone();
+        fourth.name = "logs".to_owned();
+        fourth.label = None;
+        fourth.split_from = Some(layout.panes[0].name.clone());
+        layout.panes.push(fourth);
+        queue_popup_splits(&client);
+        client.queue_response("pane.split", json!({ "pane": { "pane_id": "p4" } }));
+
+        build_side_panes(&client, &layout, "root", "/projects/example").unwrap();
+
+        let calls = client.calls.into_inner();
+        let splits = calls
+            .iter()
+            .filter(|(method, _)| method == "pane.split")
+            .collect::<Vec<_>>();
+        assert_eq!(splits[2].1["target_pane_id"], "root");
+    }
+
+    #[test]
+    fn label_less_pane_produces_no_rename() {
+        let client = FakeClient::default();
+        let mut layout = default_layout();
+        layout.panes[1].label = None;
+        queue_popup_splits(&client);
+
+        build_side_panes(&client, &layout, "root", "/projects/example").unwrap();
+
+        assert!(!client
+            .calls
+            .into_inner()
+            .iter()
+            .any(|(method, params)| { method == "pane.rename" && params["pane_id"] == "p2" }));
+    }
+
+    #[test]
+    fn shell_pane_sends_no_input() {
+        let client = FakeClient::default();
+        let mut layout = default_layout();
+        layout.panes.remove(1);
+        client.queue_response("pane.split", json!({ "pane": { "pane_id": "p2" } }));
+
+        build_side_panes(&client, &layout, "root", "/projects/example").unwrap();
+
+        assert!(!client
+            .calls
+            .into_inner()
+            .iter()
+            .any(|(method, _)| method == "pane.send_input"));
+    }
+
+    #[test]
+    fn empty_pane_id_fails_loudly() {
+        let client = FakeClient::default();
+        client.queue_response("pane.split", json!({ "pane": { "pane_id": "" } }));
+
+        let error =
+            build_side_panes(&client, &default_layout(), "root", "/projects/example").unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "pane.split returned an empty pane id for pane files"
+        );
     }
 
     fn launch_options(tab_id: Option<&str>, no_layout: bool) -> LaunchOptions {
@@ -1165,7 +1343,14 @@ mod popup {
         let client = FakeClient::default();
         queue_popup_splits(&client);
 
-        apply_launch_layout(&client, &launch_options(Some("t1"), false), &popup_choice()).unwrap();
+        let layout = default_layout();
+        apply_launch_layout(
+            &client,
+            &layout,
+            &launch_options(Some("t1"), false),
+            &popup_choice(),
+        )
+        .unwrap();
 
         assert_eq!(
             client.calls.into_inner(),
@@ -1187,7 +1372,13 @@ mod popup {
                 ),
                 (
                     "pane.rename".to_owned(),
-                    json!({ "pane_id": "p2", "label": FILES_LABEL })
+                    json!({
+                        "pane_id": "p2",
+                        "label": render_label(
+                            layout.panes[1].icon.as_deref(),
+                            layout.panes[1].label.as_deref().unwrap(),
+                        ),
+                    })
                 ),
                 (
                     "pane.send_input".to_owned(),
@@ -1202,7 +1393,13 @@ mod popup {
                 ),
                 (
                     "pane.rename".to_owned(),
-                    json!({ "pane_id": "p3", "label": TERM_LABEL })
+                    json!({
+                        "pane_id": "p3",
+                        "label": render_label(
+                            layout.panes[2].icon.as_deref(),
+                            layout.panes[2].label.as_deref().unwrap(),
+                        ),
+                    })
                 ),
             ]
         );
@@ -1212,7 +1409,13 @@ mod popup {
     fn no_layout_skips_splits_and_tab_rename_is_optional() {
         let client = FakeClient::default();
 
-        apply_launch_layout(&client, &launch_options(None, true), &popup_choice()).unwrap();
+        apply_launch_layout(
+            &client,
+            &default_layout(),
+            &launch_options(None, true),
+            &popup_choice(),
+        )
+        .unwrap();
 
         assert_eq!(
             client.calls.into_inner(),
@@ -1281,7 +1484,8 @@ mod popup {
         queue_popup_create(&client);
         queue_popup_splits(&client);
 
-        create_popup_tab(&client, &popup_choice(), None).unwrap();
+        let layout = default_layout();
+        create_popup_tab(&client, &layout, &popup_choice(), None).unwrap();
 
         assert_eq!(
             client.calls.into_inner(),
@@ -1312,7 +1516,13 @@ mod popup {
                 ),
                 (
                     "pane.rename".to_owned(),
-                    json!({ "pane_id": "p2", "label": FILES_LABEL })
+                    json!({
+                        "pane_id": "p2",
+                        "label": render_label(
+                            layout.panes[1].icon.as_deref(),
+                            layout.panes[1].label.as_deref().unwrap(),
+                        ),
+                    })
                 ),
                 (
                     "pane.send_input".to_owned(),
@@ -1327,7 +1537,13 @@ mod popup {
                 ),
                 (
                     "pane.rename".to_owned(),
-                    json!({ "pane_id": "p3", "label": TERM_LABEL })
+                    json!({
+                        "pane_id": "p3",
+                        "label": render_label(
+                            layout.panes[2].icon.as_deref(),
+                            layout.panes[2].label.as_deref().unwrap(),
+                        ),
+                    })
                 ),
                 (
                     "pane.send_input".to_owned(),
@@ -1346,7 +1562,7 @@ mod popup {
             let client = FakeClient::default();
             queue_popup_create(&client);
             queue_popup_splits(&client);
-            create_popup_tab(&client, &popup_choice(), workspace).unwrap();
+            create_popup_tab(&client, &default_layout(), &popup_choice(), workspace).unwrap();
             assert_eq!(
                 client.calls.borrow()[0].1.get("workspace_id"),
                 expected.as_ref()
@@ -1415,7 +1631,8 @@ mod popup {
                 *count += 1;
             }
 
-            let error = create_popup_tab(&client, &popup_choice(), None).unwrap_err();
+            let error =
+                create_popup_tab(&client, &default_layout(), &popup_choice(), None).unwrap_err();
             let flow_error = error.downcast_ref::<FlowError>().unwrap();
             assert_eq!(flow_error.title(), Some("Agent tab failed"));
             assert_eq!(flow_error.prefix(), Some("The incomplete tab was closed."));
@@ -1434,7 +1651,7 @@ mod popup {
         let client = FakeClient::default();
         let choice: Option<AgentChoice> = None;
         if let Some(choice) = choice {
-            create_popup_tab(&client, &choice, None).unwrap();
+            create_popup_tab(&client, &default_layout(), &choice, None).unwrap();
         }
         assert!(client.calls.into_inner().is_empty());
     }
@@ -1443,19 +1660,22 @@ mod popup {
     fn popup_extra_args_preserve_toml_array_boundaries_and_bypass_is_opt_in() {
         let mut config = config();
         config.agents[1].extra_args = Vec::new();
-        assert_eq!(
-            build_launch(&config, HARNESS_CODEX, None).unwrap(),
-            ["codex"]
-        );
+        assert_eq!(build_launch(&config, "codex", None).unwrap(), ["codex"]);
         config.agents[1].extra_args = vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()];
-        assert_eq!(build_launch(&config, HARNESS_CODEX, None).unwrap().len(), 2);
+        assert_eq!(
+            build_launch(&config, "codex", None).unwrap(),
+            ["codex", "--dangerously-bypass-approvals-and-sandbox"]
+        );
         config.agents[1].extra_args = ["--search", "--profile", "work"]
             .map(str::to_owned)
             .to_vec();
-        assert_eq!(build_launch(&config, HARNESS_CODEX, None).unwrap().len(), 4);
+        assert_eq!(
+            build_launch(&config, "codex", None).unwrap(),
+            ["codex", "--search", "--profile", "work"]
+        );
         config.agents[1].extra_args = vec!["--profile work".to_owned()];
         assert_eq!(
-            build_launch(&config, HARNESS_CODEX, None).unwrap(),
+            build_launch(&config, "codex", None).unwrap(),
             ["codex", "--profile work"]
         );
     }
@@ -1474,7 +1694,7 @@ mod popup {
                 Agent {
                     name: "claude code".to_owned(),
                     label: None,
-                    icon: None,
+                    icon: Some("\u{f15ce}".to_owned()),
                     command: vec!["claude".to_owned()],
                     extra_args: vec!["argument with space".to_owned()],
                     options: vec![
@@ -1505,7 +1725,7 @@ mod popup {
                 Agent {
                     name: "codex".to_owned(),
                     label: None,
-                    icon: None,
+                    icon: Some("\u{ee0d}".to_owned()),
                     command: vec!["codex".to_owned()],
                     extra_args: vec!["--search".to_owned()],
                     options: Vec::new(),
@@ -1513,7 +1733,7 @@ mod popup {
                 Agent {
                     name: "opencode".to_owned(),
                     label: None,
-                    icon: None,
+                    icon: Some("\u{f169f}".to_owned()),
                     command: vec!["opencode".to_owned()],
                     extra_args: Vec::new(),
                     options: Vec::new(),
@@ -1714,70 +1934,90 @@ mod popup {
 
     #[test]
     fn launch_commands_match_every_harness_and_model_rule() {
-        let config = config();
+        let config = Config::test_default();
+        assert_eq!(build_launch(&config, "codex", None).unwrap(), ["codex"]);
         assert_eq!(
-            build_launch(&config, HARNESS_CODEX, None).unwrap(),
-            ["codex", "--search"]
-        );
-        assert_eq!(
-            build_launch(&config, HARNESS_OPENCODE, None).unwrap(),
+            build_launch(&config, "opencode", None).unwrap(),
             ["opencode"]
         );
-        // A command override replaces the agent command, option args, and extra args.
         assert_eq!(
-            build_launch(&config, HARNESS_CLAUDE, Some("CCR")).unwrap(),
+            build_launch(&config, "claude code", Some("CCR")).unwrap(),
             ["ccr", "code"]
         );
         assert_eq!(
-            build_launch(&config, HARNESS_CLAUDE, Some("Opus")).unwrap(),
-            [
-                "claude",
-                "--model",
-                "claude-opus-4-8",
-                "argument with space"
-            ]
+            build_launch(&config, "claude code", Some("Opus")).unwrap(),
+            ["claude", "--model", "claude-opus-4-8"]
         );
         assert_eq!(
-            build_launch(&config, HARNESS_CLAUDE, Some("OpusPlan (Sonnet)")).unwrap(),
-            [
-                "claude",
-                "--model",
-                "opusplan",
-                "--effort",
-                "medium",
-                "argument with space"
-            ]
+            build_launch(&config, "claude code", Some("OpusPlan (Sonnet)")).unwrap(),
+            ["claude", "--model", "opusplan", "--effort", "medium"]
         );
         assert_eq!(
-            build_launch(&config, HARNESS_CLAUDE, Some("Fable 5")).unwrap(),
-            ["claude", "--model", "claude-fable-5", "argument with space"]
+            build_launch(&config, "claude code", Some("Fable 5")).unwrap(),
+            ["claude", "--model", "claude-fable-5"]
         );
     }
 
     #[test]
-    fn an_extra_argument_containing_a_space_stays_one_entry() {
+    fn extra_args_reach_plain_and_command_override_options() {
         let mut config = config();
-        config.agents[0].extra_args = vec![
-            "--add-dir".to_owned(),
-            "/Users/q/My Projects".to_owned(),
-            "--dangerously-skip-permissions".to_owned(),
-        ];
-        config.agents[1].extra_args = vec!["--cd".to_owned(), "/Users/q/My Projects".to_owned()];
+        config.agents[0].extra_args = ["--search", "--profile", "work"]
+            .map(str::to_owned)
+            .to_vec();
 
-        let claude = build_launch(&config, HARNESS_CLAUDE, Some("Opus")).unwrap();
         assert_eq!(
-            claude,
+            build_launch(&config, "claude code", Some("Opus")).unwrap(),
             [
                 "claude",
                 "--model",
                 "claude-opus-4-8",
-                "--add-dir",
-                "/Users/q/My Projects",
-                "--dangerously-skip-permissions"
+                "--search",
+                "--profile",
+                "work"
             ]
         );
-        let codex = build_launch(&config, HARNESS_CODEX, None).unwrap();
-        assert_eq!(codex, ["codex", "--cd", "/Users/q/My Projects"]);
+        assert_eq!(
+            build_launch(&config, "claude code", Some("CCR")).unwrap(),
+            ["ccr", "code", "--search", "--profile", "work"]
+        );
+    }
+
+    #[test]
+    fn command_override_still_takes_its_option_args() {
+        let mut config = config();
+        config.agents[0].extra_args.clear();
+        config.agents[0].options[2].args = vec!["--flag".to_owned()];
+
+        assert_eq!(
+            build_launch(&config, "claude code", Some("CCR")).unwrap(),
+            ["ccr", "code", "--flag"]
+        );
+    }
+
+    #[test]
+    fn a_spaced_option_argument_survives_as_one_argument() {
+        let mut config = config();
+        config.agents[0].extra_args.clear();
+        config.agents[0].command.push("code".to_owned());
+        config.agents[0].options[0].args =
+            ["--cd", "/Users/q/My Projects"].map(str::to_owned).to_vec();
+
+        assert_eq!(
+            build_launch(&config, "claude code", Some("Opus")).unwrap(),
+            ["claude", "code", "--cd", "/Users/q/My Projects"]
+        );
+    }
+
+    #[test]
+    fn missing_launch_names_are_named_errors() {
+        let config = config();
+
+        let error = build_launch(&config, "missing agent", None).unwrap_err();
+        assert!(error.to_string().contains("missing agent"));
+        let error = build_launch(&config, "claude code", Some("missing option")).unwrap_err();
+        assert!(error.to_string().contains("missing option"));
+        let error = build_launch(&config, "claude code", None).unwrap_err();
+        assert!(error.to_string().contains("claude code"));
     }
 
     #[test]
@@ -1786,18 +2026,15 @@ mod popup {
         config.agents[0].extra_args = Vec::new();
         config.agents[1].extra_args = Vec::new();
         assert_eq!(
-            build_launch(&config, HARNESS_CLAUDE, Some("Opus")).unwrap(),
+            build_launch(&config, "claude code", Some("Opus")).unwrap(),
             ["claude", "--model", "claude-opus-4-8"]
         );
-        assert_eq!(
-            build_launch(&config, HARNESS_CODEX, None).unwrap(),
-            ["codex"]
-        );
+        assert_eq!(build_launch(&config, "codex", None).unwrap(), ["codex"]);
 
         config.agents[0].extra_args = vec!["--dangerously-skip-permissions".to_owned()];
         config.agents[1].extra_args = vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()];
         assert_eq!(
-            build_launch(&config, HARNESS_CLAUDE, Some("Opus")).unwrap(),
+            build_launch(&config, "claude code", Some("Opus")).unwrap(),
             [
                 "claude",
                 "--model",
@@ -1806,7 +2043,7 @@ mod popup {
             ]
         );
         assert_eq!(
-            build_launch(&config, HARNESS_CODEX, None).unwrap(),
+            build_launch(&config, "codex", None).unwrap(),
             ["codex", "--dangerously-bypass-approvals-and-sandbox"]
         );
     }

@@ -1,8 +1,7 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 // The binary is a thin shell over the library target: declaring the modules here too
@@ -42,10 +41,6 @@ enum Command {
         command: SshCommand,
     },
     Dashboard,
-    Config {
-        #[command(subcommand)]
-        command: ConfigCommand,
-    },
     Herdr {
         #[command(subcommand)]
         command: HerdrCommand,
@@ -122,34 +117,6 @@ enum SshCommand {
 }
 
 #[derive(Debug, Subcommand)]
-enum ConfigCommand {
-    /// Migrate config.zsh to TOML.
-    ///
-    /// The source file is executed by zsh.
-    ///
-    /// Example: `workbench config migrate --from ./config.zsh`, review the
-    /// output, then run `workbench config migrate --from ./config.zsh --write`.
-    ///
-    /// `--from` defaults to
-    /// `${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins/config/q.workbench/config.zsh`.
-    /// `--write` writes to the resolved config.toml path and refuses to
-    /// overwrite it without `--force`. By default, the TOML is printed to
-    /// stdout. `--write` always refuses a destination that is the source
-    /// itself, or that is not named `.toml`.
-    Migrate {
-        /// The config.zsh to read. zsh executes it.
-        #[arg(long, value_name = "PATH")]
-        from: Option<PathBuf>,
-        /// Install the result at the resolved config.toml path.
-        #[arg(long)]
-        write: bool,
-        /// Allow --write to replace an existing config.toml.
-        #[arg(long)]
-        force: bool,
-    },
-}
-
-#[derive(Debug, Subcommand)]
 enum HerdrCommand {
     Ping,
 }
@@ -209,9 +176,6 @@ impl Cli {
             }
             | Command::Ssh {
                 command: SshCommand::Edit { .. },
-            }
-            | Command::Config {
-                command: ConfigCommand::Migrate { .. },
             } => Channel::Stderr { uses_herdr: false },
             Command::Herdr {
                 command: HerdrCommand::Ping,
@@ -251,7 +215,6 @@ impl Cli {
                 SshCommand::Session { .. } => "ssh session",
             },
             Command::Dashboard => "dashboard",
-            Command::Config { .. } => "config migrate",
             Command::Herdr { .. } => "herdr ping",
             Command::Pane { command } => match command {
                 PaneCommand::Even { .. } => "pane even",
@@ -424,39 +387,6 @@ impl Cli {
                 let client = client.context("Herdr client is required for the dashboard")?;
                 return flows::dashboard::run(client, &config);
             }
-            Command::Config { command } => match command {
-                ConfigCommand::Migrate { from, write, force } => {
-                    if force && !write {
-                        bail!("--force requires --write");
-                    }
-
-                    let partial_config =
-                        config::migrate(from.as_deref()).context("failed to migrate zsh config")?;
-                    let toml = config::serialize_migration(&partial_config)
-                        .context("failed to create TOML config")?;
-                    if !write {
-                        print!("{toml}");
-                        return Ok(Outcome::Done);
-                    }
-
-                    let destination = config::resolved_config_path()
-                        .context("failed to resolve config.toml destination")?;
-                    let source = config::migration_source_path(from.as_deref())
-                        .context("failed to resolve the migration source")?;
-                    guard_write_destination(&destination, &source)?;
-                    if destination
-                        .try_exists()
-                        .with_context(|| format!("failed to check {}", destination.display()))?
-                        && !force
-                    {
-                        bail!("refusing to overwrite {}", destination.display());
-                    }
-
-                    write_atomically(&destination, toml.as_bytes())?;
-                    println!("{}", destination.display());
-                    return Ok(Outcome::Done);
-                }
-            },
             Command::Herdr { command } => {
                 return match command {
                     HerdrCommand::Ping => {
@@ -513,52 +443,6 @@ impl Cli {
             }
         }
     }
-}
-
-/// Refuse a `--write` destination that would destroy a `config.zsh`.
-///
-/// The destination comes from `Q_WORKBENCH_LOCAL_CONFIG` when that is set, so it can
-/// point anywhere — including at the very file being migrated. Writing TOML over the
-/// source destroys the only copy of the settings, and `--force` alone would allow it.
-/// Two guards close that: the destination may not be the source, and it must be named
-/// `.toml`, which no `config.zsh` ever is.
-fn guard_write_destination(destination: &Path, source: &Path) -> Result<()> {
-    if destination.extension().and_then(|name| name.to_str()) != Some("toml") {
-        bail!(
-            "refusing to write TOML to a destination that is not a .toml file: {}",
-            destination.display()
-        );
-    }
-
-    // Compare resolved paths so a relative `--from` or a symlinked config directory
-    // cannot slip past the check. An unresolvable path simply falls back to itself.
-    let resolve = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    if resolve(destination) == resolve(source) {
-        bail!(
-            "refusing to overwrite the migration source: {}",
-            source.display()
-        );
-    }
-    Ok(())
-}
-
-fn write_atomically(destination: &Path, contents: &[u8]) -> Result<()> {
-    let file_name = destination
-        .file_name()
-        .with_context(|| format!("destination has no file name: {}", destination.display()))?;
-    let temporary = destination.with_file_name(format!(
-        ".{}.tmp-{}",
-        file_name.to_string_lossy(),
-        std::process::id()
-    ));
-
-    fs::write(&temporary, contents)
-        .with_context(|| format!("failed to write temporary file {}", temporary.display()))?;
-    if let Err(error) = fs::rename(&temporary, destination) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error).with_context(|| format!("failed to replace {}", destination.display()));
-    }
-    Ok(())
 }
 
 /// Serve `project source` without building clap's command tree.
@@ -774,15 +658,6 @@ mod tests {
             vec!["workbench", "ssh", "edit", "host"],
             vec!["workbench", "ssh", "session", "host", "tab-1"],
             vec!["workbench", "dashboard"],
-            vec![
-                "workbench",
-                "config",
-                "migrate",
-                "--from",
-                "/tmp/config",
-                "--write",
-                "--force",
-            ],
             vec!["workbench", "herdr", "ping"],
         ];
 
@@ -916,10 +791,6 @@ mod tests {
                 Channel::Stderr { uses_herdr: false },
             ),
             (
-                vec!["workbench", "config", "migrate"],
-                Channel::Stderr { uses_herdr: false },
-            ),
-            (
                 vec!["workbench", "herdr", "ping"],
                 Channel::Stderr { uses_herdr: true },
             ),
@@ -968,7 +839,7 @@ mod tests {
             assert_eq!(output, format!("{message}\n").as_bytes());
         }
 
-        for subcommand in ["ssh sync", "config migrate", "herdr ping"] {
+        for subcommand in ["ssh sync", "herdr ping"] {
             let mut output = Vec::new();
             report_stderr(subcommand, &anyhow!("disk full"), &mut output);
             assert_eq!(output, format!("{subcommand}: disk full\n").as_bytes());
@@ -1214,7 +1085,6 @@ mod tests {
             vec!["workbench", "ssh", "use", "host"],
             vec!["workbench", "ssh", "remove", "host"],
             vec!["workbench", "ssh", "edit", "host"],
-            vec!["workbench", "config", "migrate"],
             vec!["workbench", "herdr", "ping"],
         ];
 

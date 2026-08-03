@@ -7,7 +7,7 @@
 >
 > **Depends on**: work/04
 > **Blocks**: work/06, work/07
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -115,22 +115,22 @@ Popup size `60% × 70%` matches the other agent popups. The plugin ships no keyb
 
 ## Acceptance criteria
 
-- [ ] `workbench tab new` parses and takes no flags.
-- [ ] `channel()` returns `Channel::Notification("New tab")` for it.
-- [ ] `subcommand_path()` returns `"tab new"` for it.
-- [ ] The router arm calls `flows::tab::new` with the client and loads no config of its own.
-- [ ] All three enumeration tests in `src/main.rs` carry a row for `tab new`.
-- [ ] `herdr-plugin.toml` has an action `new-tab` whose `--entrypoint` equals the id of a
+- [x] `workbench tab new` parses and takes no flags.
+- [x] `channel()` returns `Channel::Notification("New tab")` for it.
+- [x] `subcommand_path()` returns `"tab new"` for it.
+- [x] The router arm calls `flows::tab::new` with the client and loads no config of its own.
+- [x] All three enumeration tests in `src/main.rs` carry a row for `tab new`.
+- [x] `herdr-plugin.toml` has an action `new-tab` whose `--entrypoint` equals the id of a
       `[[panes]]` entry running `./bin/workbench tab new`.
-- [ ] The new pane title uses a glyph plus two spaces, like every other pane title.
+- [x] The new pane title uses a glyph plus two spaces, like every other pane title.
 
 ## Verification
 
-- [ ] `cargo test` passes.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] `cargo run -- tab --help` lists `new`; `cargo run -- tab new --layout x` is rejected
+- [x] `cargo test` passes.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] `cargo run -- tab --help` lists `new`; `cargo run -- tab new --layout x` is rejected
       by clap.
-- [ ] `git status --short -- src/main.rs herdr-plugin.toml` shows both paths dirty.
+- [x] `git status --short -- src/main.rs herdr-plugin.toml` shows both paths dirty.
 
 ## Eval rubric
 

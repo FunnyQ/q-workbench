@@ -49,6 +49,10 @@ enum Command {
         #[command(subcommand)]
         command: PaneCommand,
     },
+    Tab {
+        #[command(subcommand)]
+        command: TabCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -136,6 +140,12 @@ enum PaneCommand {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum TabCommand {
+    /// Pick a tab layout, then open the agent popup for it.
+    New,
+}
+
 impl Cli {
     /// Classify parsed commands against the fixed parity-contract lists.
     /// Command identity, rather than error text, determines the reporting surface.
@@ -189,6 +199,9 @@ impl Cli {
             Command::Pane {
                 command: PaneCommand::Even { .. },
             } => Channel::Notification("Even out panes failed"),
+            Command::Tab {
+                command: TabCommand::New,
+            } => Channel::Notification("New tab"),
         }
     }
 
@@ -224,6 +237,9 @@ impl Cli {
             Command::Herdr { .. } => "herdr ping",
             Command::Pane { command } => match command {
                 PaneCommand::Even { .. } => "pane even",
+            },
+            Command::Tab { command } => match command {
+                TabCommand::New => "tab new",
             },
         }
     }
@@ -411,6 +427,12 @@ impl Cli {
                 PaneCommand::Even { pane } => {
                     let client = client.context("Herdr client is required for pane even")?;
                     return flows::layout::even_out(client, pane.as_deref());
+                }
+            },
+            Command::Tab { command } => match command {
+                TabCommand::New => {
+                    let client = client.context("Herdr client is required for a new tab")?;
+                    return flows::tab::new(client);
                 }
             },
         }
@@ -668,6 +690,7 @@ mod tests {
             vec!["workbench", "ssh", "session", "host", "tab-1"],
             vec!["workbench", "dashboard"],
             vec!["workbench", "herdr", "ping"],
+            vec!["workbench", "tab", "new"],
         ];
 
         for argv in cases {
@@ -733,6 +756,7 @@ mod tests {
                 Some("SSH session"),
             ),
             (vec!["workbench", "dashboard"], Some("Dashboard Launcher")),
+            (vec!["workbench", "tab", "new"], Some("New tab")),
             // Terminal-facing subcommands report on stderr instead.
             (vec!["workbench", "ssh", "list"], None),
             (vec!["workbench", "project", "scan"], None),
@@ -802,6 +826,10 @@ mod tests {
             (
                 vec!["workbench", "herdr", "ping"],
                 Channel::Stderr { uses_herdr: true },
+            ),
+            (
+                vec!["workbench", "tab", "new"],
+                Channel::Notification("New tab"),
             ),
         ];
 

@@ -18,6 +18,12 @@ contexts = ["workspace"]
 command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench", "--entrypoint", "worktree-agent", "--placement", "popup", "--width", "60%", "--height", "70%"]
 
 [[actions]]
+id = "new-tab"
+title = "New tab"
+contexts = ["workspace"]
+command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench", "--entrypoint", "new-tab", "--placement", "popup", "--width", "60%", "--height", "70%"]
+
+[[actions]]
 id = "new-assistant"
 title = "New personal assistant"
 contexts = ["workspace"]
@@ -64,6 +70,12 @@ id = "worktree-agent"
 title = "󱚟  new worktree agent"
 placement = "popup"
 command = ["./bin/workbench", "agent", "popup", "--worktree"]
+
+[[panes]]
+id = "new-tab"
+title = "󰓩  new tab"
+placement = "popup"
+command = ["./bin/workbench", "tab", "new"]
 
 [[panes]]
 id = "assistant"

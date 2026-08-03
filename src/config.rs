@@ -55,6 +55,8 @@ struct FileConfig {
 #[serde(deny_unknown_fields)]
 pub struct TabLayout {
     pub name: String,
+    pub label: Option<String>,
+    pub icon: Option<String>,
     pub tab_label: Option<String>,
     // Defaulted, not required: a layout with no pane tables must deserialize to an empty
     // vec so validation can reject it by name, rather than serde reporting a generic
@@ -179,6 +181,8 @@ fn default_agents() -> Vec<Agent> {
 fn default_tab_layouts() -> Vec<TabLayout> {
     vec![TabLayout {
         name: "agentic-coding".to_owned(),
+        label: None,
+        icon: None,
         tab_label: None,
         panes: vec![
             LayoutPane {
@@ -315,9 +319,31 @@ impl Config {
 
     fn validate(&self) -> Result<()> {
         let mut layout_names = BTreeSet::new();
+        let mut layout_labels: BTreeMap<String, &str> = BTreeMap::new();
         for layout in &self.tab_layouts {
             if !layout_names.insert(layout.name.as_str()) {
                 bail!("duplicate tab layout name: {}", layout.name);
+            }
+            if layout.label.as_deref().is_some_and(str::is_empty) {
+                bail!(
+                    "layout '{}': label is empty; omit the key to fall back to the name",
+                    layout.name
+                );
+            }
+            if layout.icon.as_deref().is_some_and(str::is_empty) {
+                bail!(
+                    "layout '{}': icon is empty; omit the key to render the label alone",
+                    layout.name
+                );
+            }
+            let label = layout.menu_label();
+            if let Some(other) = layout_labels.insert(label.clone(), layout.name.as_str()) {
+                bail!(
+                    "layouts '{}' and '{}' render the same menu label: {}",
+                    other,
+                    layout.name,
+                    label
+                );
             }
         }
 
@@ -589,6 +615,17 @@ impl Agent {
 
     pub fn option(&self, name: &str) -> Option<&AgentOption> {
         self.options.iter().find(|option| option.name == name)
+    }
+}
+
+impl TabLayout {
+    /// The layout menu row for this layout. The reverse lookup in the layout menu matches
+    /// on this exact string, so every site that renders a layout must go through here.
+    pub fn menu_label(&self) -> String {
+        render_label(
+            self.icon.as_deref(),
+            self.label.as_deref().unwrap_or(&self.name),
+        )
     }
 }
 
@@ -948,8 +985,12 @@ dashboard_workspace = "from-file"
         assert_eq!(layouts[0].name, "agentic-coding");
         assert_eq!(layouts[0].panes.len(), 3);
         assert_eq!(layouts[0].panes[0].pane_type, PaneType::Agent);
+        assert!(layouts[0].label.is_none());
+        assert!(layouts[0].icon.is_none());
         assert!(layouts[0].tab_label.is_none());
-        assert_eq!(layouts[1].tab_label.as_deref(), Some("Personal Assistant"));
+        assert_eq!(layouts[1].label.as_deref(), Some("Personal Assistant"));
+        assert!(layouts[1].icon.is_none());
+        assert!(layouts[1].tab_label.is_none());
 
         let agents = file.agents.expect("example defines agents");
         assert_eq!(agents.len(), 3);
@@ -1017,6 +1058,130 @@ name = "x"
             .validate()
             .expect_err("config must be rejected")
             .to_string()
+    }
+
+    #[test]
+    fn layout_menu_label_falls_back_to_name() {
+        assert_eq!(
+            Config::test_default().tab_layouts[0].menu_label(),
+            "agentic-coding"
+        );
+    }
+
+    #[test]
+    fn layout_menu_label_uses_label_and_icon() {
+        let mut layout = Config::test_default().tab_layouts.remove(0);
+        layout.label = Some("Agentic Coding".to_owned());
+        layout.icon = Some("A".to_owned());
+        assert_eq!(layout.menu_label(), "A  Agentic Coding");
+    }
+
+    #[test]
+    fn layout_menu_label_uses_label_without_icon() {
+        let mut layout = Config::test_default().tab_layouts.remove(0);
+        layout.label = Some("Agentic Coding".to_owned());
+        assert_eq!(layout.menu_label(), "Agentic Coding");
+    }
+
+    fn load_layout_error(layouts: &str) -> String {
+        let environment = TestEnvironment::new();
+        environment.write(&format!("default_tab_layout = \"a\"\n{layouts}"));
+        Config::load()
+            .expect_err("reject invalid layout labels")
+            .to_string()
+    }
+
+    #[test]
+    fn layout_label_and_icon_parse_from_toml() {
+        let environment = TestEnvironment::new();
+        environment.write(
+            r#"default_tab_layout = "a"
+[[tab_layouts]]
+name = "a"
+label = "Work"
+icon = "W"
+[[tab_layouts.panes]]
+name = "agent"
+type = "agent"
+"#,
+        );
+        let config = Config::load().expect("load layout label and icon");
+        let layout = config.layout("a").expect("parsed layout");
+        assert_eq!(layout.label.as_deref(), Some("Work"));
+        assert_eq!(layout.icon.as_deref(), Some("W"));
+    }
+
+    #[test]
+    fn empty_layout_label_is_a_named_load_error() {
+        let error = load_layout_error(
+            r#"[[tab_layouts]]
+name = "a"
+label = ""
+[[tab_layouts.panes]]
+name = "agent"
+type = "agent"
+"#,
+        );
+        assert!(error.contains("layout 'a': label is empty"), "{error}");
+    }
+
+    #[test]
+    fn empty_layout_icon_is_a_named_load_error() {
+        let error = load_layout_error(
+            r#"[[tab_layouts]]
+name = "a"
+icon = ""
+[[tab_layouts.panes]]
+name = "agent"
+type = "agent"
+"#,
+        );
+        assert!(error.contains("layout 'a': icon is empty"), "{error}");
+    }
+
+    #[test]
+    fn duplicate_rendered_layout_labels_are_a_named_load_error() {
+        let error = load_layout_error(
+            r#"[[tab_layouts]]
+name = "a"
+label = "Work"
+[[tab_layouts.panes]]
+name = "agent"
+type = "agent"
+[[tab_layouts]]
+name = "b"
+label = "Work"
+[[tab_layouts.panes]]
+name = "agent"
+type = "agent"
+"#,
+        );
+        assert!(
+            error.contains("layouts 'a' and 'b' render the same menu label: Work"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn layout_label_colliding_with_another_name_is_a_named_load_error() {
+        let error = load_layout_error(
+            r#"[[tab_layouts]]
+name = "a"
+label = "Work"
+[[tab_layouts.panes]]
+name = "agent"
+type = "agent"
+[[tab_layouts]]
+name = "Work"
+[[tab_layouts.panes]]
+name = "agent"
+type = "agent"
+"#,
+        );
+        assert!(
+            error.contains("layouts 'a' and 'Work' render the same menu label: Work"),
+            "{error}"
+        );
     }
 
     #[test]

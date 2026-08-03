@@ -7,7 +7,7 @@
 >
 > **Depends on**: none — foundation task
 > **Blocks**: work/04, work/06, work/07
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -123,20 +123,20 @@ Update them only as far as the new fields require.
 
 ## Acceptance criteria
 
-- [ ] `TabLayout` has `pub label: Option<String>` and `pub icon: Option<String>`, both
+- [x] `TabLayout` has `pub label: Option<String>` and `pub icon: Option<String>`, both
       optional in TOML.
-- [ ] `TabLayout::menu_label()` returns `icon + two spaces + label`, falling back to
+- [x] `TabLayout::menu_label()` returns `icon + two spaces + label`, falling back to
       `label` alone without an icon and to `name` without a label.
-- [ ] An empty `label` or an empty `icon` is a load-time error naming the layout.
-- [ ] Two layouts whose `menu_label()` is equal are a load-time error naming both.
-- [ ] `name` remains the id used by `--layout`, `default_tab_layout`, and `Config::layout`.
-- [ ] The built-in `agentic-coding` layout is unchanged on screen: no label, no icon.
+- [x] An empty `label` or an empty `icon` is a load-time error naming the layout.
+- [x] Two layouts whose `menu_label()` is equal are a load-time error naming both.
+- [x] `name` remains the id used by `--layout`, `default_tab_layout`, and `Config::layout`.
+- [x] The built-in `agentic-coding` layout is unchanged on screen: no label, no icon.
 
 ## Verification
 
-- [ ] `cargo test` passes, including the new config tests.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] `git status --short -- src/config.rs` shows the file dirty.
+- [x] `cargo test` passes, including the new config tests.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] `git status --short -- src/config.rs` shows the file dirty.
 
 ## Eval rubric
 

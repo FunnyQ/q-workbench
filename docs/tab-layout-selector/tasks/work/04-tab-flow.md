@@ -6,7 +6,7 @@
 > - `../_context/rubric.md`
 >
 > **Depends on**: work/01, work/02, work/03
-> **Status**: todo
+> **Status**: done
 > **Blocks**: work/05, work/07
 
 ## Goal
@@ -192,31 +192,31 @@ draws a menu, a layout is not fully pinned.
 
 ## Acceptance criteria
 
-- [ ] `src/flows/tab.rs` exists, is declared in `src/flows/mod.rs`, and exposes
+- [x] `src/flows/tab.rs` exists, is declared in `src/flows/mod.rs`, and exposes
       `pub fn new(client: &dyn HerdrClient) -> FlowResult`.
-- [ ] `new_with(client, &Config, &mut impl Menu)` holds the logic and is driven by the
+- [x] `new_with(client, &Config, &mut impl Menu)` holds the logic and is driven by the
       tests; `new` only supplies the loaded config and the real `GumMenu`.
-- [ ] The menu lists the `default_tab_layout` first and the rest in `config.tab_layouts`
+- [x] The menu lists the `default_tab_layout` first and the rest in `config.tab_layouts`
       order, each row rendered by `TabLayout::menu_label()`.
-- [ ] A config with exactly one layout draws no menu.
-- [ ] Cancelling the layout menu returns `Outcome::Cancelled` and the flow issues no
+- [x] A config with exactly one layout draws no menu.
+- [x] Cancelling the layout menu returns `Outcome::Cancelled` and the flow issues no
       socket call, proven against a `FakeClient` with two or more layouts configured.
-- [ ] Selecting a non-default layout builds that layout's tab, proven by the recorded
+- [x] Selecting a non-default layout builds that layout's tab, proven by the recorded
       `FakeClient` call sequence.
-- [ ] `new_with` passes `worktree: false` and never runs the worktree menu.
-- [ ] The flow calls the existing `popup_with_layout`; it does not re-implement tab
+- [x] `new_with` passes `worktree: false` and never runs the worktree menu.
+- [x] The flow calls the existing `popup_with_layout`; it does not re-implement tab
       creation, and does not adopt the invoking pane's cwd a second time.
-- [ ] `src/flows/agent.rs` is not modified by this task.
-- [ ] Every test that asserts on a `FakeClient` call list holds `state::env_lock()` and
+- [x] `src/flows/agent.rs` is not modified by this task.
+- [x] Every test that asserts on a `FakeClient` call list holds `state::env_lock()` and
       removes `HERDR_ACTIVE_PANE_ID` and `HERDR_PLUGIN_CONTEXT_JSON`, restoring both
       afterwards, so it passes whether or not it runs inside a Herdr pane.
-- [ ] No `expect`/`unwrap` on anything config validation does not already guarantee.
+- [x] No `expect`/`unwrap` on anything config validation does not already guarantee.
 
 ## Verification
 
-- [ ] `cargo test` passes, including the new `src/flows/tab.rs` tests.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] `git status --short -- src/flows/tab.rs src/flows/mod.rs` shows both paths dirty.
+- [x] `cargo test` passes, including the new `src/flows/tab.rs` tests.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] `git status --short -- src/flows/tab.rs src/flows/mod.rs` shows both paths dirty.
 
 ## Eval rubric
 

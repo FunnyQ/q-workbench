@@ -423,28 +423,6 @@ impl Config {
                 );
             }
 
-            let root = &layout.panes[0];
-            if root.pane_type != PaneType::Agent {
-                bail!(
-                    "layout '{}': the first pane is the tab root and must be type = \"agent\", found {:?}",
-                    layout.name,
-                    root.pane_type
-                );
-            }
-
-            let agent_pane_count = layout
-                .panes
-                .iter()
-                .filter(|pane| pane.pane_type == PaneType::Agent)
-                .count();
-            if agent_pane_count != 1 {
-                bail!(
-                    "layout '{}': exactly one pane may be type = \"agent\", found {}",
-                    layout.name,
-                    agent_pane_count
-                );
-            }
-
             let mut pane_names = BTreeSet::new();
             for (index, pane) in layout.panes.iter().enumerate() {
                 if pane_names.contains(pane.name.as_str()) {
@@ -643,10 +621,40 @@ impl Agent {
     }
 }
 
+impl LayoutPane {
+    /// How this pane names itself in a menu title. See [`menu_label`].
+    ///
+    /// Only a layout with more than one agent pane needs it: the harness and model menus
+    /// then run once per pane and have to say which pane they are asking about.
+    pub fn menu_label(&self) -> String {
+        menu_label(self.icon.as_deref(), self.label.as_deref(), &self.name)
+    }
+}
+
 impl TabLayout {
     /// The layout menu row for this layout. See [`menu_label`].
     pub fn menu_label(&self) -> String {
         menu_label(self.icon.as_deref(), self.label.as_deref(), &self.name)
+    }
+
+    /// The layout's agent panes, paired with their index in `panes`, in config order.
+    ///
+    /// A layout may declare none. Such a tab runs no harness, so it skips the harness,
+    /// model, and usage menus, and nothing writes restart state for it.
+    pub fn agent_panes(&self) -> impl Iterator<Item = (usize, &LayoutPane)> {
+        self.panes
+            .iter()
+            .enumerate()
+            .filter(|(_, pane)| pane.pane_type == PaneType::Agent)
+    }
+
+    /// The pane an agent flow acts on when the caller named one, else the first agent
+    /// pane. `None` when the layout declares no agent pane, or names one that is not.
+    pub fn agent_pane(&self, name: Option<&str>) -> Option<(usize, &LayoutPane)> {
+        match name {
+            Some(name) => self.agent_panes().find(|(_, pane)| pane.name == name),
+            None => self.agent_panes().next(),
+        }
     }
 }
 
@@ -1002,7 +1010,7 @@ dashboard_workspace = "from-file"
         let file: FileConfig = toml::from_str(&contents).expect("parse config.example.toml");
 
         let layouts = file.tab_layouts.expect("example defines tab_layouts");
-        assert_eq!(layouts.len(), 2);
+        assert_eq!(layouts.len(), 4);
         assert_eq!(layouts[0].name, "agentic-coding");
         assert_eq!(layouts[0].panes.len(), 3);
         assert_eq!(layouts[0].panes[0].pane_type, PaneType::Agent);
@@ -1012,6 +1020,9 @@ dashboard_workspace = "from-file"
         assert_eq!(layouts[1].label.as_deref(), Some("Personal Assistant"));
         assert!(layouts[1].icon.is_none());
         assert!(layouts[1].tab_label.is_none());
+        // The two shapes this file documents beyond one agent pane at the root.
+        assert_eq!(layouts[2].agent_panes().count(), 2);
+        assert_eq!(layouts[3].agent_panes().count(), 0);
 
         let agents = file.agents.expect("example defines agents");
         assert_eq!(agents.len(), 3);
@@ -1324,25 +1335,66 @@ type = "agent"
     }
 
     #[test]
-    fn non_agent_root_is_a_named_error() {
+    fn a_layout_of_plain_shells_validates() {
         let mut config = Config::test_default();
-        config.tab_layouts[0].panes[0].pane_type = PaneType::Shell;
+        let layout = &mut config.tab_layouts[0];
+        layout.tab_label = Some("Blank".to_owned());
+        layout.panes.truncate(1);
+        layout.panes[0].pane_type = PaneType::Shell;
 
-        let error = validation_error(&config);
-
-        assert!(error.contains("agentic-coding"), "{error}");
-        assert!(error.contains("Shell"), "{error}");
+        config.validate().expect("shell-only layout is valid");
+        assert_eq!(config.tab_layouts[0].agent_panes().count(), 0);
     }
 
     #[test]
-    fn multiple_agent_panes_is_a_named_error() {
+    fn several_agent_panes_validate() {
         let mut config = Config::test_default();
-        config.tab_layouts[0].panes[1].pane_type = PaneType::Agent;
+        // `files` is a command pane in the default layout, so its command has to go with
+        // the type: command is rejected on an agent pane.
+        let files = &mut config.tab_layouts[0].panes[1];
+        files.pane_type = PaneType::Agent;
+        files.command = None;
 
-        let error = validation_error(&config);
+        config.validate().expect("two agent panes are valid");
+        let agents = config.tab_layouts[0]
+            .agent_panes()
+            .map(|(index, pane)| (index, pane.name.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(agents, [(0, "agent"), (1, "files")]);
+    }
 
-        assert!(error.contains("agentic-coding"), "{error}");
-        assert!(error.contains('2'), "{error}");
+    #[test]
+    fn a_non_agent_root_keeps_its_agent_panes_in_config_order() {
+        let mut config = Config::test_default();
+        config.tab_layouts[0].panes.swap(0, 1);
+        // The root takes no geometry, and the pane that moved off the root needs some.
+        let root = &mut config.tab_layouts[0].panes[0];
+        root.direction = None;
+        root.ratio = None;
+        let agent = &mut config.tab_layouts[0].panes[1];
+        agent.direction = Some(Direction::Right);
+        agent.ratio = Some(0.5);
+
+        config.validate().expect("a command root is valid");
+        assert_eq!(
+            config.tab_layouts[0]
+                .agent_pane(None)
+                .map(|(index, _)| index),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn agent_pane_selects_by_name_and_rejects_a_non_agent_pane() {
+        let config = Config::test_default();
+        let layout = &config.tab_layouts[0];
+
+        assert_eq!(
+            layout.agent_pane(Some("agent")).map(|(index, _)| index),
+            Some(0)
+        );
+        assert!(layout.agent_pane(Some("term")).is_none());
+        assert!(layout.agent_pane(Some("absent")).is_none());
     }
 
     #[test]

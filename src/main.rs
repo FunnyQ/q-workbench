@@ -88,6 +88,9 @@ struct LaunchArgs {
     restart: bool,
     #[arg(long)]
     layout: Option<String>,
+    /// Which agent pane of the layout to launch. Defaults to the layout's first.
+    #[arg(long)]
+    pane: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -266,6 +269,7 @@ impl Cli {
                             no_layout: args.no_layout,
                             restart: args.restart,
                             layout: args.layout,
+                            pane: args.pane,
                         },
                     );
                 }

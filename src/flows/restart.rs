@@ -646,6 +646,8 @@ mod tests {
         for name in ["personal-assistant", "side quest"] {
             config.tab_layouts.push(TabLayout {
                 name: name.to_owned(),
+                label: None,
+                icon: None,
                 tab_label: None,
                 panes: Vec::new(),
             });

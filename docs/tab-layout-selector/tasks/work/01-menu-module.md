@@ -7,7 +7,7 @@
 >
 > **Depends on**: none — foundation task
 > **Blocks**: work/03, work/04, work/07
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -100,26 +100,26 @@ compile error suggests otherwise, the wrong item is being moved.
 
 ## Acceptance criteria
 
-- [ ] `src/flows/menu.rs` exists and defines `Menu`, `InputIndent`, `GumMenu`,
+- [x] `src/flows/menu.rs` exists and defines `Menu`, `InputIndent`, `GumMenu`,
       `gum_output`, `gum_with_input`, `strip_pad`, `display_width`, `FILTER_HEIGHT_ARG`,
       and `FILTER_HEIGHT`.
-- [ ] `src/flows/agent.rs` no longer defines any of them and imports them from
+- [x] `src/flows/agent.rs` no longer defines any of them and imports them from
       `crate::flows::menu`.
-- [ ] `src/flows/menu.rs` contains no `use` of `crate::flows::agent`.
-- [ ] Every doc comment on the moved items is present in `menu.rs`, unchanged.
-- [ ] No rendered string, flag, height, or width constant changed value.
-- [ ] The menu-primitive tests named above are moved to `menu.rs` unchanged apart from
+- [x] `src/flows/menu.rs` contains no `use` of `crate::flows::agent`.
+- [x] Every doc comment on the moved items is present in `menu.rs`, unchanged.
+- [x] No rendered string, flag, height, or width constant changed value.
+- [x] The menu-primitive tests named above are moved to `menu.rs` unchanged apart from
       imports and any inlined literal; every other test stays in `agent.rs`, unchanged
       apart from imports.
-- [ ] No test was deleted, renamed, or had an assertion weakened.
+- [x] No test was deleted, renamed, or had an assertion weakened.
 
 ## Verification
 
-- [ ] `cargo test` passes.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] `git diff -- src/flows/agent.rs | grep '^[-+]' | grep -v '^[-+][-+]'` shows only
+- [x] `cargo test` passes.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] `git diff -- src/flows/agent.rs | grep '^[-+]' | grep -v '^[-+][-+]'` shows only
       removals of the moved code plus `use`-line changes — no edited logic lines.
-- [ ] `git status --short -- src/flows/menu.rs src/flows/mod.rs src/flows/agent.rs` shows all three paths dirty.
+- [x] `git status --short -- src/flows/menu.rs src/flows/mod.rs src/flows/agent.rs` shows all three paths dirty.
 
 ## Eval rubric
 

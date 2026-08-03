@@ -5,7 +5,7 @@ use super::{agent, FlowResult, Outcome};
 use crate::config::{blank_tab_layout, Config, TabLayout, BLANK_LAYOUT_NAME};
 use crate::herdr::HerdrClient;
 
-const TITLE: &str = "\u{eb03}  Tab Layout";
+const TITLE: &str = "\u{ebeb}  Tab Layout"; // nf-cod-window
 const SUBTITLE: &str = "Choose a layout.";
 const HEIGHT: u8 = 8;
 

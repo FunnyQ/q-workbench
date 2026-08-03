@@ -162,7 +162,7 @@ label = "Pair"
 # section exists, always as the last row, so declare it only to change what blank opens.
 [[tab_layouts]]
 name = "blank-tab"
-label = "Blank Tab"
+label = "Blank Tab…"          # U+2026; the trailing ellipsis marks a row that prompts
 icon = "󰓩"                    # nf-md-tab
 
   [[tab_layouts.panes]]

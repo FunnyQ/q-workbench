@@ -19,7 +19,7 @@ const USE_LAST_PREFIX: &str = "\u{f0709}  use last: ";
 // Two spaces after the glyph. `scripts/agent-launcher.zsh:183` used one; the unified
 // flow follows the popup and the parity contract (GLY-2).
 const USAGE_TITLE: &str = "\u{f27b}  Usage";
-// nf-cod-window: a tab that runs no harness is named, not classified by usage.
+// A tab that runs no harness is named, not classified by usage.
 const TAB_NAME_TITLE: &str = "\u{eb03}  Tab Name";
 const USAGE_DISCUSS: &str = "\u{f442}  discuss";
 const USAGE_REVIEW: &str = "\u{f4af}  review";
@@ -801,7 +801,13 @@ fn choose_pane_agent(
 /// is why the empty string and `None` are not folded together the way [`select_usage`]
 /// folds them.
 fn select_tab_name(layout: &TabLayout, menu: &mut impl Menu) -> Result<Option<String>> {
-    let fallback = layout.menu_label();
+    // A trailing ellipsis marks a menu row as opening a prompt; it belongs to the row, not
+    // to the tab. Without this the blank layout would name its tab "Blank Tab…".
+    let fallback = layout
+        .menu_label()
+        .trim_end_matches('\u{2026}')
+        .trim_end()
+        .to_owned();
     let Some(name) = menu.input(
         TAB_NAME_TITLE,
         "Name this tab.",
@@ -2095,6 +2101,27 @@ mod popup {
         )
         .unwrap();
         assert_eq!(cancelled, None);
+    }
+
+    #[test]
+    fn the_menu_rows_ellipsis_does_not_reach_the_tab_name() {
+        let config = config();
+        let layout = shell_only_layout("blank-tab", "Blank Tab\u{2026}");
+        let mut menu = FakeMenu::new([Some("")]);
+
+        let choice = choose_agent_with(
+            &config,
+            &layout,
+            Path::new("/project"),
+            false,
+            None,
+            &mut menu,
+            &FakeGit::nowhere(),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(choice.label, "Blank Tab");
     }
 
     #[test]

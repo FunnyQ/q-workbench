@@ -191,7 +191,9 @@ pub const BLANK_LAYOUT_NAME: &str = "blank-tab";
 pub fn blank_tab_layout() -> TabLayout {
     TabLayout {
         name: BLANK_LAYOUT_NAME.to_owned(),
-        label: Some("Blank Tab".to_owned()),
+        // U+2026, one character - not three full stops. The ellipsis marks the row as
+        // opening a prompt, matching the usage menu's "let me write…".
+        label: Some("Blank Tab\u{2026}".to_owned()),
         icon: Some("\u{f04e9}".to_owned()), // nf-md-tab
         tab_label: None,
         panes: vec![LayoutPane {

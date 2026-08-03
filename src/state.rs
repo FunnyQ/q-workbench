@@ -11,10 +11,11 @@ use crate::config::Config;
 use crate::herdr::HerdrClient;
 use crate::registry::project::write_json_atomically;
 
-// Bumped to 2 when the record moved from rendered menu labels to stable config names.
-// `read_state()` filters on this, so a v1 file is discarded whole rather than deserialized
-// into the new shape, where `harness` would silently land in nothing and `agent` be missing.
-const STATE_VERSION: u8 = 2;
+// Bumped to 2 when the record moved from rendered menu labels to stable config names, and
+// to 3 when `pane` arrived. `read_state()` filters on this, so an older file is discarded
+// whole rather than deserialized into the new shape: a v2 record carries no pane name, and
+// guessing one would restart a side agent pane with the first agent pane's pin.
+const STATE_VERSION: u8 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastAgentRecord {
@@ -22,6 +23,9 @@ pub struct LastAgentRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub option: Option<String>,
     pub layout: String,
+    /// The layout pane this agent was launched as. Restart replays that pane's pin, which
+    /// is not the first agent pane's once a layout declares several.
+    pub pane: String,
     pub recorded_at: u64,
 }
 
@@ -71,7 +75,12 @@ pub fn last_choice_is_valid(record: &LastAgentRecord, config: &Config) -> bool {
         Some(name) => agent.option(name).is_some(),
         None => agent.options.is_empty(),
     };
-    option_ok && config.layout(&record.layout).is_some()
+    // The pane has to still be an agent pane of that layout: renaming or retyping it in
+    // config would otherwise replay a pin that no longer belongs to anything.
+    let pane_ok = config
+        .layout(&record.layout)
+        .is_some_and(|layout| layout.agent_pane(Some(&record.pane)).is_some());
+    option_ok && pane_ok
 }
 
 /// The caller already holds a loaded config, so this borrows it rather than reading and
@@ -137,7 +146,7 @@ mod tests {
         env::set_var("Q_WORKBENCH_STATE_FILE", &path);
         fs::write(
             &path,
-            r#"{"version":2,"panes":{"dead":{"agent":"old","layout":"agentic-coding","recorded_at":1}}}"#,
+            r#"{"version":3,"panes":{"dead":{"agent":"old","layout":"agentic-coding","pane":"agent","recorded_at":1}}}"#,
         )
         .unwrap();
         let client = FakeClient::default();
@@ -147,18 +156,14 @@ mod tests {
             agent: "codex".to_owned(),
             option: None,
             layout: "agentic-coding".to_owned(),
+            pane: "agent".to_owned(),
             recorded_at: 42,
         };
         write_state(&client, "w2N:p1", &record).unwrap();
 
         assert_eq!(
             get_for_pane("w2N:p1", &Config::test_default()),
-            Some(LastAgentRecord {
-                agent: "codex".to_owned(),
-                option: None,
-                layout: "agentic-coding".to_owned(),
-                recorded_at: 42,
-            })
+            Some(record)
         );
         assert!(!read_state().panes.contains_key("dead"));
         fs::remove_file(path).unwrap();
@@ -179,18 +184,27 @@ mod tests {
     }
 
     #[test]
-    fn version_one_state_is_discarded() {
+    fn older_state_versions_are_discarded() {
         let _guard = env_lock();
-        let path = fixture("v1");
-        env::set_var("Q_WORKBENCH_STATE_FILE", &path);
-        fs::write(
-            &path,
-            r#"{"version":1,"panes":{"p1":{"harness":"codex","recorded_at":1}}}"#,
-        )
-        .unwrap();
+        // v1 keyed the harness by rendered label; v2 carried no pane name. Both would
+        // deserialize into a record that names the wrong thing, so the file goes whole.
+        for (name, contents) in [
+            (
+                "v1",
+                r#"{"version":1,"panes":{"p1":{"harness":"codex","recorded_at":1}}}"#,
+            ),
+            (
+                "v2",
+                r#"{"version":2,"panes":{"p1":{"agent":"codex","layout":"agentic-coding","recorded_at":1}}}"#,
+            ),
+        ] {
+            let path = fixture(name);
+            env::set_var("Q_WORKBENCH_STATE_FILE", &path);
+            fs::write(&path, contents).unwrap();
 
-        assert_eq!(read_state(), LastAgentState::default());
-        fs::remove_file(path).unwrap();
+            assert_eq!(read_state(), LastAgentState::default(), "{name}");
+            fs::remove_file(path).unwrap();
+        }
         env::remove_var("Q_WORKBENCH_STATE_FILE");
     }
 
@@ -218,6 +232,7 @@ mod tests {
                 agent: "removed".to_owned(),
                 option: None,
                 layout: "agentic-coding".to_owned(),
+                pane: "agent".to_owned(),
                 recorded_at: 1,
             },
         );
@@ -232,6 +247,7 @@ mod tests {
                 agent: "claude code".to_owned(),
                 option: Some("Removed".to_owned()),
                 layout: "agentic-coding".to_owned(),
+                pane: "agent".to_owned(),
                 recorded_at: 1,
             },
         );
@@ -246,6 +262,7 @@ mod tests {
                 agent: "claude code".to_owned(),
                 option: None,
                 layout: "agentic-coding".to_owned(),
+                pane: "agent".to_owned(),
                 recorded_at: 1,
             },
         );
@@ -260,6 +277,39 @@ mod tests {
                 agent: "codex".to_owned(),
                 option: Some("Removed".to_owned()),
                 layout: "agentic-coding".to_owned(),
+                pane: "agent".to_owned(),
+                recorded_at: 1,
+            },
+        );
+    }
+
+    #[test]
+    fn stale_layout_is_removed() {
+        let _guard = env_lock();
+        assert_stale_record_is_removed(
+            "stale-layout",
+            LastAgentRecord {
+                agent: "codex".to_owned(),
+                option: None,
+                layout: "removed-layout".to_owned(),
+                pane: "agent".to_owned(),
+                recorded_at: 1,
+            },
+        );
+    }
+
+    #[test]
+    fn a_pane_that_is_no_longer_an_agent_pane_is_removed() {
+        let _guard = env_lock();
+        // `term` is a shell pane of the default layout: a record naming it would replay a
+        // harness into a pane the layout no longer runs one in.
+        assert_stale_record_is_removed(
+            "stale-pane",
+            LastAgentRecord {
+                agent: "codex".to_owned(),
+                option: None,
+                layout: "agentic-coding".to_owned(),
+                pane: "term".to_owned(),
                 recorded_at: 1,
             },
         );

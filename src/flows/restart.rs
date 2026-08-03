@@ -250,7 +250,14 @@ fn injected_command(
         label.to_owned(),
     ];
     if let Some(record) = record {
-        argv.extend(["--layout".to_owned(), record.layout.clone()]);
+        // The pane travels with the layout: without it the relaunch would replay the
+        // layout's first agent pane, which is the wrong pin for any other agent pane.
+        argv.extend([
+            "--layout".to_owned(),
+            record.layout.clone(),
+            "--pane".to_owned(),
+            record.pane.clone(),
+        ]);
     }
     argv.extend(["--no-layout".to_owned(), "--restart".to_owned()]);
     let launcher = build_command(&argv);
@@ -643,26 +650,36 @@ mod tests {
     fn restart_injects_the_stored_layout_after_the_tty_reset() {
         let _guard = crate::state::env_lock();
         let mut config = Config::test_default();
+        let template = config.tab_layouts[0].clone();
         for name in ["personal-assistant", "side quest"] {
             config.tab_layouts.push(TabLayout {
                 name: name.to_owned(),
-                label: None,
-                icon: None,
-                tab_label: None,
-                panes: Vec::new(),
+                ..template.clone()
             });
         }
+        // A second agent pane, so the stored pane name has something to distinguish.
+        let reviewer = &mut config.tab_layouts[2].panes[1];
+        reviewer.pane_type = crate::config::PaneType::Agent;
+        reviewer.command = None;
         let path = env::temp_dir().join(format!("workbench-restart-state-{}", std::process::id()));
         env::set_var("Q_WORKBENCH_STATE_FILE", &path);
 
-        for (layout, expected) in [
-            ("personal-assistant", "'--layout' 'personal-assistant'"),
-            ("side quest", "'--layout' 'side quest'"),
+        for (layout, pane, expected) in [
+            (
+                "personal-assistant",
+                "agent",
+                "'--layout' 'personal-assistant' '--pane' 'agent'",
+            ),
+            (
+                "side quest",
+                "files",
+                "'--layout' 'side quest' '--pane' 'files'",
+            ),
         ] {
             fs::write(
                 &path,
                 format!(
-                    r#"{{"version":2,"panes":{{"p1":{{"agent":"codex","layout":"{layout}","recorded_at":1}}}}}}"#
+                    r#"{{"version":3,"panes":{{"p1":{{"agent":"codex","layout":"{layout}","pane":"{pane}","recorded_at":1}}}}}}"#
                 ),
             )
             .unwrap();
@@ -675,7 +692,10 @@ mod tests {
                     .unwrap();
 
             assert!(command.starts_with(TTY_RESET));
-            assert!(command.contains(&format!("{expected} '--no-layout' '--restart'")));
+            assert!(
+                command.contains(&format!("{expected} '--no-layout' '--restart'")),
+                "{command}"
+            );
         }
         fs::remove_file(path).unwrap();
         env::remove_var("Q_WORKBENCH_STATE_FILE");

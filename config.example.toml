@@ -51,21 +51,24 @@ ssh_history_file = "$HOME/.zsh_history"
 #   icon       Drawn before the label, separated by two spaces: "${icon}  ${label}".
 #   tab_label  Tab title, and with it the title of the agent pane. Omit to ask: the
 #              usage menu runs, and a chosen worktree branch is appended to the answer.
+#              A layout with no agent pane never asks; it uses label, else name.
 #
 # Panes are created top to bottom. The first is the tab's root: it fills the tab, so it
 # takes no geometry. Each later pane splits an existing pane in half.
 #
 #   name        Unique within the layout. A later split_from names it.
-#   label       Pane title. The root pane follows tab_label; any other pane falls back
-#               to Herdr's own title.
+#   label       Pane title. The root pane follows tab_label; an agent pane falls back to
+#               the name of the harness it is running; any other pane falls back to
+#               Herdr's own title.
 #   icon        Drawn before the label, separated by two spaces: "${icon}  ${label}".
 #               Any text - an emoji, a Nerd Font glyph, a letter. Nerd Font glyphs show
 #               as a box in an editor without the font, so each one below carries its
 #               codepoint name as a comment.
 #   type        "agent", "command", or "shell".
-#                 agent    Runs the harness. Exactly one per layout, and it must be the
-#                          root: restart-in-place replaces this process with exec, and
-#                          the panes that survive are the ones split off it.
+#                 agent    Runs the harness. A layout may declare none, one, or several,
+#                          at any position. Each unpinned agent pane runs its own harness
+#                          and model menu, in the order the panes are written, and each
+#                          restarts on its own.
 #                 command  Runs command, then leaves the pane at its shell.
 #                 shell    Interactive shell. Nothing is run.
 #   agent       type = "agent". Names an [[agents]] entry. Omit to ask.
@@ -78,6 +81,11 @@ ssh_history_file = "$HOME/.zsh_history"
 #   split_from  Pane to split. Defaults to the pane directly above, which is what a
 #               straight chain of splits wants. Name it to branch back to an earlier one.
 #   env         Environment variables for this pane alone.
+#
+# The root agent pane is the only one restart-in-place can reach through `agent launch`,
+# because that path replaces the launcher process with exec. A layout whose root is not
+# an agent pane therefore opens from the popup - the `new-tab` action or the project
+# picker - not from `agent launch` in an existing pane.
 
 # Today's popup, unchanged: harness, model, and usage are all asked.
 [[tab_layouts]]
@@ -128,6 +136,33 @@ label = "Personal Assistant"
   direction = "right"
   ratio = 0.7
   env = { SOMETHING_DIFFERENT = "1" }
+
+# Two harnesses side by side. `main` asks; `reviewer` is pinned, so the launch runs one
+# harness menu and one model menu, then the usage menu once for the tab.
+[[tab_layouts]]
+name = "pair"
+label = "Pair"
+
+  [[tab_layouts.panes]]
+  name = "main"
+  type = "agent"
+
+  [[tab_layouts.panes]]
+  name = "reviewer"
+  label = "Reviewer"
+  type = "agent"
+  agent = "codex"
+  direction = "right"
+  ratio = 0.5
+
+# No agent pane at all: a plain tab of shells. Nothing asks, and nothing is launched.
+[[tab_layouts]]
+name = "blank-tab"
+label = "Blank Tab"
+
+  [[tab_layouts.panes]]
+  name = "term"
+  type = "shell"
 
 # -- Agents -------------------------------------------------------------------
 #

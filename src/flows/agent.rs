@@ -302,10 +302,21 @@ pub fn popup(
     // must be reported before the first socket call.
     let config = Config::load().context("failed to load config")?;
     let layout = resolve_layout(&config, requested_layout)?;
+    popup_with_layout(client, &config, layout, worktree)
+}
+
+/// The popup flow from the invoking pane's cwd onwards, for a layout the caller has
+/// already resolved.
+pub(crate) fn popup_with_layout(
+    client: &dyn HerdrClient,
+    config: &Config,
+    layout: &TabLayout,
+    worktree: bool,
+) -> FlowResult {
     adopt_invoking_pane_cwd(client)?;
     let cwd = std::env::current_dir().context("failed to read popup working directory")?;
     let (cols, lines) = popup_viewport();
-    let Some(mut choice) = choose_agent(&config, layout, &cwd, worktree, None, cols, lines, None)?
+    let Some(mut choice) = choose_agent(config, layout, &cwd, worktree, None, cols, lines, None)?
     else {
         return Ok(Outcome::Cancelled);
     };
@@ -339,7 +350,7 @@ fn adopt_invoking_pane_cwd(client: &dyn HerdrClient) -> Result<()> {
     Ok(())
 }
 
-fn popup_viewport() -> (u16, u16) {
+pub(crate) fn popup_viewport() -> (u16, u16) {
     super::terminal_size().unwrap_or_else(|| {
         (
             viewport_dimension("COLUMNS", "cols"),

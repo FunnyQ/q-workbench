@@ -7,7 +7,7 @@
 >
 > **Depends on**: work/01
 > **Blocks**: work/04, work/07
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -116,22 +116,22 @@ fix the extraction, not the test.
 
 ## Acceptance criteria
 
-- [ ] `agent::popup_with_layout(client, &Config, &TabLayout, worktree: bool) -> FlowResult`
+- [x] `agent::popup_with_layout(client, &Config, &TabLayout, worktree: bool) -> FlowResult`
       exists and is `pub(crate)`.
-- [ ] `agent::popup` keeps its exact signature and delegates to it after loading the config
+- [x] `agent::popup` keeps its exact signature and delegates to it after loading the config
       and resolving the layout.
-- [ ] `agent::popup_viewport` is `pub(crate)` with an unchanged body.
-- [ ] The statement order of the extracted body is identical to before.
-- [ ] The config-first comment still sits on the config load in `popup`.
-- [ ] No existing popup test was edited.
+- [x] `agent::popup_viewport` is `pub(crate)` with an unchanged body.
+- [x] The statement order of the extracted body is identical to before.
+- [x] The config-first comment still sits on the config load in `popup`.
+- [x] No existing popup test was edited.
 
 ## Verification
 
-- [ ] `cargo test` passes, including `popup_reproduces_the_exact_ten_call_sequence`,
+- [x] `cargo test` passes, including `popup_reproduces_the_exact_ten_call_sequence`,
       `popup_cancelled_choice_makes_zero_calls`, and
       `popup_failure_at_every_post_create_step_closes_and_returns_metadata`.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] `git status --short -- src/flows/agent.rs` shows the file dirty.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] `git status --short -- src/flows/agent.rs` shows the file dirty.
 
 ## Eval rubric
 

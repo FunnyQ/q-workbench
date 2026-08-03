@@ -58,7 +58,7 @@ pub(crate) fn strip_pad(value: &str) -> String {
 /// `こんにちは` 10, while the Nerd Font glyph in `\u{f15ce}  claude code` renders 1, so
 /// that label measures 14. Only the East Asian wide blocks and emoji count double; the
 /// private-use planes the Nerd Font glyphs live in do not.
-pub(crate) fn display_width(value: &str) -> u16 {
+fn display_width(value: &str) -> u16 {
     value.chars().fold(0, |total, character| {
         let width = match u32::from(character) {
             0x1100..=0x115F
@@ -83,8 +83,8 @@ pub(crate) fn display_width(value: &str) -> u16 {
 
 /// Rows `gum filter` occupies, as both the flag value and the number vertical centering
 /// has to reserve.
-pub(crate) const FILTER_HEIGHT_ARG: &str = "12";
-pub(crate) const FILTER_HEIGHT: u16 = 12;
+const FILTER_HEIGHT_ARG: &str = "12";
+const FILTER_HEIGHT: u16 = 12;
 
 pub(crate) struct GumMenu {
     cols: u16,
@@ -174,6 +174,55 @@ impl GumMenu {
             .map(|option| format!("{pad}{option}"))
             .collect()
     }
+
+    /// The full `gum choose` argv for these options.
+    ///
+    /// The `--` is load-bearing: an option that starts with a dash is parsed as a flag
+    /// otherwise. The centering pad usually hides that, but the widest option gets no pad
+    /// at all, so a label like `--help` would reach `gum` as a flag — printing help,
+    /// exiting zero, and returning a selection that matches no entry.
+    fn choose_args(&self, options: &[String], height: u8) -> Vec<String> {
+        let mut args = vec![
+            "choose".to_owned(),
+            "--height".to_owned(),
+            height.to_string(),
+            "--no-show-help".to_owned(),
+            "--cursor".to_owned(),
+            String::new(),
+            "--header".to_owned(),
+            String::new(),
+            "--".to_owned(),
+        ];
+        args.extend(self.padded(options));
+        args
+    }
+}
+
+/// The popup's viewport in columns and rows, for sizing a [`GumMenu`].
+pub(crate) fn popup_viewport() -> (u16, u16) {
+    super::terminal_size().unwrap_or_else(|| {
+        (
+            viewport_dimension("COLUMNS", "cols"),
+            viewport_dimension("LINES", "lines"),
+        )
+    })
+}
+
+fn viewport_dimension(variable: &str, tput_capability: &str) -> u16 {
+    super::nonempty_env(variable)
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|value| *value > 0)
+        .or_else(|| {
+            Command::new("tput")
+                .arg(tput_capability)
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .and_then(|value| value.trim().parse::<u16>().ok())
+                .filter(|value| *value > 0)
+        })
+        .unwrap_or(80)
 }
 
 impl Menu for GumMenu {
@@ -187,18 +236,7 @@ impl Menu for GumMenu {
         // `gum choose` draws one row per option and never pads out to `--height`.
         let rows = u16::try_from(options.len()).unwrap_or(u16::MAX);
         self.render_banner(title, subtitle, rows.min(u16::from(height)))?;
-        let mut args = vec![
-            "choose".to_owned(),
-            "--height".to_owned(),
-            height.to_string(),
-            "--no-show-help".to_owned(),
-            "--cursor".to_owned(),
-            String::new(),
-            "--header".to_owned(),
-            String::new(),
-        ];
-        args.extend(self.padded(options));
-        gum_output(args)
+        gum_output(self.choose_args(options, height))
     }
 
     fn filter(
@@ -255,7 +293,7 @@ impl Menu for GumMenu {
 /// is not a terminal — which is exactly our case, since we capture the selection. So
 /// stderr must be inherited or the menu renders nowhere and the user chooses blind.
 /// A non-zero exit means the user cancelled: `Ok(None)`, never an error.
-pub(crate) fn gum_output<I, S>(args: I) -> Result<Option<String>>
+fn gum_output<I, S>(args: I) -> Result<Option<String>>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -273,7 +311,7 @@ where
 }
 
 /// Same contract as [`gum_output`], for the filter menu whose options arrive on stdin.
-pub(crate) fn gum_with_input(args: &[&str], input: &str) -> Result<Option<String>> {
+fn gum_with_input(args: &[&str], input: &str) -> Result<Option<String>> {
     let mut child = Command::new("gum")
         .args(args)
         .stdin(Stdio::piped())
@@ -355,6 +393,24 @@ mod tests {
         // A narrower option set moves further right; the old fixed 24 could not.
         let model = menu.padded(&["Fable 5".to_owned()]);
         assert_eq!(display_width(&model[0]) - 7, 36);
+    }
+
+    #[test]
+    fn every_option_follows_the_flag_terminator() {
+        // A viewport no wider than the widest option leaves the centering pad empty, so a
+        // dash-prefixed label reaches gum bare. Without `--` gum reads it as a flag,
+        // prints its help, exits zero, and returns a selection that matches no entry.
+        let menu = GumMenu::new(6, 40);
+        let args = menu.choose_args(&["--help".to_owned(), "ok".to_owned()], 8);
+        let terminator = args
+            .iter()
+            .position(|arg| arg == "--")
+            .expect("choose_args ends its flags with --");
+        assert_eq!(&args[terminator + 1..], ["--help", "ok"]);
+        assert!(
+            args[..terminator].iter().all(|arg| arg != "--help"),
+            "no option may sit among the flags: {args:?}"
+        );
     }
 
     #[test]

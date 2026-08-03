@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 
-use super::menu::{strip_pad, GumMenu, Menu};
+use super::menu::{popup_viewport, strip_pad, GumMenu, Menu};
 use super::{agent, FlowResult, Outcome};
 use crate::config::{Config, TabLayout};
 use crate::herdr::HerdrClient;
@@ -14,38 +14,37 @@ fn choose_layout<'a>(config: &'a Config, menu: &mut impl Menu) -> Result<Option<
         return Ok(config.tab_layouts.first());
     }
 
-    let default = config
-        .layout(&config.default_tab_layout)
-        .expect("validated at load");
-    let options = std::iter::once(default)
+    let default = agent::resolve_layout(config, None)?;
+    // The rows and the layouts they were rendered from stay side by side, so the selection
+    // resolves by position instead of re-rendering every label a second time. An answer
+    // that matches no row — empty, or anything gum returned that is not a choice — falls
+    // out as a cancel rather than a panic.
+    let ordered = std::iter::once(default)
         .chain(
             config
                 .tab_layouts
                 .iter()
                 .filter(|layout| layout.name != config.default_tab_layout),
         )
-        .map(TabLayout::menu_label)
+        .collect::<Vec<_>>();
+    let options = ordered
+        .iter()
+        .map(|layout| layout.menu_label())
         .collect::<Vec<_>>();
     let Some(selection) = menu.choose(TITLE, SUBTITLE, &options, HEIGHT)? else {
         return Ok(None);
     };
     let selection = strip_pad(&selection);
-    if selection.is_empty() {
-        return Ok(None);
-    }
 
-    Ok(Some(
-        config
-            .tab_layouts
-            .iter()
-            .find(|layout| layout.menu_label() == selection)
-            .expect("validated at load"),
-    ))
+    Ok(options
+        .iter()
+        .position(|option| *option == selection)
+        .map(|index| ordered[index]))
 }
 
 pub fn new(client: &dyn HerdrClient) -> FlowResult {
     let config = Config::load().context("failed to load config")?;
-    let (cols, lines) = agent::popup_viewport();
+    let (cols, lines) = popup_viewport();
     let mut menu = GumMenu::new(cols, lines);
     new_with(client, &config, &mut menu)
 }
@@ -158,22 +157,6 @@ mod tests {
         }
     }
 
-    fn without_invoking_pane_env<T>(run: impl FnOnce() -> T) -> T {
-        let saved = ["HERDR_ACTIVE_PANE_ID", "HERDR_PLUGIN_CONTEXT_JSON"]
-            .map(|name| (name, std::env::var_os(name)));
-        for (name, _) in &saved {
-            std::env::remove_var(name);
-        }
-        let result = run();
-        for (name, value) in saved {
-            match value {
-                Some(value) => std::env::set_var(name, value),
-                None => std::env::remove_var(name),
-            }
-        }
-        result
-    }
-
     #[test]
     fn default_layout_is_listed_first_without_sorting_the_rest() {
         let config = config_with(layouts(), "second");
@@ -237,12 +220,13 @@ mod tests {
 
     #[test]
     fn cancelling_before_popup_issues_no_client_calls() {
-        let _guard = crate::state::env_lock();
         let config = config_with(layouts(), "first");
         let client = FakeClient::default();
         let mut menu = FakeMenu::new([None]);
 
-        let outcome = without_invoking_pane_env(|| new_with(&client, &config, &mut menu)).unwrap();
+        // No env guard: cancelling returns before popup_with_layout reads the invoking
+        // pane, so the no-call property has to hold whatever the ambient env says.
+        let outcome = new_with(&client, &config, &mut menu).unwrap();
 
         assert_eq!(outcome, Outcome::Cancelled);
         assert!(client.calls.borrow().is_empty());
@@ -250,7 +234,16 @@ mod tests {
 
     #[test]
     fn selected_layout_builds_its_tab() {
+        // popup_with_layout adopts the invoking pane's cwd, which it finds through these
+        // two variables. A real Herdr session sets them, and the pane they name is not
+        // this test's, so they are cleared for the call and restored afterwards. The lock
+        // keeps a parallel test from observing the gap.
         let _guard = crate::state::env_lock();
+        let saved = ["HERDR_ACTIVE_PANE_ID", "HERDR_PLUGIN_CONTEXT_JSON"]
+            .map(|name| (name, std::env::var_os(name)));
+        for (name, _) in &saved {
+            std::env::remove_var(name);
+        }
         let layouts = vec![
             pinned_layout("first", "First tab"),
             pinned_layout("second", "Second tab"),
@@ -268,15 +261,20 @@ mod tests {
             }),
         );
 
-        let outcome = without_invoking_pane_env(|| new_with(&client, &config, &mut menu)).unwrap();
+        let outcome = new_with(&client, &config, &mut menu);
+        for (name, value) in saved {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
 
-        assert_eq!(outcome, Outcome::Done);
+        assert_eq!(outcome.unwrap(), Outcome::Done);
         let calls = client.calls.borrow();
         let create = calls
             .iter()
             .find(|(method, _)| method == "tab.create")
             .expect("tab.create call");
         assert_eq!(create.1["label"], "Second tab");
-        assert_ne!(create.1["label"], "First tab");
     }
 }

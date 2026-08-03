@@ -1,3 +1,4 @@
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
@@ -237,6 +238,51 @@ pub fn render_label(icon: Option<&str>, label: &str) -> String {
     }
 }
 
+/// The menu row for one named entry, falling back to its name when `label` is absent.
+///
+/// Every menu returns the selected row and maps it back to an entry by comparing it with
+/// this exact string, so every site that renders an entry must go through here.
+fn menu_label(icon: Option<&str>, label: Option<&str>, name: &str) -> String {
+    render_label(icon, label.unwrap_or(name))
+}
+
+/// Validate the menu rows one config section renders.
+///
+/// `kind` names one entry ("layout"). The menu trims the centering pad off the selection
+/// and `gum` trims its trailing whitespace, so a row with outer whitespace never survives
+/// the round trip and is rejected here rather than mismatching — or resolving to the wrong
+/// entry — at selection time. Two entries on the same row would both be listed while only
+/// the first could ever be selected.
+fn check_menu_rows<'a>(
+    kind: &str,
+    entries: impl IntoIterator<Item = (&'a str, Option<&'a str>, Option<&'a str>)>,
+) -> Result<()> {
+    let mut rows: BTreeMap<String, &str> = BTreeMap::new();
+    for (name, label, icon) in entries {
+        if label.is_some_and(str::is_empty) {
+            bail!("{kind} '{name}': label is empty; omit the key to fall back to the name");
+        }
+        if icon.is_some_and(str::is_empty) {
+            bail!("{kind} '{name}': icon is empty; omit the key to render the label alone");
+        }
+        let row = menu_label(icon, label, name);
+        if row.trim() != row {
+            bail!("{kind} '{name}': menu label has leading or trailing whitespace: {row:?}");
+        }
+        match rows.entry(row) {
+            Entry::Occupied(taken) => {
+                bail!(
+                    "{kind}s '{}' and '{name}' render the same menu label: {}",
+                    taken.get(),
+                    taken.key()
+                );
+            }
+            Entry::Vacant(slot) => slot.insert(name),
+        };
+    }
+    Ok(())
+}
+
 impl Config {
     pub fn load() -> Result<Self> {
         let home = required_env("HOME")?;
@@ -319,54 +365,27 @@ impl Config {
 
     fn validate(&self) -> Result<()> {
         let mut layout_names = BTreeSet::new();
-        let mut layout_labels: BTreeMap<String, &str> = BTreeMap::new();
         for layout in &self.tab_layouts {
             if !layout_names.insert(layout.name.as_str()) {
                 bail!("duplicate tab layout name: {}", layout.name);
             }
-            if layout.label.as_deref().is_some_and(str::is_empty) {
-                bail!(
-                    "layout '{}': label is empty; omit the key to fall back to the name",
-                    layout.name
-                );
-            }
-            if layout.icon.as_deref().is_some_and(str::is_empty) {
-                bail!(
-                    "layout '{}': icon is empty; omit the key to render the label alone",
-                    layout.name
-                );
-            }
-            let label = layout.menu_label();
-            if let Some(other) = layout_labels.insert(label.clone(), layout.name.as_str()) {
-                bail!(
-                    "layouts '{}' and '{}' render the same menu label: {}",
-                    other,
-                    layout.name,
-                    label
-                );
-            }
         }
+        check_menu_rows(
+            "layout",
+            self.tab_layouts.iter().map(|layout| {
+                (
+                    layout.name.as_str(),
+                    layout.label.as_deref(),
+                    layout.icon.as_deref(),
+                )
+            }),
+        )?;
 
         let mut agent_names = BTreeSet::new();
-        let mut agent_labels: BTreeMap<String, &str> = BTreeMap::new();
         for agent in &self.agents {
             if !agent_names.insert(agent.name.as_str()) {
                 bail!("duplicate agent name: {}", agent.name);
             }
-
-            // The harness menu returns the rendered row and maps it back to an agent by
-            // that string. Two agents rendering the same row would both be listed while
-            // only the first could ever be selected.
-            let label = agent.menu_label();
-            if let Some(other) = agent_labels.insert(label.clone(), agent.name.as_str()) {
-                bail!(
-                    "agents '{}' and '{}' render the same menu label: {}",
-                    other,
-                    agent.name,
-                    label
-                );
-            }
-
             let mut option_names = BTreeSet::new();
             for option in &agent.options {
                 if !option_names.insert(option.name.as_str()) {
@@ -378,6 +397,16 @@ impl Config {
                 }
             }
         }
+        check_menu_rows(
+            "agent",
+            self.agents.iter().map(|agent| {
+                (
+                    agent.name.as_str(),
+                    agent.label.as_deref(),
+                    agent.icon.as_deref(),
+                )
+            }),
+        )?;
 
         if !layout_names.contains(self.default_tab_layout.as_str()) {
             bail!(
@@ -604,13 +633,9 @@ impl Config {
 }
 
 impl Agent {
-    /// The harness menu row for this agent. The reverse lookup in the harness menu matches
-    /// on this exact string, so every site that renders an agent must go through here.
+    /// The harness menu row for this agent. See [`menu_label`].
     pub fn menu_label(&self) -> String {
-        render_label(
-            self.icon.as_deref(),
-            self.label.as_deref().unwrap_or(&self.name),
-        )
+        menu_label(self.icon.as_deref(), self.label.as_deref(), &self.name)
     }
 
     pub fn option(&self, name: &str) -> Option<&AgentOption> {
@@ -619,13 +644,9 @@ impl Agent {
 }
 
 impl TabLayout {
-    /// The layout menu row for this layout. The reverse lookup in the layout menu matches
-    /// on this exact string, so every site that renders a layout must go through here.
+    /// The layout menu row for this layout. See [`menu_label`].
     pub fn menu_label(&self) -> String {
-        render_label(
-            self.icon.as_deref(),
-            self.label.as_deref().unwrap_or(&self.name),
-        )
+        menu_label(self.icon.as_deref(), self.label.as_deref(), &self.name)
     }
 }
 
@@ -1137,6 +1158,62 @@ type = "agent"
 "#,
         );
         assert!(error.contains("layout 'a': icon is empty"), "{error}");
+    }
+
+    // A padded row never survives the menu round trip: the flow trims the centering pad off
+    // the selection, so " Work" would come back as "Work" and match another layout — or no
+    // layout at all. Rejecting it at load keeps the reverse lookup total.
+    #[test]
+    fn layout_label_with_outer_whitespace_is_a_named_load_error() {
+        for (key, value) in [("label", " Work"), ("label", "Work "), ("icon", " W")] {
+            let error = load_layout_error(&format!(
+                r#"[[tab_layouts]]
+name = "a"
+{key} = "{value}"
+[[tab_layouts.panes]]
+name = "agent"
+type = "agent"
+"#
+            ));
+            assert!(
+                error.contains("layout 'a': menu label has leading or trailing whitespace"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn agent_label_with_outer_whitespace_is_a_named_load_error() {
+        let mut config = Config::test_default();
+        config.agents[0].icon = None;
+        config.agents[0].label = Some(" claude".to_owned());
+
+        let error = validation_error(&config);
+
+        assert!(
+            error.contains("menu label has leading or trailing whitespace"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn duplicate_rendered_agent_labels_are_a_named_load_error() {
+        let mut config = Config::test_default();
+        let row = config.agents[0].menu_label();
+        config.agents[1].icon = config.agents[0].icon.clone();
+        config.agents[1].label = Some(
+            config.agents[0]
+                .label
+                .clone()
+                .unwrap_or_else(|| config.agents[0].name.clone()),
+        );
+
+        let error = validation_error(&config);
+
+        assert!(
+            error.contains(&format!("render the same menu label: {row}")),
+            "{error}"
+        );
     }
 
     #[test]

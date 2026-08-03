@@ -10,7 +10,7 @@ use serde_json::{json, Map, Value};
 #[cfg(test)]
 use crate::config::LayoutPane;
 use crate::config::{render_label, Agent, Config, PaneType, TabLayout};
-use crate::flows::menu::{strip_pad, GumMenu, InputIndent, Menu};
+use crate::flows::menu::{popup_viewport, strip_pad, GumMenu, InputIndent, Menu};
 use crate::flows::{invoking_pane_cwd, nonempty_env, FlowError, FlowResult, Outcome, PaneCwd};
 use crate::herdr::HerdrClient;
 use crate::shell::build_command;
@@ -56,7 +56,10 @@ pub struct InjectOptions {
     pub layout: Option<String>,
 }
 
-fn resolve_layout<'a>(config: &'a Config, requested: Option<&str>) -> Result<&'a TabLayout> {
+pub(crate) fn resolve_layout<'a>(
+    config: &'a Config,
+    requested: Option<&str>,
+) -> Result<&'a TabLayout> {
     let name = requested.unwrap_or(&config.default_tab_layout);
     config
         .layout(name)
@@ -348,32 +351,6 @@ fn adopt_invoking_pane_cwd(client: &dyn HerdrClient) -> Result<()> {
             .with_context(|| format!("failed to adopt invoking pane cwd {}", cwd.display()))?;
     }
     Ok(())
-}
-
-pub(crate) fn popup_viewport() -> (u16, u16) {
-    super::terminal_size().unwrap_or_else(|| {
-        (
-            viewport_dimension("COLUMNS", "cols"),
-            viewport_dimension("LINES", "lines"),
-        )
-    })
-}
-
-fn viewport_dimension(variable: &str, tput_capability: &str) -> u16 {
-    nonempty_env(variable)
-        .and_then(|value| value.parse::<u16>().ok())
-        .filter(|value| *value > 0)
-        .or_else(|| {
-            Command::new("tput")
-                .arg(tput_capability)
-                .output()
-                .ok()
-                .filter(|output| output.status.success())
-                .and_then(|output| String::from_utf8(output.stdout).ok())
-                .and_then(|value| value.trim().parse::<u16>().ok())
-                .filter(|value| *value > 0)
-        })
-        .unwrap_or(80)
 }
 
 fn create_popup_tab(

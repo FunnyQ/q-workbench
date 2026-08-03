@@ -5,6 +5,25 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-03
+
+_tracks tag `v0.6.0`_
+
+### Added
+- New `tab new` Herdr action opens a gum menu of every configured tab layout,
+  so any layout added to `[[tab_layouts]]` is reachable from a single
+  keybinding without a matching manifest action or extra rebuild.
+  `default_tab_layout` is listed first, the rest keep config order, and a
+  config with only one layout skips the menu and opens it directly.
+- `[[tab_layouts]]` entries can now set optional `label` and `icon` keys,
+  rendered the same way agent labels are, falling back to the layout's name.
+  Config load now rejects an empty label/icon or two layouts that render to
+  the same menu label, naming the offending layout.
+
+### Changed
+- Menu-drawing code shared by the agent and layout pickers moved into its own
+  module, so both menus stay visually consistent as new pickers are added.
+
 ## [0.5.0] - 2026-08-03
 
 _tracks tag `v0.5.0`_

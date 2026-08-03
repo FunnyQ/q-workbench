@@ -155,10 +155,15 @@ label = "Pair"
   direction = "right"
   ratio = 0.5
 
-# No agent pane at all: a plain tab of shells. Nothing asks, and nothing is launched.
+# No agent pane at all: a plain tab of shells. No harness menu runs; the launcher asks for
+# a tab name instead, and submitting nothing keeps the label below.
+#
+# "blank-tab" is a reserved name. The new-tab menu offers a blank tab whether or not this
+# section exists, always as the last row, so declare it only to change what blank opens.
 [[tab_layouts]]
 name = "blank-tab"
 label = "Blank Tab"
+icon = "󰓩"                    # nf-md-tab
 
   [[tab_layouts.panes]]
   name = "term"

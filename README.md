@@ -15,7 +15,7 @@ The plugin exposes nine actions. Keys are yours to choose — see [Bind it](#bin
 | `new-agent` | Pick harness → model → usage, then open a tab laid out as **agent \| yazi + terminal** |
 | `new-worktree-agent` | Same, but first picks/creates a branch and starts every pane in a fresh `git worktree` |
 | `new-assistant` | Open a tab from the `personal-assistant` layout — every choice pinned, so no menus |
-| `new-tab` | Pick a tab layout, then the usual harness → model → usage menus, and open a tab from that layout |
+| `new-tab` | Pick a tab layout — a blank tab is always the last row — then the menus that layout leaves open, and open a tab from it |
 | `project` | Fuzzy-find a registered project; focus its workspace or create one (falls back to `zoxide`) |
 | `ssh` | Fuzzy-find an SSH host; connect in a dedicated tab that closes itself on disconnect |
 | `restart-agent` | Confirm, then relaunch the agent **in place** — the yazi/terminal side panes survive |
@@ -121,6 +121,16 @@ For each layout, `label` sets the layout menu row text and falls back to `name` 
 omitted. `icon` is drawn before the label, separated by two spaces, and falls back to
 no icon when omitted. Two layouts may not have the same rendered menu row, and a rendered
 row may not start or end with whitespace. Both rules apply to `[[agents]]` too.
+
+A layout may declare no agent pane, one, or several, at any position. Each agent pane
+that pins neither `agent` nor `option` runs its own harness and model menu, in the order
+the panes are written; the usage menu then runs once for the tab. A layout with no agent
+pane asks for a plain tab name instead — submitting nothing keeps its `label`.
+
+`blank-tab` is a reserved layout name. The `new-tab` menu offers a blank tab as its last
+row whether or not the config declares one, so declare that section only to change what
+blank opens.
+
 This minimal config keeps the built-in layout and defines one agent option:
 
 ```toml
@@ -142,7 +152,7 @@ defaults.
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `dashboard_workspace` | `personal-assistant` | Workspace the dashboard tab opens in |
-| `default_tab_layout` | `agentic-coding` | Layout used when a launch does not pass `--layout`; the `new-tab` action also hoists it to the top of its menu |
+| `default_tab_layout` | `agentic-coding` | Layout used when a launch does not pass `--layout` — the `project`, `new-agent`, and `new-worktree-agent` actions, and an in-pane `agent launch`. The `new-tab` action also hoists it to the top of its menu, above the blank row pinned to the bottom |
 | `project_registry_file` | `~/.local/state/herdr-projects/registry.json` | Project registry path |
 | `projects_root` | `~/Projects` | Root of the `.git` discovery sweep |
 | `ssh_registry_file` | `~/.local/state/ssh-targets/registry.json` | SSH registry path |

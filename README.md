@@ -119,7 +119,8 @@ The config contains `[[tab_layouts]]` entries with nested panes and `[[agents]]`
 entries with nested options. Omitting a layout choice makes the launcher ask for it.
 For each layout, `label` sets the layout menu row text and falls back to `name` when
 omitted. `icon` is drawn before the label, separated by two spaces, and falls back to
-no icon when omitted. Two layouts may not have the same rendered menu row.
+no icon when omitted. Two layouts may not have the same rendered menu row, and a rendered
+row may not start or end with whitespace. Both rules apply to `[[agents]]` too.
 This minimal config keeps the built-in layout and defines one agent option:
 
 ```toml

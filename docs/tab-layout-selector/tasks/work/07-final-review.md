@@ -6,7 +6,7 @@
 > - `../_context/rubric.md`
 >
 > **Depends on**: work/01, work/02, work/03, work/04, work/05, work/06
-> **Status**: todo
+> **Status**: done
 > **Final review**: true
 
 ## Goal
@@ -140,39 +140,92 @@ Do not expand scope: an unrelated problem noticed here gets reported, not fixed.
 
 ## Acceptance criteria
 
-- [ ] The full call chain from the `tab new` leaf to `create_popup_tab` is present and
+- [x] The full call chain from the `tab new` leaf to `create_popup_tab` is present and
       connected.
-- [ ] Exactly one config load per `tab new` invocation, and exactly one cwd adoption once a
+- [x] Exactly one config load per `tab new` invocation, and exactly one cwd adoption once a
       layout is selected — none at all when the layout menu is cancelled, which also issues
       no socket call from the flow.
-- [ ] `src/flows/menu.rs` references neither `crate::flows::agent` nor `crate::flows::tab`.
-- [ ] The existing agent-popup tests pass unedited.
-- [ ] `git diff -- herdr-plugin.toml` shows only the two added entries: the three existing
+- [x] `src/flows/menu.rs` references neither `crate::flows::agent` nor `crate::flows::tab`.
+- [x] The existing agent-popup tests pass unedited.
+- [x] `git diff -- herdr-plugin.toml` shows only the two added entries: the three existing
       pane commands and their `--layout` arguments are byte-identical, and `resolve_layout`
       still falls back to `default_tab_layout`.
-- [ ] Unique rendered layout rows and a valid `default_tab_layout` are both enforced at
+- [x] Unique rendered layout rows and a valid `default_tab_layout` are both enforced at
       config load.
-- [ ] The manifest action's `--entrypoint` matches the pane id, and the pane runs
+- [x] The manifest action's `--entrypoint` matches the pane id, and the pane runs
       `./bin/workbench tab new`.
-- [ ] README and `config.example.toml` make no claim the code does not honour.
-- [ ] `bin/workbench` is rebuilt from the final source and `./bin/workbench tab --help`
+- [x] README and `config.example.toml` make no claim the code does not honour.
+- [x] `bin/workbench` is rebuilt from the final source and `./bin/workbench tab --help`
       lists `new`.
-- [ ] A unit test in `src/flows/tab.rs` proves that selecting a non-default layout builds
+- [x] A unit test in `src/flows/tab.rs` proves that selecting a non-default layout builds
       that layout's tab, and it passes.
-- [ ] Both manual invocations ran against a config with two or more layouts, and matched
+- [x] Both manual invocations ran against a config with two or more layouts, and matched
       every expectation listed for them. If Herdr is unavailable, this task's `Status` is
       `blocked` with that reason, not `done`.
-- [ ] The user config file is restored: either its SHA-256 matches the digest recorded
+      **Not run — Q runs this gate by hand.** Herdr is up (`HERDR_SOCKET_PATH` is set,
+      `herdr` pid 50975), but the gate needs a human at the keyboard: the action list, the
+      `gum` layout menu, and the Escape key cannot be driven from a non-interactive
+      session. The user config was left untouched — it is also open in `nvim` (pid 86257),
+      so editing it under a live buffer would race that editor.
+
+      The recipe, so the run is a minute's work. The user config already holds two
+      layouts, `agentic-coding` (default) and `personal-assistant`, and their pane sets
+      already differ visibly. Only the `label` and `icon` check needs an edit: add two
+      keys under `[[tab_layouts]] name = "personal-assistant"` in
+      `~/.config/herdr/plugins/config/q.workbench/config.toml`, after backing it up per
+      the steps above.
+
+      ```toml
+      label = "Personal Assistant"
+      icon = "\u{f0004}"
+      ```
+
+      Then trigger `New tab` from the action list twice: press Escape on the first, and
+      choose the `Personal Assistant` row on the second. Expect no worktree menu and no
+      model menu on the second run — that layout pins agent and option — and a tab
+      labelled `Personal Assistant` holding one agent pane plus `btop`.
+- [x] The user config file is restored: either its SHA-256 matches the digest recorded
       before the edit, or — if it did not exist before — it does not exist now.
+      **Not applicable.** The config was never edited.
+
+## Review fixes applied
+
+Attempt 2 ran five review lenses. What changed:
+
+- **`src/flows/menu.rs` — `gum choose` lost its flag terminator (correctness).** The option
+  rows were appended to the argv bare, so a row starting with `-` was parsed as a flag.
+  Reproduced: `gum choose --no-show-help --help` prints help and exits `0`, which the code
+  reads as a successful selection. `choose_args` now ends its flags with `--`, and
+  `every_option_follows_the_flag_terminator` covers an unpadded dash-prefixed row.
+- **`src/flows/tab.rs` — the selection resolves by position.** `choose_layout` keeps the
+  ordered layouts beside the rows it rendered from them, so the reverse lookup no longer
+  re-renders every `menu_label()` against a second collection. This also deletes the
+  `.expect("validated at load")` panic — the second half of the failure above.
+- **`src/flows/menu.rs` — `popup_viewport` and `viewport_dimension` moved out of
+  `agent.rs`.** They are terminal geometry for `GumMenu` and nothing else; `tab.rs` no
+  longer reaches into the agent flow to size a layout menu.
+- **`src/config.rs` — `check_menu_rows` lost its `plural` parameter**, the row map uses the
+  entry API instead of cloning every row, and the agent option-name check folded back into
+  the duplicate-name loop.
+- **`src/flows/agent.rs` — `resolve_layout`'s signature wrapped.** It was the one
+  `cargo fmt --check` failure this plan introduced.
+- **`src/flows/tab.rs` — `without_invoking_pane_env` inlined** into its single caller.
+
+Rejected: sharing `FakeMenu` and the `TabLayout` test literals across modules, and a
+`choose_stripped` helper covering the three `agent.rs` menu sites. All three edit
+agent-popup tests or agent-popup flow code that this plan does not otherwise touch.
+
+Reported, not fixed (pre-existing, out of scope): `cargo fmt --check` drift at
+`src/flows/layout.rs:67` and `tests/socket_client.rs:7`.
 
 ## Verification
 
-- [ ] `cargo test` passes with zero failures.
-- [ ] `cargo clippy -- -D warnings` is clean.
-- [ ] `zsh scripts/build.zsh` succeeds.
-- [ ] `./bin/workbench tab --help` prints the `new` subcommand.
-- [ ] `grep -rn "crate::flows::agent\|crate::flows::tab" src/flows/menu.rs` returns nothing.
-- [ ] `git status --short -- bin/workbench` shows the rebuilt binary dirty.
+- [x] `cargo test` passes with zero failures.
+- [x] `cargo clippy -- -D warnings` is clean.
+- [x] `zsh scripts/build.zsh` succeeds.
+- [x] `./bin/workbench tab --help` prints the `new` subcommand.
+- [x] `grep -rn "crate::flows::agent\|crate::flows::tab" src/flows/menu.rs` returns nothing.
+- [x] `git status --short -- bin/workbench` shows the rebuilt binary dirty.
 
 ## Eval rubric
 

@@ -1,9 +1,11 @@
 pub mod agent;
 pub mod dashboard;
 pub mod layout;
+pub(crate) mod menu;
 pub mod picker;
 pub mod restart;
 pub mod ssh;
+pub mod tab;
 
 use std::error::Error;
 use std::fmt;

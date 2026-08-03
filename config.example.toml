@@ -37,7 +37,9 @@ ssh_history_file = "$HOME/.zsh_history"
 #
 # A layout is selected with `--layout <name>` — `workbench agent popup --layout
 # personal-assistant`, or a Herdr action whose command carries the flag. Without the
-# flag the launcher uses `default_tab_layout`.
+# flag the launcher uses `default_tab_layout`. The `new-tab` action asks, listing every
+# layout with `default_tab_layout` first. When only one layout is defined, it skips the
+# menu.
 #
 # LEAVING A CHOICE OUT MEANS ASKING FOR IT. Write agent, option, or tab_label to pin
 # that choice and skip its menu. Omit it and the launcher asks, exactly as it does
@@ -45,6 +47,8 @@ ssh_history_file = "$HOME/.zsh_history"
 #
 # Layout keys:
 #   name       Stable id. A workspace and default_tab_layout name it.
+#   label      Layout menu text. Defaults to name.
+#   icon       Drawn before the label, separated by two spaces: "${icon}  ${label}".
 #   tab_label  Tab title, and with it the title of the agent pane. Omit to ask: the
 #              usage menu runs, and a chosen worktree branch is appended to the answer.
 #
@@ -105,7 +109,7 @@ name = "agentic-coding"
 # Everything pinned: opens straight to Opus, no menus at all.
 [[tab_layouts]]
 name = "personal-assistant"
-tab_label = "Personal Assistant"
+label = "Personal Assistant"
 
   [[tab_layouts.panes]]
   name = "agent"

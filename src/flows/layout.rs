@@ -67,8 +67,8 @@ pub fn even_out(client: &dyn HerdrClient, pane: Option<&str>) -> FlowResult {
     while chain_depth > 0 && direction_at(&root, &path[..chain_depth - 1]) == Some(direction) {
         chain_depth -= 1;
     }
-    let chain_root = node_at(&root, &path[..chain_depth])
-        .context("failed to resolve the row's root split")?;
+    let chain_root =
+        node_at(&root, &path[..chain_depth]).context("failed to resolve the row's root split")?;
 
     apply_even_ratios(client, &tab_id, direction, chain_root, &path[..chain_depth])?;
     Ok(Outcome::Done)

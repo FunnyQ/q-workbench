@@ -7,8 +7,8 @@ use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use workbench::herdr::{HerdrClient, SocketClient};
 use serde_json::json;
+use workbench::herdr::{HerdrClient, SocketClient};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 

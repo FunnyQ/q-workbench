@@ -67,7 +67,7 @@ command = ["./bin/workbench", "agent", "popup", "--worktree"]
 
 [[panes]]
 id = "assistant"
-title = "\U000F169F  personal assistant"
+title = "  personal assistant"
 placement = "popup"
 command = ["./bin/workbench", "agent", "popup", "--layout", "personal-assistant"]
 

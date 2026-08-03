@@ -105,7 +105,7 @@ name = "agentic-coding"
 # Everything pinned: opens straight to Opus, no menus at all.
 [[tab_layouts]]
 name = "personal-assistant"
-tab_label = "Personal Assistant"
+label = "Personal Assistant"
 
   [[tab_layouts.panes]]
   name = "agent"

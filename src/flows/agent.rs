@@ -19,6 +19,8 @@ const USE_LAST_PREFIX: &str = "\u{f0709}  use last: ";
 // Two spaces after the glyph. `scripts/agent-launcher.zsh:183` used one; the unified
 // flow follows the popup and the parity contract (GLY-2).
 const USAGE_TITLE: &str = "\u{f27b}  Usage";
+// nf-cod-window: a tab that runs no harness is named, not classified by usage.
+const TAB_NAME_TITLE: &str = "\u{eb03}  Tab Name";
 const USAGE_DISCUSS: &str = "\u{f442}  discuss";
 const USAGE_REVIEW: &str = "\u{f4af}  review";
 const USAGE_DEBUG: &str = "\u{ead8}  debug";
@@ -666,11 +668,14 @@ fn choose_agent_with_last(
 
     // A fixed usage skips the menu and is used verbatim: the restart path passes the
     // pane's current label, and the project picker passes its pinned tab label. A layout
-    // with no agent pane never asks — the tab is not for a harness, so the question does
-    // not apply — and names itself instead.
+    // with no agent pane is not for a harness, so the usage question does not apply; it
+    // asks for a plain tab name instead.
     let usage = match fixed_usage.or(layout.tab_label.as_deref()) {
         Some(usage) => usage.to_owned(),
-        None if agents.is_empty() => layout.menu_label(),
+        None if agents.is_empty() => match select_tab_name(layout, menu)? {
+            Some(name) => name,
+            None => return Ok(None),
+        },
         None => match select_usage(menu)? {
             Some(usage) => usage,
             None => return Ok(None),
@@ -786,6 +791,31 @@ fn choose_pane_agent(
         launch: build_launch(config, &agent_name, option_name.as_deref())?,
         agent_name,
         option_name,
+    }))
+}
+
+/// Ask what to call a tab that runs no harness.
+///
+/// Submitting nothing keeps the layout's own label: a blank tab always has a usable name,
+/// so an empty answer is a shrug rather than a cancellation. Escape still cancels, which
+/// is why the empty string and `None` are not folded together the way [`select_usage`]
+/// folds them.
+fn select_tab_name(layout: &TabLayout, menu: &mut impl Menu) -> Result<Option<String>> {
+    let fallback = layout.menu_label();
+    let Some(name) = menu.input(
+        TAB_NAME_TITLE,
+        "Name this tab.",
+        &fallback,
+        40,
+        InputIndent::None,
+    )?
+    else {
+        return Ok(None);
+    };
+    let name = name.trim();
+    Ok(Some(match name.is_empty() {
+        true => fallback,
+        false => name.to_owned(),
     }))
 }
 
@@ -2002,12 +2032,76 @@ mod popup {
         assert_eq!(choice.agents[1].option_name.as_deref(), Some("Opus"));
     }
 
-    #[test]
-    fn a_layout_with_no_agent_pane_asks_nothing_and_names_itself() {
-        let config = config();
-        let mut layout = bare_layout("blank-tab");
-        layout.label = Some("Blank Tab".to_owned());
+    /// `bare_layout` with its one pane turned into a plain shell.
+    fn shell_only_layout(name: &str, label: &str) -> TabLayout {
+        let mut layout = bare_layout(name);
+        layout.label = Some(label.to_owned());
         layout.panes[0].pane_type = PaneType::Shell;
+        layout
+    }
+
+    #[test]
+    fn a_layout_with_no_agent_pane_runs_no_harness_menu_and_asks_for_a_name() {
+        let config = config();
+        let mut menu = FakeMenu::new([Some("scratch")]);
+
+        let choice = choose_agent_with(
+            &config,
+            &shell_only_layout("blank", "Blank Tab"),
+            Path::new("/project"),
+            false,
+            None,
+            &mut menu,
+            &FakeGit::nowhere(),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(menu.answered_everything());
+        assert!(choice.agents.is_empty());
+        assert_eq!(choice.label, "scratch");
+    }
+
+    #[test]
+    fn an_empty_tab_name_keeps_the_layout_label_but_escape_cancels() {
+        let config = config();
+        let layout = shell_only_layout("blank", "Blank Tab");
+
+        // gum exits zero with empty stdout when the field is submitted blank, and non-zero
+        // when it is escaped. Only the second is a cancellation.
+        let mut blank = FakeMenu::new([Some("   ")]);
+        let choice = choose_agent_with(
+            &config,
+            &layout,
+            Path::new("/project"),
+            false,
+            None,
+            &mut blank,
+            &FakeGit::nowhere(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(choice.label, "Blank Tab");
+
+        let mut escaped = FakeMenu::new([None]);
+        let cancelled = choose_agent_with(
+            &config,
+            &layout,
+            Path::new("/project"),
+            false,
+            None,
+            &mut escaped,
+            &FakeGit::nowhere(),
+        )
+        .unwrap();
+        assert_eq!(cancelled, None);
+    }
+
+    #[test]
+    fn a_pinned_tab_label_skips_the_name_prompt() {
+        let config = config();
+        let mut layout = shell_only_layout("blank", "Blank Tab");
+        layout.tab_label = Some("Notes".to_owned());
         let mut menu = FakeMenu::new([]);
 
         let choice = choose_agent_with(
@@ -2022,9 +2116,7 @@ mod popup {
         .unwrap()
         .unwrap();
 
-        assert!(menu.titles.is_empty());
-        assert!(choice.agents.is_empty());
-        assert_eq!(choice.label, "Blank Tab");
+        assert_eq!(choice.label, "Notes");
     }
 
     #[test]

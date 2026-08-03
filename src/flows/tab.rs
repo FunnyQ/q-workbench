@@ -2,31 +2,51 @@ use anyhow::{Context, Result};
 
 use super::menu::{popup_viewport, strip_pad, GumMenu, Menu};
 use super::{agent, FlowResult, Outcome};
-use crate::config::{Config, TabLayout};
+use crate::config::{blank_tab_layout, Config, TabLayout, BLANK_LAYOUT_NAME};
 use crate::herdr::HerdrClient;
 
 const TITLE: &str = "\u{eb03}  Tab Layout";
 const SUBTITLE: &str = "Choose a layout.";
 const HEIGHT: u8 = 8;
 
-fn choose_layout<'a>(config: &'a Config, menu: &mut impl Menu) -> Result<Option<&'a TabLayout>> {
-    if config.tab_layouts.len() == 1 {
-        return Ok(config.tab_layouts.first());
-    }
-
+/// The menu rows, in order: `default_tab_layout` first, the rest in config order, and the
+/// blank layout last.
+///
+/// The blank entry is appended whatever the config says, so a config with no `tab_layouts`
+/// — or none the user wants right now — can still open a plain tab. A config layout named
+/// [`BLANK_LAYOUT_NAME`] replaces the built-in body but keeps the last slot.
+fn ordered_layouts(config: &Config) -> Result<Vec<TabLayout>> {
     let default = agent::resolve_layout(config, None)?;
-    // The rows and the layouts they were rendered from stay side by side, so the selection
-    // resolves by position instead of re-rendering every label a second time. An answer
-    // that matches no row — empty, or anything gum returned that is not a choice — falls
-    // out as a cancel rather than a panic.
-    let ordered = std::iter::once(default)
+    let mut ordered = std::iter::once(default)
         .chain(
             config
                 .tab_layouts
                 .iter()
                 .filter(|layout| layout.name != config.default_tab_layout),
         )
+        .cloned()
         .collect::<Vec<_>>();
+
+    let blank = ordered
+        .iter()
+        .position(|layout| layout.name == BLANK_LAYOUT_NAME)
+        .map(|index| ordered.remove(index))
+        .unwrap_or_else(blank_tab_layout);
+    ordered.push(blank);
+    Ok(ordered)
+}
+
+/// Layouts are returned owned because the blank entry may not exist in the config at all.
+fn choose_layout(config: &Config, menu: &mut impl Menu) -> Result<Option<TabLayout>> {
+    let mut ordered = ordered_layouts(config)?;
+    if ordered.len() == 1 {
+        return Ok(ordered.pop());
+    }
+
+    // The rows and the layouts they were rendered from stay side by side, so the selection
+    // resolves by position instead of re-rendering every label a second time. An answer
+    // that matches no row — empty, or anything gum returned that is not a choice — falls
+    // out as a cancel rather than a panic.
     let options = ordered
         .iter()
         .map(|layout| layout.menu_label())
@@ -39,7 +59,7 @@ fn choose_layout<'a>(config: &'a Config, menu: &mut impl Menu) -> Result<Option<
     Ok(options
         .iter()
         .position(|option| *option == selection)
-        .map(|index| ordered[index]))
+        .map(|index| ordered.swap_remove(index)))
 }
 
 pub fn new(client: &dyn HerdrClient) -> FlowResult {
@@ -56,7 +76,7 @@ fn new_with(client: &dyn HerdrClient, config: &Config, menu: &mut impl Menu) -> 
     let Some(layout) = choose_layout(config, menu)? else {
         return Ok(Outcome::Cancelled);
     };
-    agent::popup_with_layout(client, config, layout, false)
+    agent::popup_with_layout(client, config, &layout, false)
 }
 
 #[cfg(test)]
@@ -158,13 +178,44 @@ mod tests {
     }
 
     #[test]
-    fn default_layout_is_listed_first_without_sorting_the_rest() {
+    fn default_layout_is_listed_first_and_blank_is_always_last() {
         let config = config_with(layouts(), "second");
         let mut menu = FakeMenu::new([None]);
 
         choose_layout(&config, &mut menu).unwrap();
 
-        assert_eq!(menu.options, [["second", "first", "third"]]);
+        assert_eq!(
+            menu.options,
+            [["second", "first", "third", &blank_tab_layout().menu_label()]]
+        );
+    }
+
+    #[test]
+    fn a_config_that_declares_no_layouts_still_offers_a_blank_tab() {
+        // A config file with no `tab_layouts` section loads the shipping defaults, which
+        // declare no blank layout. The menu adds one regardless.
+        let ordered = ordered_layouts(&Config::test_default()).unwrap();
+
+        assert_eq!(
+            ordered.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(),
+            ["agentic-coding", BLANK_LAYOUT_NAME]
+        );
+    }
+
+    #[test]
+    fn a_configured_blank_layout_replaces_the_built_in_one_and_keeps_the_last_slot() {
+        let mut layouts = layouts();
+        let mut mine = layouts[0].clone();
+        mine.name = BLANK_LAYOUT_NAME.to_owned();
+        mine.label = Some("My Blank".to_owned());
+        // Declared first in config; the menu still sorts it last.
+        layouts.insert(0, mine);
+        let config = config_with(layouts, "first");
+        let mut menu = FakeMenu::new([None]);
+
+        choose_layout(&config, &mut menu).unwrap();
+
+        assert_eq!(menu.options, [["first", "second", "third", "My Blank"]]);
     }
 
     #[test]
@@ -181,14 +232,14 @@ mod tests {
     }
 
     #[test]
-    fn one_layout_skips_the_menu() {
+    fn one_configured_layout_still_draws_the_menu_because_blank_joins_it() {
         let config = config_with(vec![layouts().remove(0)], "first");
-        let mut menu = FakeMenu::new([]);
+        let mut menu = FakeMenu::new([Some("first")]);
 
         let selected = choose_layout(&config, &mut menu).unwrap().unwrap();
 
         assert_eq!(selected.name, "first");
-        assert!(menu.options.is_empty());
+        assert_eq!(menu.options, [["first", &blank_tab_layout().menu_label()]]);
     }
 
     #[test]

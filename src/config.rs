@@ -179,6 +179,37 @@ fn default_agents() -> Vec<Agent> {
     ]
 }
 
+/// The name of the built-in blank layout.
+///
+/// Reserved rather than private: a config may declare a layout under this name to change
+/// what "blank" opens, and the menu shows that one instead. Either way exactly one blank
+/// entry appears, and it always sorts last.
+pub const BLANK_LAYOUT_NAME: &str = "blank-tab";
+
+/// A tab of one plain shell, offered by the new-tab menu whether or not the config
+/// declares any layout at all. It runs no harness, so it asks for nothing but a name.
+pub fn blank_tab_layout() -> TabLayout {
+    TabLayout {
+        name: BLANK_LAYOUT_NAME.to_owned(),
+        label: Some("Blank Tab".to_owned()),
+        icon: Some("\u{f04e9}".to_owned()), // nf-md-tab
+        tab_label: None,
+        panes: vec![LayoutPane {
+            name: "term".to_owned(),
+            label: None,
+            icon: None,
+            pane_type: PaneType::Shell,
+            agent: None,
+            option_name: None,
+            command: None,
+            direction: None,
+            ratio: None,
+            split_from: None,
+            env: BTreeMap::new(),
+        }],
+    }
+}
+
 fn default_tab_layouts() -> Vec<TabLayout> {
     vec![TabLayout {
         name: "agentic-coding".to_owned(),

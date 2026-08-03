@@ -8,13 +8,14 @@ A Rust binary is committed to the repository, so installing requires no build. H
 
 ## What it does
 
-The plugin exposes eight actions. Keys are yours to choose — see [Bind it](#bind-it).
+The plugin exposes nine actions. Keys are yours to choose — see [Bind it](#bind-it).
 
 | Action | What happens |
 | --- | --- |
 | `new-agent` | Pick harness → model → usage, then open a tab laid out as **agent \| yazi + terminal** |
 | `new-worktree-agent` | Same, but first picks/creates a branch and starts every pane in a fresh `git worktree` |
 | `new-assistant` | Open a tab from the `personal-assistant` layout — every choice pinned, so no menus |
+| `new-tab` | Pick a tab layout, then the usual harness → model → usage menus, and open a tab from that layout |
 | `project` | Fuzzy-find a registered project; focus its workspace or create one (falls back to `zoxide`) |
 | `ssh` | Fuzzy-find an SSH host; connect in a dedicated tab that closes itself on disconnect |
 | `restart-agent` | Confirm, then relaunch the agent **in place** — the yazi/terminal side panes survive |
@@ -58,6 +59,7 @@ The bindings below are the set I use — copy them or pick your own:
 | --- | --- |
 | `alt+c` | `new-agent` |
 | `alt+shift+c` | `new-worktree-agent` |
+| `alt+t` | `new-tab` |
 | `alt+p` | `project` |
 | `alt+s` | `ssh` |
 | `alt+r` | `restart-agent` |
@@ -66,7 +68,8 @@ The bindings below are the set I use — copy them or pick your own:
 
 Pairing the two agent actions on `alt+c` / `alt+shift+c` is worth keeping whatever keys
 you pick: the worktree-vs-normal choice *is* the keybinding, which is why neither action
-prompts "use a worktree?".
+prompts "use a worktree?". `new-tab` asks which layout instead and still does not ask
+about worktrees.
 
 ### Requirements
 
@@ -114,6 +117,9 @@ the binary rejects a path with a `.zsh` extension and explains how to correct it
 
 The config contains `[[tab_layouts]]` entries with nested panes and `[[agents]]`
 entries with nested options. Omitting a layout choice makes the launcher ask for it.
+For each layout, `label` sets the layout menu row text and falls back to `name` when
+omitted. `icon` is drawn before the label, separated by two spaces, and falls back to
+no icon when omitted. Two layouts may not have the same rendered menu row.
 This minimal config keeps the built-in layout and defines one agent option:
 
 ```toml
@@ -135,7 +141,7 @@ defaults.
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `dashboard_workspace` | `personal-assistant` | Workspace the dashboard tab opens in |
-| `default_tab_layout` | `agentic-coding` | Layout used when a launch does not pass `--layout` |
+| `default_tab_layout` | `agentic-coding` | Layout used when a launch does not pass `--layout`; the `new-tab` action also hoists it to the top of its menu |
 | `project_registry_file` | `~/.local/state/herdr-projects/registry.json` | Project registry path |
 | `projects_root` | `~/Projects` | Root of the `.git` discovery sweep |
 | `ssh_registry_file` | `~/.local/state/ssh-targets/registry.json` | SSH registry path |

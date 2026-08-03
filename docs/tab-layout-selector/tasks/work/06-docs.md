@@ -6,7 +6,7 @@
 >
 > **Depends on**: work/02, work/05
 > **Blocks**: work/07
-> **Status**: todo
+> **Status**: done
 
 ## Goal
 
@@ -96,26 +96,26 @@ identifiers exactly.
 
 ## Acceptance criteria
 
-- [ ] The README action count matches the number of rows in the actions table.
-- [ ] The actions table has a `new-tab` row describing the layout menu.
-- [ ] The suggested-keybinding table has a `new-tab` row with a key that collides with no
+- [x] The README action count matches the number of rows in the actions table.
+- [x] The actions table has a `new-tab` row describing the layout menu.
+- [x] The suggested-keybinding table has a `new-tab` row with a key that collides with no
       existing row.
-- [ ] The worktree paragraph stays accurate for the new action.
-- [ ] The README configuration section documents `label` and `icon`, their fallback to
+- [x] The worktree paragraph stays accurate for the new action.
+- [x] The README configuration section documents `label` and `icon`, their fallback to
       `name`, and the uniqueness requirement.
-- [ ] `config.example.toml` lists `label` and `icon` in its layout-keys comment block.
-- [ ] `config.example.toml` describes the third selection route: the `new-tab` menu,
+- [x] `config.example.toml` lists `label` and `icon` in its layout-keys comment block.
+- [x] `config.example.toml` describes the third selection route: the `new-tab` menu,
       default first, skipped when only one layout exists.
-- [ ] No documented behaviour contradicts the shipped flow: no worktree step, no
+- [x] No documented behaviour contradicts the shipped flow: no worktree step, no
       `--layout` flag on the new action, cancelling is silent.
 
 ## Verification
 
-- [ ] `cargo test` passes — `the_example_config_parses_with_no_unknown_fields` proves the
+- [x] `cargo test` passes — `the_example_config_parses_with_no_unknown_fields` proves the
       example file still parses.
-- [ ] `grep -c '^\[\[actions\]\]' herdr-plugin.toml` returns 9, and the README sentence
+- [x] `grep -c '^\[\[actions\]\]' herdr-plugin.toml` returns 9, and the README sentence
       that counts the actions says nine, and the README actions table has nine rows.
-- [ ] `git status --short -- README.md config.example.toml` shows both paths dirty.
+- [x] `git status --short -- README.md config.example.toml` shows both paths dirty.
 
 ## Eval rubric
 

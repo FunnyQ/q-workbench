@@ -86,7 +86,7 @@ name = "agentic-coding"
   [[tab_layouts.panes]]
   name = "agent"
   type = "agent"
-  env = { Q_NO_BANNER = "1" }
+  env = { SOMETHING_DIFFERENT = "1" }
 
   [[tab_layouts.panes]]
   name = "files"
@@ -96,7 +96,7 @@ name = "agentic-coding"
   command = "yazi ."
   direction = "right"
   ratio = 0.62
-  env = { Q_NO_BANNER = "1" }
+  env = { SOMETHING_DIFFERENT = "1" }
 
   [[tab_layouts.panes]]
   name = "term"
@@ -117,7 +117,7 @@ label = "Personal Assistant"
   type = "agent"
   agent = "claude code"
   option = "Opus"
-  env = { Q_NO_BANNER = "1" }
+  env = { SOMETHING_DIFFERENT = "1" }
 
   [[tab_layouts.panes]]
   name = "btop"
@@ -127,7 +127,7 @@ label = "Personal Assistant"
   command = "btop"
   direction = "right"
   ratio = 0.7
-
+  env = { SOMETHING_DIFFERENT = "1" }
 
 # -- Agents -------------------------------------------------------------------
 #

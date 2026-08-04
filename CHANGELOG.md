@@ -5,6 +5,28 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-08-04
+
+_tracks tag `v0.6.1`_
+
+### Added
+- Tab layouts can now declare zero, one, or multiple agent panes. Each
+  unpinned agent pane runs its own harness and model menu, in the order the
+  panes are configured, instead of the launcher being restricted to a
+  single agent pane at the layout's root.
+- The new-tab menu's blank-tab row is now a real layout you can customize:
+  a config layout can replace the built-in blank body while still keeping
+  its place as the menu's last entry.
+- Agent restart now remembers which pane an agent was launched in, so
+  restarting targets the correct pane instead of assuming the first agent
+  pane. Pre-upgrade restart state is discarded rather than silently reused
+  under the new format.
+
+### Changed
+- Menu rows that open a further prompt (harness, model, layout choices) are
+  now marked with an ellipsis, making it clearer which selections lead to
+  another step before anything launches.
+
 ## [0.6.0] - 2026-08-03
 
 _tracks tag `v0.6.0`_

@@ -18,21 +18,25 @@ use self::types::{
     SessionSnapshotResponse, TabCreateResponse, WorkspaceCreateResponse, WorkspaceListResponse,
 };
 
-pub const EXPECTED_PROTOCOL: u64 = 17;
+/// The oldest protocol whose request and response shapes this plugin was verified
+/// against. Newer protocols are accepted: Herdr adds methods and fields far more
+/// often than it removes them, so an upper bound would reject working servers.
+/// Raise this only after a protocol drops something the plugin reads.
+pub const MINIMUM_PROTOCOL: u64 = 17;
 
 #[derive(Debug)]
 pub enum ProtocolGuardError {
     Connection(anyhow::Error),
-    Mismatch { expected: u64, actual: u64 },
+    TooOld { minimum: u64, actual: u64 },
 }
 
 impl fmt::Display for ProtocolGuardError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Connection(error) => write!(formatter, "failed to ping Herdr: {error:#}"),
-            Self::Mismatch { expected, actual } => write!(
+            Self::TooOld { minimum, actual } => write!(
                 formatter,
-                "Herdr protocol mismatch: expected {expected}, received {actual}"
+                "Herdr protocol {actual} is older than protocol {minimum}, which this plugin needs"
             ),
         }
     }
@@ -42,16 +46,16 @@ impl error::Error for ProtocolGuardError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
             Self::Connection(error) => Some(error.as_ref()),
-            Self::Mismatch { .. } => None,
+            Self::TooOld { .. } => None,
         }
     }
 }
 
 pub fn check_protocol(client: &dyn HerdrClient) -> Result<(), ProtocolGuardError> {
     let response = client.ping().map_err(ProtocolGuardError::Connection)?;
-    if response.protocol != EXPECTED_PROTOCOL {
-        return Err(ProtocolGuardError::Mismatch {
-            expected: EXPECTED_PROTOCOL,
+    if response.protocol < MINIMUM_PROTOCOL {
+        return Err(ProtocolGuardError::TooOld {
+            minimum: MINIMUM_PROTOCOL,
             actual: response.protocol,
         });
     }
@@ -312,14 +316,14 @@ mod tests {
     }
 
     #[test]
-    fn protocol_guard_only_pings_when_protocol_matches() {
+    fn protocol_guard_only_pings_when_the_minimum_protocol_is_met() {
         let client = FakeClient::default();
         client.queue_response(
             "ping",
             json!({
                 "type": "ping",
                 "version": "1.0.0",
-                "protocol": EXPECTED_PROTOCOL,
+                "protocol": MINIMUM_PROTOCOL,
             }),
         );
 
@@ -332,24 +336,38 @@ mod tests {
     }
 
     #[test]
-    fn protocol_guard_reports_both_protocols_on_mismatch() {
+    fn protocol_guard_accepts_a_newer_protocol() {
         let client = FakeClient::default();
         client.queue_response(
             "ping",
-            json!({"type": "ping", "version": "2.0.0", "protocol": 18}),
+            json!({
+                "type": "ping",
+                "version": "9.0.0",
+                "protocol": MINIMUM_PROTOCOL + 5,
+            }),
+        );
+
+        check_protocol(&client).unwrap();
+    }
+
+    #[test]
+    fn protocol_guard_reports_both_protocols_when_herdr_is_too_old() {
+        let client = FakeClient::default();
+        let stale = MINIMUM_PROTOCOL - 1;
+        client.queue_response(
+            "ping",
+            json!({"type": "ping", "version": "2.0.0", "protocol": stale}),
         );
 
         let error = check_protocol(&client).unwrap_err();
 
         assert!(matches!(
             error,
-            ProtocolGuardError::Mismatch {
-                expected: 17,
-                actual: 18,
-            }
+            ProtocolGuardError::TooOld { minimum, actual }
+                if minimum == MINIMUM_PROTOCOL && actual == stale
         ));
-        assert!(error.to_string().contains("17"));
-        assert!(error.to_string().contains("18"));
+        assert!(error.to_string().contains(&MINIMUM_PROTOCOL.to_string()));
+        assert!(error.to_string().contains(&stale.to_string()));
     }
 
     #[test]

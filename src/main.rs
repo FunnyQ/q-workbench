@@ -459,13 +459,13 @@ impl Cli {
     fn guard_protocol(&self, client: &dyn HerdrClient) -> Result<()> {
         match check_protocol(client) {
             Ok(()) => Ok(()),
-            Err(ProtocolGuardError::Mismatch { expected, actual }) => {
+            Err(ProtocolGuardError::TooOld { minimum, actual }) => {
                 let message = format!(
-                    "Herdr was upgraded from protocol {expected} to protocol {actual}. \
-                     Rebuild this plugin for the new protocol."
+                    "Herdr speaks protocol {actual}, but this plugin needs protocol {minimum} \
+                     or newer. Update Herdr."
                 );
                 if matches!(self.channel(), Channel::Notification(_)) {
-                    notify::notify(client, "Workbench needs rebuilding", &message);
+                    notify::notify(client, "Workbench needs a newer Herdr", &message);
                 }
                 Err(anyhow!(message))
             }
@@ -1039,7 +1039,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_mismatch_sends_exactly_one_notification_with_both_numbers() {
+    fn stale_protocol_sends_exactly_one_notification_with_both_numbers() {
         let cli = Cli::try_parse_from(["workbench", "dashboard"]).unwrap();
         let client = herdr::FakeClient::default();
         client.queue_response(
@@ -1047,7 +1047,7 @@ mod tests {
             serde_json::json!({
                 "type": "ping",
                 "version": "2.0.0",
-                "protocol": herdr::EXPECTED_PROTOCOL + 1,
+                "protocol": herdr::MINIMUM_PROTOCOL - 1,
             }),
         );
 
@@ -1058,9 +1058,27 @@ mod tests {
         assert_eq!(calls[0].0, "ping");
         assert_eq!(calls[1].0, "notification.show");
         let body = calls[1].1["body"].as_str().unwrap();
-        assert!(body.contains(&herdr::EXPECTED_PROTOCOL.to_string()));
-        assert!(body.contains(&(herdr::EXPECTED_PROTOCOL + 1).to_string()));
-        assert!(error.contains("Rebuild this plugin"));
+        assert!(body.contains(&herdr::MINIMUM_PROTOCOL.to_string()));
+        assert!(body.contains(&(herdr::MINIMUM_PROTOCOL - 1).to_string()));
+        assert!(error.contains("Update Herdr"));
+    }
+
+    #[test]
+    fn a_newer_protocol_passes_the_guard_without_notifying() {
+        let cli = Cli::try_parse_from(["workbench", "dashboard"]).unwrap();
+        let client = herdr::FakeClient::default();
+        client.queue_response(
+            "ping",
+            serde_json::json!({
+                "type": "ping",
+                "version": "9.0.0",
+                "protocol": herdr::MINIMUM_PROTOCOL + 5,
+            }),
+        );
+
+        cli.guard_protocol(&client).unwrap();
+
+        assert_eq!(client.calls.into_inner().len(), 1);
     }
 
     #[test]
@@ -1072,7 +1090,7 @@ mod tests {
         let error = cli.guard_protocol(&client).unwrap_err().to_string();
 
         assert!(error.contains("Could not connect to Herdr"));
-        assert!(!error.contains("protocol mismatch"));
+        assert!(!error.contains("Update Herdr"));
     }
 
     #[test]

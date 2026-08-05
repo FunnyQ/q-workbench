@@ -5,6 +5,20 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-08-05
+
+_tracks tag `v0.6.2`_
+
+### Fixed
+- Every workbench action was failing with a "Workbench needs rebuilding"
+  notification after upgrading to Herdr 0.8.0, because the plugin's
+  protocol guard rejected any protocol version other than the exact one it
+  was built against. The guard now accepts any protocol at or above the
+  oldest version the plugin has been verified against, so newer Herdr
+  releases work without a plugin update as long as they stay compatible.
+  The notification now only fires when Herdr's protocol is genuinely too
+  old, and it names the required minimum so it's clear what to update.
+
 ## [0.6.1] - 2026-08-04
 
 _tracks tag `v0.6.1`_

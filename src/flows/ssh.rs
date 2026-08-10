@@ -542,6 +542,19 @@ fn run_session(
             .stderr(Stdio::inherit())
             .spawn()
             .context("ssh session: spawning ssh")?;
+
+        // Stamped at launch rather than at a clean exit: the picker orders by last use,
+        // and a session that dropped, was interrupted, or ended on the remote command's
+        // status is still one the user opened. Best-effort by design — neither failure
+        // may change the status ssh exits with. The real config file has to reach
+        // `use_target`: its `sync` drops every `source: "config"` entry the given file no
+        // longer names, so passing a stub here would wipe the whole configured half of
+        // the registry on each session.
+        let _ = registry::ssh::use_target(registry_file, config_file, history_file, target);
+        if let Ok(now) = unix_epoch() {
+            let _ = append_history(history_file, target, now);
+        }
+
         wait_for_child(child, handlers.read_fd)
     })();
 
@@ -559,17 +572,6 @@ fn run_session(
             .code()
             .unwrap_or_else(|| 128 + status.signal().unwrap_or(libc::SIGKILL))
     };
-
-    if exit_code == 0 {
-        // Bookkeeping, and best-effort by design: the tab is already gone, so there is
-        // no pane left to print to and no notification worth raising for a stamp the
-        // user never asked for. Neither failure may change the status ssh exited with.
-        // The real config file has to reach `use_target`: its `sync` drops every
-        // `source: "config"` entry the given file no longer names, so passing a stub
-        // here would wipe the whole configured half of the registry on each session.
-        let _ = registry::ssh::use_target(registry_file, config_file, history_file, target);
-        let _ = append_history(history_file, target, unix_epoch()?);
-    }
 
     Ok(exit_code)
 }
@@ -1079,17 +1081,24 @@ mod tests {
         // `source: "config"` entry it wrote a moment earlier.
         assert!(stamped.contains("\"source\": \"config\""));
         assert!(stamped.contains("example.invalid"));
+        assert!(fs::read_to_string(temp_path("history"))
+            .unwrap()
+            .ends_with(";ssh test-host\n"));
     }
 
     #[test]
-    fn nonzero_exit_closes_tab_without_stamping_registry() {
+    fn nonzero_exit_closes_tab_and_still_stamps_registry() {
         let _guard = SIGNAL_TEST.lock().unwrap();
         let client = FakeClient::default();
         let (code, registry) = run_shell("exit 23", &client);
 
         assert_eq!(code, 23);
         assert_eq!(client.calls.borrow()[0].0, "tab.close");
-        assert!(!registry.exists());
+        // A dropped connection or a remote command's failing status is still a session
+        // the user opened, and the picker orders by last use.
+        assert!(fs::read_to_string(registry)
+            .unwrap()
+            .contains("\"last_used_at\":"));
     }
 
     #[test]
@@ -1127,11 +1136,16 @@ mod tests {
                 libc::kill(std::process::id() as libc::pid_t, signal);
             }
         });
-        let (code, _) = run_shell(script, &client);
+        let (code, registry) = run_shell(script, &client);
         sender.join().unwrap();
 
         assert_eq!(code, 128 + signal);
         assert_eq!(client.calls.borrow()[0].0, "tab.close");
+        // The child never exited on its own, so a stamp here can only have been written
+        // before the wait — which is what keeps an interrupted session in the picker.
+        assert!(fs::read_to_string(registry)
+            .unwrap()
+            .contains("\"last_used_at\":"));
     }
 
     #[test]

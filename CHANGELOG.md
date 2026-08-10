@@ -5,6 +5,18 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2026-08-10
+
+_tracks tag `v0.6.3`_
+
+### Fixed
+- SSH sessions that dropped, were interrupted, or exited with a non-zero
+  status sank to the bottom of the SSH picker, because a target was only
+  stamped as used after a clean exit. Usage is now stamped at launch, so the
+  target you connected to most recently sorts first regardless of how the
+  session ended. Stamping stays best-effort and never affects `ssh`'s own
+  exit status.
+
 ## [0.6.2] - 2026-08-05
 
 _tracks tag `v0.6.2`_

@@ -181,14 +181,45 @@ pub fn discover_codex_projects(home: &Path) -> Vec<(PathBuf, Source)> {
     results
 }
 
+/// How far a `.git` sweep walks once it has found a checkout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Descent {
+    /// Keep walking, so a repository nested inside another one is found too.
+    IntoCheckouts,
+    /// Stop at the checkout.
+    ToCheckouts,
+}
+
 /// Candidate paths from the filesystem: a `.git` sweep of the projects root.
 pub fn discover_filesystem_projects(projects_root: &Path) -> Vec<(PathBuf, Source)> {
+    sweep(projects_root, Descent::IntoCheckouts, &[])
+}
+
+/// The same sweep for the project picker: it also admits a directory holding one of
+/// `markers`, and it stops at every project instead of walking its contents.
+///
+/// Stopping is what makes it affordable. The picker reloads its source on every
+/// keystroke, and against a real projects root of 133 checkouts the full walk costs
+/// ~1.3 s against ~11 ms. What it gives up is a project nested inside another one —
+/// two of those 133 — which is the cheaper half of the trade.
+///
+/// The markers are the picker's alone. A directory earns a registry entry by being
+/// picked, so widening what the sweep offers must not widen what `project update`
+/// writes.
+pub fn discover_project_checkouts(
+    projects_root: &Path,
+    markers: &[String],
+) -> Vec<(PathBuf, Source)> {
+    sweep(projects_root, Descent::ToCheckouts, markers)
+}
+
+fn sweep(projects_root: &Path, descent: Descent, markers: &[String]) -> Vec<(PathBuf, Source)> {
     if !projects_root.is_dir() {
         return Vec::new();
     }
 
     let mut results = Vec::new();
-    sweep_for_git(projects_root, &mut results);
+    sweep_for_projects(projects_root, descent, markers, &mut results);
     results.sort();
     results
 }
@@ -213,17 +244,36 @@ pub fn git_toplevel(path: &Path) -> Option<PathBuf> {
     Some(PathBuf::from(root))
 }
 
-fn sweep_for_git(directory: &Path, results: &mut Vec<(PathBuf, Source)>) {
+fn sweep_for_projects(
+    directory: &Path,
+    descent: Descent,
+    markers: &[String],
+    results: &mut Vec<(PathBuf, Source)>,
+) {
     let Ok(entries) = fs::read_dir(directory) else {
         return;
     };
+    // Read the whole directory before recursing: whether this is a project decides
+    // whether `ToCheckouts` descends at all, and the marker that says so can sort
+    // after the subdirectories it would have to suppress.
+    let entries = entries.flatten().collect::<Vec<_>>();
 
-    for entry in entries.flatten() {
+    // `.git` is a directory in a normal checkout but a file in a linked git
+    // worktree. `find -name .git -prune -print` matched both, so both count.
+    let is_project = entries.iter().any(|entry| {
         let name = entry.file_name();
-        // `.git` is a directory in a normal checkout but a file in a linked git
-        // worktree. `find -name .git -prune -print` matched both, so both count.
+        name == ".git" || markers.iter().any(|marker| name == marker.as_str())
+    });
+    if is_project {
+        results.push((directory.to_owned(), Source::Filesystem));
+        if descent == Descent::ToCheckouts {
+            return;
+        }
+    }
+
+    for entry in entries {
+        let name = entry.file_name();
         if name == ".git" {
-            results.push((directory.to_owned(), Source::Filesystem));
             continue;
         }
 
@@ -234,7 +284,7 @@ fn sweep_for_git(directory: &Path, results: &mut Vec<(PathBuf, Source)>) {
         if !file_type.is_dir() || PRUNED_DIRECTORIES.iter().any(|pruned| name == *pruned) {
             continue;
         }
-        sweep_for_git(&entry.path(), results);
+        sweep_for_projects(&entry.path(), descent, markers, results);
     }
 }
 
@@ -1989,6 +2039,32 @@ mod tests {
         assert_eq!(
             discover_filesystem_projects(&fixture.directory),
             vec![(fixture.directory.join("worktree"), Source::Filesystem)]
+        );
+    }
+
+    #[test]
+    fn test_discover_checkouts_stops_at_the_outermost_checkout() {
+        let fixture = Fixture::new("checkouts");
+        fixture.mkdir("one/.git");
+        fixture.mkdir("one/embedded/.git");
+        fixture.mkdir("group/two/.git");
+
+        // The registry walks through a checkout to reach the one nested inside it; the
+        // picker's sweep stops, which is what makes it cheap enough to run per keystroke.
+        assert_eq!(
+            discover_filesystem_projects(&fixture.directory),
+            vec![
+                (fixture.directory.join("group/two"), Source::Filesystem),
+                (fixture.directory.join("one"), Source::Filesystem),
+                (fixture.directory.join("one/embedded"), Source::Filesystem),
+            ]
+        );
+        assert_eq!(
+            discover_project_checkouts(&fixture.directory, &[]),
+            vec![
+                (fixture.directory.join("group/two"), Source::Filesystem),
+                (fixture.directory.join("one"), Source::Filesystem),
+            ]
         );
     }
 

@@ -1,11 +1,13 @@
 //! The project and SSH pickers, including the project picker's fzf source.
 //!
 //! fzf binds `change:reload(<self> project source {q})`, so this module runs once per
-//! keystroke. It makes no Herdr call and shells out only to `zoxide`, and only when a
-//! query of two or more characters could produce a fallback row. `source_with_zoxide`
-//! is pure apart from reading the registry, so the record bytes are tested directly.
+//! keystroke. It makes no Herdr call, and both the `zoxide` lookup and the sweep of
+//! the projects root wait for a query of `DISCOVERY_MINIMUM_QUERY` characters, so an
+//! empty query still costs nothing but the registry read. `source_with_zoxide` is pure
+//! apart from that read and that sweep, so the record bytes are tested directly.
 //! Measured cost is in `docs/rust-rewrite/tasks/picker/01-project-picker-source.md`;
-//! `scripts/bench-project-source.zsh` reproduces it.
+//! `scripts/bench-project-source.zsh` reproduces it. The sweep is what dominates a
+//! query-bearing reload — 11 ms of a 14 ms median — so keep it shallow.
 
 use std::cmp::Ordering;
 use std::fs;
@@ -20,9 +22,17 @@ use crate::config::Config;
 use crate::flows::agent::{self, InjectOptions};
 use crate::flows::{invoking_pane_cwd, FlowError, FlowResult, Outcome, PaneCwd};
 use crate::herdr::HerdrClient;
-use crate::registry::project::{ProjectEntry, ProjectRegistry};
+use crate::registry::project::{discover_project_checkouts, ProjectEntry, ProjectRegistry, Source};
 use crate::registry::ssh;
 use crate::shell::shell_quote;
+
+/// The query length that unlocks the two sources outside the registry.
+///
+/// The zoxide lookup and the projects-root sweep are the only work in this module that
+/// leaves the registry file, and neither can narrow anything for a query too short to
+/// mean something. Holding both to one threshold keeps the opening draw at the
+/// registry's cost alone.
+const DISCOVERY_MINIMUM_QUERY: usize = 2;
 
 const PROJECT_ICON: &str = "\u{f024b}";
 const PROJECT_PICKER_TITLE: &str = "Project picker";
@@ -97,8 +107,14 @@ fn project_pick_inner(
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("HOME is required")?;
-    let source =
-        source(registry_path, &home, "").context("project pick: reading project registry")?;
+    let source = source(
+        registry_path,
+        &home,
+        projects_root,
+        &config.project_markers,
+        "",
+    )
+    .context("project pick: reading project registry")?;
     let mut child = Command::new(fzf)
         .args(project_fzf_args(&reload_binding, &edit_binding))
         .stdin(Stdio::piped())
@@ -488,6 +504,8 @@ pub fn project_source(query: Option<&str>) -> Result<()> {
     let output = source(
         Path::new(&config.project_registry_file),
         &home,
+        Path::new(&config.projects_root),
+        &config.project_markers,
         query.unwrap_or(""),
     )?;
     io::stdout()
@@ -495,13 +513,28 @@ pub fn project_source(query: Option<&str>) -> Result<()> {
         .context("failed to write project source")
 }
 
-fn source(registry_path: &Path, home: &Path, query: &str) -> Result<Vec<u8>> {
-    source_with_zoxide(registry_path, home, query, query_zoxide)
+fn source(
+    registry_path: &Path,
+    home: &Path,
+    projects_root: &Path,
+    markers: &[String],
+    query: &str,
+) -> Result<Vec<u8>> {
+    source_with_zoxide(
+        registry_path,
+        home,
+        projects_root,
+        markers,
+        query,
+        query_zoxide,
+    )
 }
 
 fn source_with_zoxide(
     registry_path: &Path,
     home: &Path,
+    projects_root: &Path,
+    markers: &[String],
     query: &str,
     zoxide: impl FnOnce(&str) -> Result<Option<PathBuf>>,
 ) -> Result<Vec<u8>> {
@@ -533,14 +566,36 @@ fn source_with_zoxide(
         );
     }
 
-    if query.chars().count() < 2 {
-        return Ok(output);
+    let fallback = zoxide_fallback(&registry, query, zoxide)?;
+    if let Some(path) = &fallback {
+        push_discovered(&mut output, path, "zoxide", home);
+    }
+    push_swept_records(
+        &mut output,
+        &registry,
+        fallback.as_deref(),
+        projects_root,
+        markers,
+        home,
+        query,
+    );
+    Ok(output)
+}
+
+/// The one `zoxide` row a query can earn, or nothing.
+fn zoxide_fallback(
+    registry: &ProjectRegistry,
+    query: &str,
+    zoxide: impl FnOnce(&str) -> Result<Option<PathBuf>>,
+) -> Result<Option<PathBuf>> {
+    if query.chars().count() < DISCOVERY_MINIMUM_QUERY {
+        return Ok(None);
     }
     let Some(path) = zoxide(query)? else {
-        return Ok(output);
+        return Ok(None);
     };
     if !path.is_dir() {
-        return Ok(output);
+        return Ok(None);
     }
     let path = fs::canonicalize(&path)
         .with_context(|| format!("failed to resolve zoxide path {}", path.display()))?;
@@ -548,21 +603,60 @@ fn source_with_zoxide(
         .projects
         .contains_key(&path.to_string_lossy().into_owned())
     {
-        return Ok(output);
+        return Ok(None);
     }
+    Ok(Some(path))
+}
 
+/// Projects under the projects root that the registry does not hold.
+///
+/// The registry only learns a directory from a recorded session or from `project
+/// update`, so a freshly cloned repository stays unreachable until one of those
+/// happens. Sweeping live reaches it without growing the registry, and appending
+/// these rows last leaves the ranked registry rows and the zoxide row where they were.
+fn push_swept_records(
+    output: &mut Vec<u8>,
+    registry: &ProjectRegistry,
+    fallback: Option<&Path>,
+    projects_root: &Path,
+    markers: &[String],
+    home: &Path,
+    query: &str,
+) {
+    if query.chars().count() < DISCOVERY_MINIMUM_QUERY {
+        return;
+    }
+    // Sweep the resolved root so every hit is already in the canonical form the
+    // registry keys its entries by. Canonicalizing each hit instead would spend a
+    // syscall per checkout on every keystroke.
+    let Ok(projects_root) = fs::canonicalize(projects_root) else {
+        return;
+    };
+    for (path, _) in discover_project_checkouts(&projects_root, markers) {
+        if Some(path.as_path()) == fallback
+            || registry
+                .projects
+                .contains_key(&path.to_string_lossy().into_owned())
+        {
+            continue;
+        }
+        push_discovered(output, &path, Source::Filesystem.as_str(), home);
+    }
+}
+
+/// A row for a path the registry has no entry for, named after its directory.
+fn push_discovered(output: &mut Vec<u8>, path: &Path, source: &str, home: &Path) {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-        return Ok(output);
+        return;
     };
     let entry = ProjectEntry {
         name: name.to_owned(),
-        sources: vec!["zoxide".to_owned()],
+        sources: vec![source.to_owned()],
         aliases: None,
         hidden: None,
         last_used_at: None,
     };
-    push_record(&mut output, &entry, name, &path, home);
-    Ok(output)
+    push_record(output, &entry, name, path, home);
 }
 
 struct ProjectRow<'a> {
@@ -1089,6 +1183,12 @@ mod tests {
         path
     }
 
+    /// A projects root that does not resolve, so the sweep contributes no rows and a
+    /// test can assert on the registry and zoxide rows alone.
+    fn unswept() -> PathBuf {
+        PathBuf::from("/nonexistent/projects-root")
+    }
+
     fn write_fzf(directory: &Path, body: &str) -> PathBuf {
         let path = directory.join("fzf-test");
         fs::write(&path, format!("#!/bin/sh\ncat >/dev/null\n{body}\n")).unwrap();
@@ -1128,7 +1228,8 @@ mod tests {
         .collect();
         let registry = write_registry(&directory.0, projects);
 
-        let output = source_with_zoxide(&registry, &home, "", |_| Ok(None)).expect("emit source");
+        let output = source_with_zoxide(&registry, &home, &unswept(), &[], "", |_| Ok(None))
+            .expect("emit source");
         let expected = "\u{f024b}  Used\n   ~/Used\n   codex\t"
             .as_bytes()
             .iter()
@@ -1158,7 +1259,8 @@ mod tests {
         .collect();
         let registry = write_registry(&directory.0, projects);
 
-        let output = source_with_zoxide(&registry, &home, "", |_| Ok(None)).expect("emit source");
+        let output = source_with_zoxide(&registry, &home, &unswept(), &[], "", |_| Ok(None))
+            .expect("emit source");
 
         assert_eq!(
             output,
@@ -1183,11 +1285,11 @@ mod tests {
         .into_iter()
         .collect();
         let registry = write_registry(&directory.0, projects);
-        let baseline =
-            source_with_zoxide(&registry, &home, "", |_| Ok(None)).expect("emit baseline");
+        let baseline = source_with_zoxide(&registry, &home, &unswept(), &[], "", |_| Ok(None))
+            .expect("emit baseline");
 
         let mut called = false;
-        let one_character = source_with_zoxide(&registry, &home, "r", |_| {
+        let one_character = source_with_zoxide(&registry, &home, &unswept(), &[], "r", |_| {
             called = true;
             Ok(Some(registered.clone()))
         })
@@ -1195,13 +1297,13 @@ mod tests {
         assert!(!called);
         assert_eq!(one_character, baseline);
 
-        let nonexistent = source_with_zoxide(&registry, &home, "missing", |_| {
+        let nonexistent = source_with_zoxide(&registry, &home, &unswept(), &[], "missing", |_| {
             Ok(Some(directory.0.join("missing")))
         })
         .expect("suppress nonexistent path");
         assert_eq!(nonexistent, baseline);
 
-        let duplicate = source_with_zoxide(&registry, &home, "registered", |_| {
+        let duplicate = source_with_zoxide(&registry, &home, &unswept(), &[], "registered", |_| {
             Ok(Some(registered.clone()))
         })
         .expect("suppress registered path");
@@ -1220,8 +1322,10 @@ mod tests {
         fs::create_dir_all(&zoxide).expect("create zoxide project");
         let registry = write_registry(&directory.0, BTreeMap::new());
 
-        let output = source_with_zoxide(&registry, &home, "zo", |_| Ok(Some(zoxide.clone())))
-            .expect("emit zoxide fallback");
+        let output = source_with_zoxide(&registry, &home, &unswept(), &[], "zo", |_| {
+            Ok(Some(zoxide.clone()))
+        })
+        .expect("emit zoxide fallback");
         let resolved = zoxide.canonicalize().expect("resolve zoxide project");
 
         assert_eq!(
@@ -1235,11 +1339,77 @@ mod tests {
     }
 
     #[test]
+    fn sweeps_unregistered_projects_after_the_zoxide_row() {
+        let directory = TestDirectory::new();
+        let home = directory
+            .0
+            .canonicalize()
+            .expect("resolve test directory")
+            .join("home");
+        let projects_root = home.join("Projects");
+        let checkout = |path: &Path| {
+            fs::create_dir_all(path.join(".git")).expect("create checkout");
+        };
+        checkout(&projects_root.join("Registered"));
+        checkout(&projects_root.join("Fresh"));
+        checkout(&projects_root.join("Container/Nested"));
+        checkout(&projects_root.join("Zoxided"));
+        fs::create_dir_all(projects_root.join("NoGit")).expect("create plain directory");
+        // A marked directory is a project without a checkout, and marks a leaf: the
+        // sweep must not walk past it into `Marked/inner`.
+        fs::create_dir_all(projects_root.join("Marked/inner")).expect("create marked project");
+        fs::write(projects_root.join("Marked/Gemfile"), "").expect("write marker");
+        fs::write(projects_root.join("Marked/inner/Gemfile"), "").expect("write inner marker");
+        let markers = vec!["Gemfile".to_owned()];
+        let projects = [(
+            projects_root.join("Registered").display().to_string(),
+            entry("Registered", &["codex"], &[], false, None),
+        )]
+        .into_iter()
+        .collect();
+        let registry = write_registry(&directory.0, projects);
+
+        let registry_row = format!(
+            "\u{f024b}  Registered\n   ~/Projects/Registered\n   codex\t{}/Registered\0",
+            projects_root.display()
+        );
+        let short_query =
+            source_with_zoxide(&registry, &home, &projects_root, &markers, "z", |_| {
+                Ok(None)
+            })
+            .expect("emit source");
+        assert_eq!(
+            String::from_utf8(short_query).expect("utf-8 records"),
+            registry_row,
+            "a query too short to reach zoxide must not reach the sweep either"
+        );
+
+        let output = source_with_zoxide(&registry, &home, &projects_root, &markers, "zo", |_| {
+            Ok(Some(projects_root.join("Zoxided")))
+        })
+        .expect("emit source");
+
+        // Registry row, then the zoxide row, then the sweep in path order. `NoGit` holds
+        // neither a checkout nor a marker and `Zoxided` was already spent on the zoxide
+        // row, so neither is repeated below; nor is `Marked/inner`, below a leaf.
+        let expected = format!(
+            "{registry_row}\
+             \u{f024b}  Zoxided\n   ~/Projects/Zoxided\n   zoxide\t{root}/Zoxided\0\
+             \u{f024b}  Nested\n   ~/Projects/Container/Nested\n   filesystem\t{root}/Container/Nested\0\
+             \u{f024b}  Fresh\n   ~/Projects/Fresh\n   filesystem\t{root}/Fresh\0\
+             \u{f024b}  Marked\n   ~/Projects/Marked\n   filesystem\t{root}/Marked\0",
+            root = projects_root.display()
+        );
+
+        assert_eq!(String::from_utf8(output).expect("utf-8 records"), expected);
+    }
+
+    #[test]
     fn missing_registry_returns_an_error_before_emitting_output() {
         let directory = TestDirectory::new();
         let missing = directory.0.join("missing.json");
 
-        let error = source_with_zoxide(&missing, &directory.0, "", |_| Ok(None))
+        let error = source_with_zoxide(&missing, &directory.0, &unswept(), &[], "", |_| Ok(None))
             .expect_err("reject missing registry");
 
         assert!(error.to_string().contains("failed to read"));

@@ -14,6 +14,7 @@ pub struct Config {
     pub default_tab_layout: String,
     pub project_registry_file: String,
     pub projects_root: String,
+    pub project_markers: Vec<String>,
     pub ssh_registry_file: String,
     pub ssh_config_file: String,
     pub ssh_history_file: String,
@@ -29,6 +30,7 @@ impl Config {
             default_tab_layout: "agentic-coding".to_owned(),
             project_registry_file: String::new(),
             projects_root: String::new(),
+            project_markers: default_project_markers(),
             ssh_registry_file: String::new(),
             ssh_config_file: String::new(),
             ssh_history_file: String::new(),
@@ -45,6 +47,7 @@ struct FileConfig {
     default_tab_layout: Option<String>,
     project_registry_file: Option<String>,
     projects_root: Option<String>,
+    project_markers: Option<Vec<String>>,
     ssh_registry_file: Option<String>,
     ssh_config_file: Option<String>,
     ssh_history_file: Option<String>,
@@ -122,6 +125,19 @@ pub struct AgentOption {
     #[serde(default)]
     pub args: Vec<String>,
     pub command: Option<Vec<String>>,
+}
+
+/// File names that mark a directory as a project even without a `.git` in it.
+///
+/// The project picker's sweep treats one of these the way it treats `.git`: as a leaf,
+/// which both admits the directory and stops the walk there. That is what separates a
+/// project from the directory that merely holds projects — depth cannot, because a
+/// projects root nests them unevenly.
+fn default_project_markers() -> Vec<String> {
+    ["package.json", "Gemfile", "Cargo.toml", "CLAUDE.md"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
 }
 
 fn default_agents() -> Vec<Agent> {
@@ -386,6 +402,7 @@ impl Config {
                 ),
                 &home,
             ),
+            project_markers: file.project_markers.unwrap_or_else(default_project_markers),
             // User-written sections replace the built-in defaults entirely.
             // This is deliberate: "I only want codex" must be expressible.
             // Do not merge by name.
@@ -397,6 +414,17 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
+        for marker in &self.project_markers {
+            // The sweep compares a marker against one directory entry's file name, so
+            // anything holding a separator can only ever fail to match, silently.
+            if marker.is_empty() {
+                bail!("project_markers: entry is empty");
+            }
+            if marker.contains('/') {
+                bail!("project_markers: '{marker}' is a path, not a file name");
+            }
+        }
+
         let mut layout_names = BTreeSet::new();
         for layout in &self.tab_layouts {
             if !layout_names.insert(layout.name.as_str()) {
@@ -825,6 +853,10 @@ mod tests {
         );
         assert_eq!(config.projects_root, format!("{home}/Projects"));
         assert_eq!(
+            config.project_markers,
+            ["package.json", "Gemfile", "Cargo.toml", "CLAUDE.md"]
+        );
+        assert_eq!(
             config.ssh_registry_file,
             format!("{home}/.local/state/ssh-targets/registry.json")
         );
@@ -832,6 +864,27 @@ mod tests {
         assert_eq!(config.ssh_history_file, format!("{home}/.zsh_history"));
         assert_eq!(config.tab_layouts, default_tab_layouts());
         assert_eq!(config.agents, default_agents());
+    }
+
+    #[test]
+    fn project_markers_replace_the_defaults_and_reject_a_path() {
+        let environment = TestEnvironment::new();
+        environment.write("project_markers = [\"go.mod\", \"flake.nix\"]\n");
+
+        let config = Config::load().expect("load markers");
+        assert_eq!(config.project_markers, ["go.mod", "flake.nix"]);
+
+        // An empty list is a real answer: it turns the marker sweep off and leaves
+        // `.git` as the only thing that makes a directory a project.
+        environment.write("project_markers = []\n");
+        assert!(Config::load()
+            .expect("load empty markers")
+            .project_markers
+            .is_empty());
+
+        environment.write("project_markers = [\"config/database.yml\"]\n");
+        let error = format!("{:#}", Config::load().expect_err("reject a path marker"));
+        assert!(error.contains("is a path, not a file name"), "{error}");
     }
 
     #[test]

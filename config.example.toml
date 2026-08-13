@@ -23,6 +23,12 @@ project_registry_file = "$HOME/.local/state/herdr-projects/registry.json"
 # Root directory scanned for projects.
 projects_root = "$HOME/Projects"
 
+# File names that make a directory a project in the picker's sweep, alongside `.git`.
+# Each one marks a leaf: the sweep offers the directory and stops there, which is what
+# separates a project from the directory that merely holds projects. Set it to [] to
+# leave `.git` as the only marker.
+project_markers = ["package.json", "Gemfile", "Cargo.toml", "CLAUDE.md"]
+
 # SSH target registry JSON path.
 ssh_registry_file = "$HOME/.local/state/ssh-targets/registry.json"
 

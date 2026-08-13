@@ -5,6 +5,31 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-08-13
+
+_tracks tag `v0.7.0`_
+
+### Added
+- The project picker now surfaces a third source: projects living under
+  `projects_root` that aren't in the registry or in zoxide yet. Type two
+  characters and it appends them after the registry and zoxide rows, deduped
+  against both, so an unregistered checkout shows up without needing a bulk
+  import first. Being swept up does not register a project — picking it does,
+  so the registry still holds only what you actually open.
+- A new `project_markers` config key (default `package.json`, `Gemfile`,
+  `Cargo.toml`, `CLAUDE.md`) lets the sweep recognize a project by more than
+  just `.git`. Set it to `[]` to fall back to `.git`-only detection.
+
+### Changed
+- The picker's filesystem sweep now stops descending as soon as it finds a
+  project, instead of continuing to walk every subdirectory underneath it.
+  On a 133-checkout tree this cut the per-keystroke sweep from roughly
+  1295ms to 14.6ms, at the cost of missing checkouts nested inside another
+  checkout. The exhaustive sweep used by `project update` and the registry
+  is unchanged.
+- The picker's fzf border label now reads "type to add zoxide + projects
+  root", reflecting the new filesystem source.
+
 ## [0.6.3] - 2026-08-10
 
 _tracks tag `v0.6.3`_

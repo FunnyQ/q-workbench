@@ -72,7 +72,11 @@ SSH sync reconciles configured hosts through `ssh -G`. Removing a config-sourced
 
 Both pickers feed fzf NUL-delimited, multi-line records with a tab-separated payload. Newlines belong to the visible row, so line-delimited records corrupt selection boundaries. Keep `--read0`, the payload delimiter, and positional parsing together.
 
-The project picker can append one `zoxide` fallback for an active query. Plain enter opens the agent layout in a new workspace; alt-enter leaves it plain. Existing workspaces are focused without rebuilding their tabs.
+The project picker emits three sources in a fixed order: registry entries ranked by last use, then one `zoxide` fallback, then a live sweep of `projects_root` for projects the registry does not hold. The zoxide lookup and the sweep both wait for `DISCOVERY_MINIMUM_QUERY` characters, so the opening draw costs one registry read. The sweep keeps the registry lean — a directory earns an entry when it is picked, not when it is found.
+
+The sweep counts a directory as a project when it holds `.git` or one of `project_markers`, and stops there rather than walking its contents. Both halves matter. A marker is what admits a project that has no checkout, because depth cannot separate a project from a directory that holds projects — a real projects root nests them unevenly. Stopping is what keeps the sweep affordable: `discover_filesystem_projects`, which walks through a project to find one nested inside it, costs ~1.3 s against a real projects root versus ~11 ms, and the picker reloads on every keystroke. Markers belong to `discover_project_checkouts` alone; `project update` must keep writing only what `.git` finds.
+
+Plain enter opens the agent layout in a new workspace; alt-enter leaves it plain. Existing workspaces are focused without rebuilding their tabs.
 
 fzf owns the alternate screen while edit bindings run. Clear it before drawing a `gum` editor, then let fzf reload its source after the editor exits.
 

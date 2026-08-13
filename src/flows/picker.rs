@@ -208,7 +208,7 @@ fn project_fzf_args<'a>(reload_binding: &'a str, edit_binding: &'a str) -> Vec<&
         edit_binding,
         "--border",
         "--border-label-pos=bottom",
-        "--border-label= enter: agent · alt-enter: plain · ctrl-i: edit · typing searches zoxide ",
+        "--border-label= enter: agent · alt-enter: plain · ctrl-i: edit · type to add zoxide + projects root ",
     ]
 }
 
@@ -874,7 +874,7 @@ mod tests {
                 edit,
                 "--border",
                 "--border-label-pos=bottom",
-                "--border-label= enter: agent · alt-enter: plain · ctrl-i: edit · typing searches zoxide ",
+                "--border-label= enter: agent · alt-enter: plain · ctrl-i: edit · type to add zoxide + projects root ",
             ]
         );
     }

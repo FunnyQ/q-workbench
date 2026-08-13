@@ -16,7 +16,7 @@ The plugin exposes nine actions. Keys are yours to choose — see [Bind it](#bin
 | `new-worktree-agent` | Same, but first picks/creates a branch and starts every pane in a fresh `git worktree` |
 | `new-assistant` | Open a tab from the `personal-assistant` layout — every choice pinned, so no menus |
 | `new-tab` | Pick a tab layout — a blank tab is always the last row — then the menus that layout leaves open, and open a tab from it |
-| `project` | Fuzzy-find a registered project; focus its workspace or create one (falls back to `zoxide`) |
+| `project` | Fuzzy-find a project; focus its workspace or create one. Typing widens the list past the registry, into `zoxide` and a live sweep of `projects_root` |
 | `ssh` | Fuzzy-find an SSH host; connect in a dedicated tab that closes itself on disconnect |
 | `restart-agent` | Confirm, then relaunch the agent **in place** — the yazi/terminal side panes survive |
 | `dashboard` | Open a tab that starts Claude with the usage-dashboard prompt |
@@ -53,7 +53,7 @@ command = "q.workbench.new-agent"      # <plugin id>.<action id>
 description = "new agent"
 ```
 
-The bindings below are the set I use — copy them or pick your own:
+The bindings below are the set I use, copy them or pick your own:
 
 | Key | Action |
 | --- | --- |
@@ -93,6 +93,8 @@ Both pickers read a JSON registry you can regenerate at any time.
 ```
 
 Discovery pulls from Claude Code sessions, Codex rollouts, and a `.git` sweep of `~/Projects`. Entries sort by most-recently-used.
+
+Type two characters and the picker also sweeps `projects_root` live, listing its finds below the registry rows. A directory counts when it holds `.git` or a `project_markers` file. Finding one does not register it, picking it does, so the registry holds only the projects you actually open.
 
 **SSH targets** — `~/.local/state/ssh-targets/registry.json`
 
@@ -154,7 +156,8 @@ defaults.
 | `dashboard_workspace` | `personal-assistant` | Workspace the dashboard tab opens in |
 | `default_tab_layout` | `agentic-coding` | Layout used when a launch does not pass `--layout` — the `project`, `new-agent`, and `new-worktree-agent` actions, and an in-pane `agent launch`. The `new-tab` action also hoists it to the top of its menu, above the blank row pinned to the bottom |
 | `project_registry_file` | `~/.local/state/herdr-projects/registry.json` | Project registry path |
-| `projects_root` | `~/Projects` | Root of the `.git` discovery sweep |
+| `projects_root` | `~/Projects` | Root of the `.git` discovery sweep, and of the picker's live sweep |
+| `project_markers` | `package.json`, `Gemfile`, `Cargo.toml`, `CLAUDE.md` | File names that make a directory a project in the picker's sweep, alongside `.git`. Set to `[]` to leave `.git` as the only marker |
 | `ssh_registry_file` | `~/.local/state/ssh-targets/registry.json` | SSH registry path |
 | `ssh_config_file` | `~/.config/ssh/config` | What `sync` reconciles against |
 | `ssh_history_file` | `~/.zsh_history` | Seeds the SSH registry on first sync |

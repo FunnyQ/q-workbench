@@ -5,6 +5,32 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-08-19
+
+_tracks tag `v0.8.0`_
+
+### Added
+- A new "project review" popup action registers or refreshes the project
+  registry without a shell. It picks scan or rescan automatically depending
+  on whether the registry file already exists, and reports the result
+  ("Registered N projects.") through a notification since a popup closes on
+  exit and can't rely on stderr being seen.
+
+### Changed
+- README's Registries section now leads with "nothing to run after install,"
+  moves the CLI walkthrough into its own "From a shell" subsection, and
+  resolves the plugin's binary path via `herdr plugin list --plugin
+  q.workbench --json` instead of an assumed local path.
+
+### Fixed
+- Release version bumps now also update `Cargo.lock`. Previously it was
+  left at the old version and cargo would silently rewrite it into the next
+  unrelated commit; `Cargo.lock` is caught up to the current version as
+  part of this fix.
+- Rebuilding `bin/workbench` no longer gets SIGKILLed by a stale macOS code
+  signature cached against the binary's inode. The build script now writes
+  to a temp file and swaps it into place instead of overwriting in place.
+
 ## [0.7.0] - 2026-08-13
 
 _tracks tag `v0.7.0`_

@@ -42,6 +42,12 @@ contexts = ["workspace"]
 command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench", "--entrypoint", "project", "--placement", "popup", "--width", "70%", "--height", "70%"]
 
 [[actions]]
+id = "project-review"
+title = "Review project registry"
+contexts = ["workspace"]
+command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench", "--entrypoint", "project-review", "--placement", "popup", "--width", "70%", "--height", "80%"]
+
+[[actions]]
 id = "ssh"
 title = "Open SSH picker"
 contexts = ["workspace"]
@@ -88,6 +94,12 @@ id = "project"
 title = "󰉋 project"
 placement = "popup"
 command = ["./bin/workbench", "project", "pick"]
+
+[[panes]]
+id = "project-review"
+title = "󰉋 review projects"
+placement = "popup"
+command = ["./bin/workbench", "project", "review"]
 
 [[panes]]
 id = "ssh"

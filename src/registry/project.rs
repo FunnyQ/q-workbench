@@ -10,6 +10,7 @@
 //! whole source to empty the first time one file failed to read.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Component, Path, PathBuf};
@@ -602,6 +603,21 @@ fn candidate_rows(
         .collect()
 }
 
+/// The review menu was dismissed, or it came back with nothing selected.
+///
+/// Typed rather than a bare message so `project review` can end as a clean outcome
+/// while `scan` and `rescan` keep printing the contract's stderr line.
+#[derive(Debug)]
+pub struct ReviewCancelled(&'static str);
+
+impl fmt::Display for ReviewCancelled {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+
+impl std::error::Error for ReviewCancelled {}
+
 /// The interactive surface of `scan`, `rescan` and `edit`, behind one trait so the
 /// review logic can be tested without a TTY.
 ///
@@ -750,6 +766,48 @@ pub fn scan(registry_path: &Path) -> Result<()> {
     )
 }
 
+/// The popup entrypoint: `rescan` an existing registry, `scan` when there is none.
+///
+/// The two guards are complementary — `scan` refuses an existing registry and `rescan`
+/// refuses a missing one — so exactly one of them is ever valid. A menu row that fails
+/// half the time is worse than no row, so the pane makes that choice itself and the
+/// terminal keeps both commands.
+pub fn review(registry_path: &Path) -> Result<usize> {
+    let config = crate::config::Config::load()?;
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("HOME is required")?;
+    review_with(
+        registry_path,
+        &home,
+        Path::new(&config.projects_root),
+        &SystemClock,
+        &mut GumPrompt,
+        &mut std::io::stdout(),
+    )
+}
+
+fn review_with(
+    registry_path: &Path,
+    home: &Path,
+    projects_root: &Path,
+    clock: &impl Clock,
+    prompts: &mut impl PromptRunner,
+    output: &mut impl Write,
+) -> Result<usize> {
+    let rescan = registry_path.is_file();
+    scan_with(
+        registry_path,
+        home,
+        projects_root,
+        rescan,
+        clock,
+        prompts,
+        output,
+    )?;
+    Ok(read_registry(registry_path)?.projects.len())
+}
+
 pub fn rescan(registry_path: &Path) -> Result<()> {
     let config = crate::config::Config::load()?;
     let home = std::env::var_os("HOME")
@@ -827,9 +885,11 @@ fn scan_with(
         .iter()
         .map(|item| item.row.clone())
         .collect::<Vec<_>>();
-    let selection = prompts
-        .choose_projects(&rows)?
-        .ok_or_else(|| anyhow::anyhow!("project-registry: cancelled; registry not written"))?;
+    let selection = prompts.choose_projects(&rows)?.ok_or_else(|| {
+        anyhow::Error::new(ReviewCancelled(
+            "project-registry: cancelled; registry not written",
+        ))
+    })?;
 
     // Drop rows with no tab, matching the zsh `awk -F '\t' 'NF >= 2 { print $NF }'`.
     // Only the last field is the path: a display name may itself contain a tab, and
@@ -840,7 +900,9 @@ fn scan_with(
         .map(parse_selection_path)
         .collect::<BTreeSet<_>>();
     if selected.is_empty() {
-        anyhow::bail!("project-registry: nothing selected; registry not written");
+        return Err(anyhow::Error::new(ReviewCancelled(
+            "project-registry: nothing selected; registry not written",
+        )));
     }
     let mut projects = BTreeMap::new();
     for candidate in candidates {
@@ -1389,6 +1451,41 @@ mod tests {
                 "project-registry: registry does not exist: {}",
                 missing.display()
             )
+        );
+    }
+
+    /// `review` reads the registry state to pick its direction, so neither guard can
+    /// fire: a missing registry scans, an existing one rescans.
+    #[test]
+    fn review_scans_a_missing_registry_and_rescans_an_existing_one() {
+        let fixture = Fixture::new("review-direction");
+        let project = fs::canonicalize(fixture.git_repo("projects/project")).unwrap();
+        let registry_path = fixture.directory.join("registry.json");
+        let row = format!("project\t{}", project.display());
+
+        let run = |choice: &str| {
+            review_with(
+                &registry_path,
+                &fixture.directory,
+                &fixture.directory.join("projects"),
+                &FixedClock(1_722_340_800),
+                &mut FakePrompt {
+                    choices: VecDeque::from([Some(choice.to_owned())]),
+                    ..FakePrompt::default()
+                },
+                &mut Vec::new(),
+            )
+        };
+
+        assert_eq!(run(&row).unwrap(), 1);
+        assert!(registry_path.is_file());
+        assert_eq!(run(&row).unwrap(), 1);
+
+        let cancelled = run("").unwrap_err();
+        assert!(cancelled.downcast_ref::<ReviewCancelled>().is_some());
+        assert_eq!(
+            cancelled.to_string(),
+            "project-registry: nothing selected; registry not written"
         );
     }
 

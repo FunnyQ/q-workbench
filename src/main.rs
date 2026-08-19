@@ -112,6 +112,7 @@ enum ProjectCommand {
     Source { query: Option<String> },
     Scan,
     Rescan,
+    Review,
     Update,
     Use { path: Option<PathBuf> },
     Edit { path: PathBuf },
@@ -169,6 +170,9 @@ impl Cli {
             Command::Project {
                 command: ProjectCommand::Pick,
             } => Channel::Notification("Project picker"),
+            Command::Project {
+                command: ProjectCommand::Review,
+            } => Channel::Notification("Project review"),
             Command::Ssh {
                 command: SshCommand::Pick,
             } => Channel::Notification("SSH picker"),
@@ -222,6 +226,7 @@ impl Cli {
                 ProjectCommand::Source { .. } => "project source",
                 ProjectCommand::Scan => "project scan",
                 ProjectCommand::Rescan => "project rescan",
+                ProjectCommand::Review => "project review",
                 ProjectCommand::Update => "project update",
                 ProjectCommand::Use { .. } => "project use",
                 ProjectCommand::Edit { .. } => "project edit",
@@ -321,6 +326,29 @@ impl Cli {
                     let config = config::Config::load()?;
                     registry::project::rescan(Path::new(&config.project_registry_file))?;
                     return Ok(Outcome::Done);
+                }
+                ProjectCommand::Review => {
+                    let config = config::Config::load()?;
+                    let registered =
+                        match registry::project::review(Path::new(&config.project_registry_file)) {
+                            Ok(registered) => registered,
+                            // Dismissing the review menu closes the popup and nothing else.
+                            Err(error)
+                                if error
+                                    .downcast_ref::<registry::project::ReviewCancelled>()
+                                    .is_some() =>
+                            {
+                                return Ok(Outcome::Cancelled)
+                            }
+                            Err(error) => return Err(error),
+                        };
+                    return Ok(Outcome::Notice {
+                        title: "Project review".to_owned(),
+                        body: format!(
+                            "Registered {registered} project{}.",
+                            if registered == 1 { "" } else { "s" }
+                        ),
+                    });
                 }
                 ProjectCommand::Update => {
                     let config = config::Config::load()?;
@@ -681,6 +709,7 @@ mod tests {
             vec!["workbench", "project", "source", "query"],
             vec!["workbench", "project", "scan"],
             vec!["workbench", "project", "rescan"],
+            vec!["workbench", "project", "review"],
             vec!["workbench", "project", "update"],
             vec!["workbench", "project", "use", "/tmp/project"],
             vec!["workbench", "project", "edit", "/tmp/project"],
@@ -754,6 +783,10 @@ mod tests {
     fn non_agent_notifying_subcommands_carry_their_contract_titles() {
         let cases = [
             (vec!["workbench", "project", "pick"], Some("Project picker")),
+            (
+                vec!["workbench", "project", "review"],
+                Some("Project review"),
+            ),
             (vec!["workbench", "ssh", "pick"], Some("SSH picker")),
             (
                 vec!["workbench", "ssh", "session", "host", "t1"],
@@ -778,6 +811,10 @@ mod tests {
             (
                 vec!["workbench", "project", "pick"],
                 Channel::Notification("Project picker"),
+            ),
+            (
+                vec!["workbench", "project", "review"],
+                Channel::Notification("Project review"),
             ),
             (
                 vec!["workbench", "project", "scan"],
@@ -840,7 +877,9 @@ mod tests {
         for (argv, expected) in cases {
             let cli = Cli::try_parse_from(&argv).unwrap();
             assert_eq!(cli.channel(), expected, "{argv:?}");
-            if argv.get(1) == Some(&"project") && argv.get(2) != Some(&"pick") {
+            if argv.get(1) == Some(&"project")
+                && !matches!(argv.get(2), Some(&"pick") | Some(&"review"))
+            {
                 assert_eq!(cli.notification_title(), None, "{argv:?}");
             }
         }

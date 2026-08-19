@@ -8,7 +8,7 @@ A Rust binary is committed to the repository, so installing requires no build. H
 
 ## What it does
 
-The plugin exposes nine actions. Keys are yours to choose — see [Bind it](#bind-it).
+The plugin exposes ten actions. Keys are yours to choose. See [Bind it](#bind-it).
 
 | Action | What happens |
 | --- | --- |
@@ -17,6 +17,7 @@ The plugin exposes nine actions. Keys are yours to choose — see [Bind it](#bin
 | `new-assistant` | Open a tab from the `personal-assistant` layout — every choice pinned, so no menus |
 | `new-tab` | Pick a tab layout — a blank tab is always the last row — then the menus that layout leaves open, and open a tab from it |
 | `project` | Fuzzy-find a project; focus its workspace or create one. Typing widens the list past the registry, into `zoxide` and a live sweep of `projects_root` |
+| `project-review` | Review the project registry in a popup — build it the first time, re-review it after that |
 | `ssh` | Fuzzy-find an SSH host; connect in a dedicated tab that closes itself on disconnect |
 | `restart-agent` | Confirm, then relaunch the agent **in place** — the yazi/terminal side panes survive |
 | `dashboard` | Open a tab that starts Claude with the usage-dashboard prompt |
@@ -42,7 +43,7 @@ herdr plugin link ./q-workbench
 
 ### Bind it
 
-The plugin ships no keybindings — every action is reachable from Herdr's action list,
+The plugin ships no keybindings: every action is reachable from Herdr's action list,
 and you bind whichever ones you want in `~/.config/herdr/config.toml`:
 
 ```toml
@@ -81,29 +82,49 @@ brew install gum fzf zoxide yazi
 
 ## Registries
 
-Both pickers read a JSON registry you can regenerate at any time.
+Both pickers maintain their own registry, so there is nothing to run after install. The
+SSH picker reconciles against your SSH config every time it opens, and the project
+picker registers a project the moment you pick it.
 
 **Projects** — `~/.local/state/herdr-projects/registry.json`
 
-```zsh
-./bin/workbench project scan          # first run: discover and review
-./bin/workbench project rescan        # re-review, marking [new] / [missing]
-./bin/workbench project update        # refresh sources, no prompts
-./bin/workbench project edit <path>   # rename, add aliases, hide
-```
+Run the `project-review` action to review that registry in a popup. It discovers
+projects from Claude Code sessions, Codex rollouts, and a `.git` sweep of
+`projects_root`, then lets you toggle rows off before writing. The first run builds the
+registry; later runs re-review it, marking `[new]` and `[missing]` rows. Entries sort by
+most-recently-used.
 
-Discovery pulls from Claude Code sessions, Codex rollouts, and a `.git` sweep of `~/Projects`. Entries sort by most-recently-used.
-
-Type two characters and the picker also sweeps `projects_root` live, listing its finds below the registry rows. A directory counts when it holds `.git` or a `project_markers` file. Finding one does not register it, picking it does, so the registry holds only the projects you actually open.
+Type two characters and the picker also sweeps `projects_root` live, listing its finds
+below the registry rows. A directory counts when it holds `.git` or a `project_markers`
+file. Finding one does not register it, picking it does, so the registry holds only the
+projects you actually open.
 
 **SSH targets** — `~/.local/state/ssh-targets/registry.json`
 
+Hosts come from your SSH config (seeded once from shell history). In the picker,
+`ctrl-i` edits a host (adding new ones to your SSH config), `ctrl-x` removes it.
+
+### From a shell
+
+Both registries are also CLI subcommands, including non-interactive ones you can put in
+a script. A linked checkout runs `./bin/workbench`. An installed plugin lives in a
+directory whose name carries a hash that changes on every update, so resolve the path
+instead of writing it down (needs `jq`):
+
 ```zsh
-./bin/workbench ssh sync       # reconcile against ~/.config/ssh/config
-./bin/workbench ssh list
+workbench="$(dirname "$(herdr plugin list --plugin q.workbench --json |
+  jq -r '.result.plugins[0].manifest_path')")/bin/workbench"
+
+"$workbench" project scan          # build the registry; refuses to replace an existing one
+"$workbench" project rescan        # re-review, marking [new] / [missing]
+"$workbench" project update        # refresh sources, no prompts
+"$workbench" project edit <path>   # rename, add aliases, hide
+"$workbench" ssh sync              # reconcile against ~/.config/ssh/config
+"$workbench" ssh list
 ```
 
-Hosts come from your SSH config (seeded once from shell history). In the picker, `ctrl-i` edits a host (adding new ones to your SSH config), `ctrl-x` removes it.
+`project scan` and `project rescan` are the two halves of the `project-review` action,
+which picks between them by whether the registry exists.
 
 ## Configuration
 
@@ -127,7 +148,7 @@ row may not start or end with whitespace. Both rules apply to `[[agents]]` too.
 A layout may declare no agent pane, one, or several, at any position. Each agent pane
 that pins neither `agent` nor `option` runs its own harness and model menu, in the order
 the panes are written; the usage menu then runs once for the tab. A layout with no agent
-pane asks for a plain tab name instead — submitting nothing keeps its `label`.
+pane asks for a plain tab name instead: submitting nothing keeps its `label`.
 
 `blank-tab` is a reserved layout name. The `new-tab` menu offers a blank tab as its last
 row whether or not the config declares one, so declare that section only to change what
@@ -164,7 +185,7 @@ defaults.
 
 **On the bypass flags:** `--dangerously-bypass-approvals-and-sandbox` (Codex) and
 `--dangerously-skip-permissions` (Claude) hand the agent unrestricted execution on your
-host. Nothing adds them for you — put them in the agent's `extra_args` array
+host. Nothing adds them for you; put them in the agent's `extra_args` array
 deliberately, per machine.
 
 ## Development

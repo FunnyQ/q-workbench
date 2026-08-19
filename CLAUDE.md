@@ -64,6 +64,8 @@ A popup's current directory is not a reliable project directory. Resolve project
 
 `src/registry/project.rs` and `src/registry/ssh.rs` own the two version-1 JSON stores. Writes replace the complete registry atomically. Preserve stable ordering and existing source metadata when changing either schema.
 
+`project review` is the popup half of `project scan` and `project rescan`: their guards are complementary, so it picks by whether the registry file exists and reports through a notification, while the two terminal commands keep reporting on stderr. A dismissed review menu carries `ReviewCancelled` so the popup can end clean without matching on error text.
+
 Project discovery merges Claude sessions, Codex rollouts, and a `.git` sweep of `projects_root`. Canonicalization resolves each candidate to its Git root and rejects temp-directory paths. Keep the temp-dir filter: test sandboxes and transient worktrees must not leak into the real registry.
 
 SSH sync reconciles configured hosts through `ssh -G`. Removing a config-sourced entry hides it; removing a manual entry deletes it. A successful session stamps usage, and its dedicated tab closes on every connection exit path.

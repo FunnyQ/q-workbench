@@ -9,23 +9,15 @@ const TITLE: &str = "\u{ebeb}  Tab Layout"; // nf-cod-window
 const SUBTITLE: &str = "Choose a layout.";
 const HEIGHT: u8 = 8;
 
-/// The menu rows, in order: `default_tab_layout` first, the rest in config order, and the
-/// blank layout last.
+/// The menu rows, in order: the config's `[[tab_layouts]]` order, then the blank layout
+/// last. `default_tab_layout` picks what a launch without `--layout` opens; it does not
+/// move the row. Write the layouts in the order you want to read them.
 ///
 /// The blank entry is appended whatever the config says, so a config with no `tab_layouts`
 /// — or none the user wants right now — can still open a plain tab. A config layout named
 /// [`BLANK_LAYOUT_NAME`] replaces the built-in body but keeps the last slot.
-fn ordered_layouts(config: &Config) -> Result<Vec<TabLayout>> {
-    let default = agent::resolve_layout(config, None)?;
-    let mut ordered = std::iter::once(default)
-        .chain(
-            config
-                .tab_layouts
-                .iter()
-                .filter(|layout| layout.name != config.default_tab_layout),
-        )
-        .cloned()
-        .collect::<Vec<_>>();
+fn ordered_layouts(config: &Config) -> Vec<TabLayout> {
+    let mut ordered = config.tab_layouts.clone();
 
     let blank = ordered
         .iter()
@@ -33,12 +25,12 @@ fn ordered_layouts(config: &Config) -> Result<Vec<TabLayout>> {
         .map(|index| ordered.remove(index))
         .unwrap_or_else(blank_tab_layout);
     ordered.push(blank);
-    Ok(ordered)
+    ordered
 }
 
 /// Layouts are returned owned because the blank entry may not exist in the config at all.
 fn choose_layout(config: &Config, menu: &mut impl Menu) -> Result<Option<TabLayout>> {
-    let mut ordered = ordered_layouts(config)?;
+    let mut ordered = ordered_layouts(config);
     if ordered.len() == 1 {
         return Ok(ordered.pop());
     }
@@ -178,7 +170,8 @@ mod tests {
     }
 
     #[test]
-    fn default_layout_is_listed_first_and_blank_is_always_last() {
+    fn layouts_keep_config_order_and_blank_is_always_last() {
+        // "second" is the default layout; the menu does not hoist it.
         let config = config_with(layouts(), "second");
         let mut menu = FakeMenu::new([None]);
 
@@ -186,7 +179,7 @@ mod tests {
 
         assert_eq!(
             menu.options,
-            [["second", "first", "third", &blank_tab_layout().menu_label()]]
+            [["first", "second", "third", &blank_tab_layout().menu_label()]]
         );
     }
 
@@ -194,7 +187,7 @@ mod tests {
     fn a_config_that_declares_no_layouts_still_offers_a_blank_tab() {
         // A config file with no `tab_layouts` section loads the shipping defaults, which
         // declare no blank layout. The menu adds one regardless.
-        let ordered = ordered_layouts(&Config::test_default()).unwrap();
+        let ordered = ordered_layouts(&Config::test_default());
 
         assert_eq!(
             ordered.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(),
@@ -228,7 +221,7 @@ mod tests {
 
         choose_layout(&config, &mut menu).unwrap();
 
-        assert_eq!(menu.options[0][1], "A  First Layout");
+        assert_eq!(menu.options[0][0], "A  First Layout");
     }
 
     #[test]

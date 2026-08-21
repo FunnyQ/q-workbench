@@ -19,5 +19,12 @@
       "path": "Cargo.lock",
       "pattern": "name = \"workbench\"\\nversion = \"([^\"]+)\""
     }
+  ],
+  "artifacts": [
+    {
+      "path": "bin/workbench",
+      "command": "./bin/workbench --version",
+      "build": "zsh scripts/build.zsh"
+    }
   ]
 }

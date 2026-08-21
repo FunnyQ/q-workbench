@@ -28,7 +28,7 @@ zsh scripts/build.zsh
 
 Omitting a pane's agent, a pane's option, or a layout's tab label makes the launcher ask for that choice at launch time. Select a layout with `--layout <name>`; launches without the flag use `default_tab_layout`.
 
-The new-tab menu always offers a blank tab, as its last row, whether or not the config declares one. `config::BLANK_LAYOUT_NAME` reserves the name: a config layout under it replaces the built-in body and keeps the last slot. Because that row is always added, the menu draws even when the config declares a single layout.
+The new-tab menu lists layouts in config order — `default_tab_layout` selects what a flagless launch opens, it does not move the row — and always offers a blank tab, as its last row, whether or not the config declares one. `config::BLANK_LAYOUT_NAME` reserves the name: a config layout under it replaces the built-in body and keeps the last slot. Because that row is always added, the menu draws even when the config declares a single layout.
 
 A layout may declare no agent pane, one, or several, at any position. Each unpinned agent pane runs its own harness and model menu, in the order the panes are written, and the usage menu runs once afterwards for the tab. A layout with no agent pane runs none of them; it asks for a plain tab name instead, where submitting nothing keeps the layout's own label and escaping cancels. Reach the agent panes through `TabLayout::agent_panes`; nothing may assume `panes[0]` runs a harness.
 

@@ -44,8 +44,7 @@ ssh_history_file = "$HOME/.zsh_history"
 # A layout is selected with `--layout <name>` — `workbench agent popup --layout
 # personal-assistant`, or a Herdr action whose command carries the flag. Without the
 # flag the launcher uses `default_tab_layout`. The `new-tab` action asks, listing every
-# layout with `default_tab_layout` first. When only one layout is defined, it skips the
-# menu.
+# layout in the order written below, with the blank row last.
 #
 # LEAVING A CHOICE OUT MEANS ASKING FOR IT. Write agent, option, or tab_label to pin
 # that choice and skip its menu. Omit it and the launcher asks, exactly as it does

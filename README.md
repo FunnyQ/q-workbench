@@ -175,7 +175,7 @@ defaults.
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `dashboard_workspace` | `personal-assistant` | Workspace the dashboard tab opens in |
-| `default_tab_layout` | `agentic-coding` | Layout used when a launch does not pass `--layout` — the `project`, `new-agent`, and `new-worktree-agent` actions, and an in-pane `agent launch`. The `new-tab` action also hoists it to the top of its menu, above the blank row pinned to the bottom |
+| `default_tab_layout` | `agentic-coding` | Layout used when a launch does not pass `--layout` — the `project`, `new-agent`, and `new-worktree-agent` actions, and an in-pane `agent launch`. It does not affect the `new-tab` menu, which lists layouts in config order above the blank row pinned to the bottom |
 | `project_registry_file` | `~/.local/state/herdr-projects/registry.json` | Project registry path |
 | `projects_root` | `~/Projects` | Root of the `.git` discovery sweep, and of the picker's live sweep |
 | `project_markers` | `package.json`, `Gemfile`, `Cargo.toml`, `CLAUDE.md` | File names that make a directory a project in the picker's sweep, alongside `.git`. Set to `[]` to leave `.git` as the only marker |

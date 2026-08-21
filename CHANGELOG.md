@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-08-21
+
+_tracks tag `v0.8.1`_
+
+### Changed
+- The new-tab menu now lists layouts in the order `[[tab_layouts]]` declares
+  them, instead of always pushing `default_tab_layout` to the top. That
+  setting still picks which layout launches when `--layout` is omitted; it
+  no longer reorders the menu itself. The shipped config keeps its default
+  layout first, so the cursor still lands on it by default.
+
 ## [0.8.0] - 2026-08-19
 
 _tracks tag `v0.8.0`_

@@ -1,24 +1,10 @@
 use anyhow::{anyhow, Context};
-use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::herdr::types::LayoutNode;
 use crate::herdr::HerdrClient;
 
 use super::{nonempty_env, FlowResult, Outcome};
-
-/// The two node shapes `layout.export` returns for a tab's split tree.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum LayoutNode {
-    Pane {
-        pane_id: String,
-    },
-    Split {
-        direction: String,
-        first: Box<LayoutNode>,
-        second: Box<LayoutNode>,
-    },
-}
 
 /// Set every split ratio in the target pane's row (or column) so its siblings end up
 /// the same size. Only splits that share the immediate parent's direction are touched.
@@ -78,7 +64,7 @@ pub fn even_out(client: &dyn HerdrClient, pane: Option<&str>) -> FlowResult {
 /// or `None` when the pane is not in this tree.
 fn find_path(node: &LayoutNode, pane_id: &str) -> Option<Vec<bool>> {
     match node {
-        LayoutNode::Pane { pane_id: id } => (id == pane_id).then(Vec::new),
+        LayoutNode::Pane { pane_id: id, .. } => (id.as_deref() == Some(pane_id)).then(Vec::new),
         LayoutNode::Split { first, second, .. } => {
             if let Some(mut path) = find_path(first, pane_id) {
                 path.insert(0, false);
@@ -121,6 +107,7 @@ fn apply_even_ratios(
         direction: node_direction,
         first,
         second,
+        ..
     } = node
     else {
         return Ok(1);

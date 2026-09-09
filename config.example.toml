@@ -179,6 +179,13 @@ icon = "󰓩"                    # nf-md-tab
 #   name        Stable id. A pane's agent field names it.
 #   label       Harness menu text. Defaults to name.
 #   icon        Drawn before the label, exactly as it is for a pane.
+#   kind        Herdr's agent kind: "claude", "codex", "opencode". It decides two things -
+#               whether the pane is started through Herdr's `agent.start`, and which
+#               session-file family the session reporter searches. `agent.start` derives
+#               the executable from kind and appends only the args, so it is used only
+#               when command is that bare executable: an option that overrides command
+#               (the CCR row below), a command carrying fixed arguments, or a command
+#               naming another binary is typed into the pane's shell instead.
 #   command     Executable and its fixed arguments.
 #   extra_args  Appended to every launch of this agent.
 #   options     Model menu, in menu order. An agent with no options skips that menu.
@@ -193,9 +200,16 @@ icon = "󰓩"                    # nf-md-tab
 # sandbox - disable permission, sandbox, and approval checks and grant the agent
 # unrestricted access to this host. Nothing adds them for you. Put them in extra_args
 # deliberately, per machine.
+#
+# Restarting an agent always offers the same three rows - resume this session, start
+# fresh, cancel - because the popup closes before it could ask whether a session id
+# exists. Resume without one - or for a kind whose harness takes no resume argument,
+# which today is anything but claude and codex - starts fresh and says so in a
+# notification.
 
 [[agents]]
 name = "claude code"
+kind = "claude"
 icon = "󱗎"                    # nf-md-alpha_c_box
 command = ["claude"]
 extra_args = []
@@ -219,12 +233,14 @@ extra_args = []
 
 [[agents]]
 name = "codex"
+kind = "codex"
 icon = ""                    # nf-seti-config
 command = ["codex"]
 extra_args = []
 
 [[agents]]
 name = "opencode"
+kind = "opencode"
 icon = "󱚟"                    # nf-md-robot
 command = ["opencode"]
 extra_args = []

@@ -111,6 +111,9 @@ pub struct Agent {
     pub name: String,
     pub label: Option<String>,
     pub icon: Option<String>,
+    /// Herdr's agent kind, which decides both whether the pane can start through
+    /// `agent.start` and which session-file family the reporter searches.
+    pub kind: Option<String>,
     pub command: Vec<String>,
     #[serde(default)]
     pub extra_args: Vec<String>,
@@ -145,6 +148,7 @@ fn default_agents() -> Vec<Agent> {
         Agent {
             name: "claude code".to_owned(),
             label: None,
+            kind: Some("claude".to_owned()),
             icon: Some("\u{f15ce}".to_owned()),
             command: vec!["claude".to_owned()],
             extra_args: Vec::new(),
@@ -179,6 +183,7 @@ fn default_agents() -> Vec<Agent> {
         Agent {
             name: "codex".to_owned(),
             label: None,
+            kind: Some("codex".to_owned()),
             icon: Some("\u{ee0d}".to_owned()),
             command: vec!["codex".to_owned()],
             extra_args: Vec::new(),
@@ -187,6 +192,7 @@ fn default_agents() -> Vec<Agent> {
         Agent {
             name: "opencode".to_owned(),
             label: None,
+            kind: Some("opencode".to_owned()),
             icon: Some("\u{f169f}".to_owned()),
             command: vec!["opencode".to_owned()],
             extra_args: Vec::new(),

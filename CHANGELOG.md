@@ -5,46 +5,45 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-09-09
+
+_tracks tag `v0.9.0`_
 
 ### Added
-- Restarting an agent now asks: start fresh, resume this session, or cancel. The
-  three rows always draw, since the popup closes before it could check whether a
-  session id exists; the detached worker resolves it, preferring Herdr's own
-  `agent_session` over the id the workbench recorded, falling back to a sweep of
-  the harness's own session files, and reading all of it before the harness is
-  killed. A Resume that ends up with no usable id — none found, one reported as a
-  transcript path, or an agent whose harness takes no resume argument — falls
-  back to a fresh start and says why in a notification instead of silently
-  starting over.
-- Every agent pane spawns a detached reporter that finds the session file the
-  agent wrote, reports it to Herdr through `pane.report_agent_session`, and
-  stores the id for restart. It matches on the pane's cwd and the launch time,
-  so two agents sharing a cwd can still be credited each other's session. It gives
-  up after a minute, which is why restart sweeps the same files again rather than
-  trusting what the reporter stored: claude writes no transcript until its first
-  turn, so a pane prompted later than that recorded nothing.
-- Starting a pane through `agent.start` now retries while Herdr answers
-  `agent_pane_busy`, because a pane created moments earlier is still loading its
-  shell profile, and reduces the pane's label to the `[a-z][a-z0-9_-]{0,31}` name
-  Herdr accepts instead of being rejected outright for a glyph or a capital.
-- A new optional `kind` on `[[agents]]` names Herdr's agent kind. It decides
-  whether the pane is started through `agent.start`, which makes it an agent
-  Herdr can see, and which session files the reporter reads. Because
-  `agent.start` derives the executable from the kind, an agent whose `command`
-  is anything but that bare executable — or an option that overrides `command` —
-  keeps the old typed-argv start.
+- Restarting an agent now asks whether to resume its existing session, start
+  fresh, or cancel. The three rows always draw, since the popup closes before
+  it could check whether a session id exists; a detached worker resolves it
+  afterwards, preferring Herdr's own reported session, then falling back to a
+  sweep of the harness's own session files bounded by the launch time. A
+  Resume that ends up with no usable id — none found, one that is only a
+  transcript path, or a harness with no resume argument — falls back to a
+  fresh start and says why in a notification instead of silently starting
+  over.
+- Every agent pane now spawns a detached reporter that finds the session file
+  the agent wrote and reports it to Herdr, so Herdr's own session snapshot
+  stays current and restart has an id to resume even before the sweep above
+  runs. It matches by the pane's cwd and launch time, so two agents sharing a
+  cwd can still be credited each other's session.
+- Starting a pane through Herdr's `agent.start` now retries while a
+  just-created pane reports itself busy loading its shell profile, and sends
+  a slugified agent name instead of the pane's own label, which Herdr was
+  rejecting outright for containing glyphs, capitals, or spaces.
+- Agents can now declare an optional `kind` in config, which lets the plugin
+  start that pane through `agent.start` — making it an agent Herdr can see —
+  instead of typing its command into the shell. An agent whose `command`
+  isn't just the kind's own executable, or an option that overrides it, keeps
+  the old typed-argv start.
 
 ### Changed
-- The popup builds a tab in one `layout.apply` instead of a `tab.create` plus a
-  split, rename, and input call per pane. Apply is atomic, so a structure that
-  fails to build leaves nothing behind; a pane that fails to start afterwards
-  still closes the tab and reports. The new tab is focused as soon as it exists,
-  rather than after every harness has become ready. The in-pane `agent launch`
-  path keeps its split loop: apply destroys the pane it is given, which would
-  kill the launcher before its `exec`.
-- `MINIMUM_PROTOCOL` is now 22. Herdr older than that no longer runs the plugin
-  at all, which is the deliberate cost of the three methods above.
+- The popup now builds a whole tab with one atomic `layout.apply` call instead
+  of an incremental split-and-rename loop. A failed build leaves nothing
+  behind, and the new tab is focused as soon as it exists rather than after
+  every pane's agent has started. The in-pane `agent launch` path is
+  unaffected: `layout.apply` would destroy the launcher's own pane before its
+  `exec` ever ran.
+- The plugin now requires a Herdr new enough to speak protocol v22
+  (`MINIMUM_PROTOCOL` raised from 17), the version that added the three
+  methods above.
 
 ## [0.8.1] - 2026-08-21
 

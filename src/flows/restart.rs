@@ -9,6 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::json;
 
 use crate::config::Config;
+use crate::flows::menu::{popup_viewport, strip_pad, GumMenu, Menu};
 use crate::flows::{FlowError, FlowResult, Outcome};
 use crate::herdr::types::Pane;
 use crate::herdr::HerdrClient;
@@ -17,12 +18,28 @@ use crate::state;
 
 const NO_AGENT: &str = "No agent pane in this tab to restart.";
 const CANNOT_FOCUS: &str = "Could not focus the agent pane.";
+const NO_SESSION: &str = "No session to resume was recorded, so the agent started fresh.";
+const CANNOT_RESUME: &str = "This agent cannot resume a session, so it started fresh.";
 const NOTIFICATION_TITLE: &str = "Restart agent";
 const FAILURE_TITLE: &str = "Agent restart failed";
+const MENU_TITLE: &str = "\u{f002a}  Restart Agent";
+const MENU_SUBTITLE: &str = "The agent will relaunch in place.";
+const MENU_HEIGHT: u8 = 8;
+const RESUME_OPTION: &str = "\u{f0709}  resume this session";
+const FRESH_OPTION: &str = "\u{f169f}  start fresh";
+const CANCEL_OPTION: &str = "\u{ea76}  cancel";
+
 // Codex leaves raw mode and Kitty CSI-u enabled, breaking line wrapping and menu arrow keys.
 // The detached worker cannot access the pane TTY, so this prefix must run inside the pane.
 // Keep the prefix unquoted for shell interpretation; quote only the launcher path and arguments.
 const TTY_RESET: &str = "stty sane; printf '\\033[<u\\033[?7h\\033[?25h\\033[0m'; ";
+
+/// What the restart menu decided. Cancelling is `None`, never a variant here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestartMode {
+    Resume,
+    Fresh,
+}
 
 /// Confirms the restart inside the popup, then hands the work to a detached worker.
 ///
@@ -36,11 +53,11 @@ pub fn confirm_restart(_client: &dyn HerdrClient) -> FlowResult {
         invocation_pane_id().map_err(|error| FlowError::titled(FAILURE_TITLE, error))?;
 
     let executable = env::current_exe().context("failed to resolve the workbench executable")?;
-    let spawned = confirm_and_spawn(&invocation_pane_id, &run_confirm, &|pane_id| {
-        spawn_worker(&executable, pane_id).map(|_| ())
+    let spawned = confirm_and_spawn(&invocation_pane_id, &run_confirm, &|pane_id, mode| {
+        spawn_worker(&executable, pane_id, mode).map(|_| ())
     })
     .map_err(|error| FlowError::titled(FAILURE_TITLE, error))?;
-    Ok(if spawned {
+    Ok(if spawned.is_some() {
         Outcome::Done
     } else {
         Outcome::Cancelled
@@ -53,21 +70,25 @@ pub fn confirm_restart(_client: &dyn HerdrClient) -> FlowResult {
 /// what guarantees the worker — not the popup — resolves the target.
 fn confirm_and_spawn(
     invocation_pane_id: &str,
-    confirm: &dyn Fn() -> Result<bool>,
-    spawn: &dyn Fn(&str) -> Result<()>,
-) -> Result<bool> {
-    if !confirm()? {
-        return Ok(false);
-    }
-    spawn(invocation_pane_id)?;
-    Ok(true)
+    confirm: &dyn Fn() -> Result<Option<RestartMode>>,
+    spawn: &dyn Fn(&str, RestartMode) -> Result<()>,
+) -> Result<Option<RestartMode>> {
+    let Some(mode) = confirm()? else {
+        return Ok(None);
+    };
+    spawn(invocation_pane_id, mode)?;
+    Ok(Some(mode))
 }
 
 /// Restarts the agent pane reachable from `invocation_pane_id`.
 ///
 /// Runs in the detached worker, so `invocation_pane_id` is the pane the popup was
 /// opened from and may well hold yazi or a shell rather than the agent.
-pub fn restart_worker(client: &dyn HerdrClient, invocation_pane_id: &str) -> FlowResult {
+pub fn restart_worker(
+    client: &dyn HerdrClient,
+    invocation_pane_id: &str,
+    mode: RestartMode,
+) -> FlowResult {
     let target = match resolve_target(client, invocation_pane_id)
         .map_err(|error| FlowError::titled(FAILURE_TITLE, error))?
     {
@@ -89,8 +110,15 @@ pub fn restart_worker(client: &dyn HerdrClient, invocation_pane_id: &str) -> Flo
         return Err(FlowError::titled(NOTIFICATION_TITLE, anyhow!(CANNOT_FOCUS)).into());
     }
 
-    restart_resolved(client, &target).map_err(|error| FlowError::titled(FAILURE_TITLE, error))?;
-    Ok(Outcome::Done)
+    let fallback = restart_resolved(client, &target, mode)
+        .map_err(|error| FlowError::titled(FAILURE_TITLE, error))?;
+    Ok(match fallback {
+        Some(body) => Outcome::Notice {
+            title: NOTIFICATION_TITLE.to_owned(),
+            body: body.to_owned(),
+        },
+        None => Outcome::Done,
+    })
 }
 
 fn resolve_target(client: &dyn HerdrClient, invocation_pane_id: &str) -> Result<Option<Pane>> {
@@ -151,7 +179,31 @@ fn focus_target(
     Ok(false)
 }
 
-fn restart_resolved(client: &dyn HerdrClient, target: &Pane) -> Result<()> {
+/// Kills the harness and reinjects the launcher. Returns the reason a requested resume
+/// fell back to a fresh start, so the caller can say so instead of quietly starting over.
+fn restart_resolved(
+    client: &dyn HerdrClient,
+    target: &Pane,
+    mode: RestartMode,
+) -> Result<Option<&'static str>> {
+    // The worker reads the state file directly rather than asking Herdr for the layout. The
+    // config is only needed to validate a record that exists, so a pane with no record still
+    // restarts when the config file is broken.
+    let (record, config) = match state::read_state().panes.contains_key(&target.pane_id) {
+        true => {
+            let config = Config::load().context("failed to load config for agent restart")?;
+            let record = state::get_for_pane(&target.pane_id, &config);
+            (record, Some(config))
+        }
+        false => (None, None),
+    };
+    // Read before the kill: Herdr binds the reported session to the agent it detected, so
+    // asking after the harness has exited would never see it.
+    let (resume, fallback) = match mode {
+        RestartMode::Resume => resolve_resume(client, target, record.as_ref(), config.as_ref())?,
+        RestartMode::Fresh => (None, None),
+    };
+
     let response = client
         .pane_process_info(json!({ "pane_id": target.pane_id }))
         .context("failed to read the agent process group")?;
@@ -183,17 +235,13 @@ fn restart_resolved(client: &dyn HerdrClient, target: &Pane) -> Result<()> {
     // only the launcher, so killing the agent group returns the pane to its surviving shell.
     let executable = env::current_exe().context("failed to resolve the workbench executable")?;
     let label = target.label.as_deref().unwrap_or_default();
-    // The worker reads the state file directly rather than asking Herdr for the layout. The
-    // config is only needed to validate a record that exists, so a pane with no record still
-    // restarts when the config file is broken.
-    let record = match state::read_state().panes.contains_key(&target.pane_id) {
-        true => {
-            let config = Config::load().context("failed to load config for agent restart")?;
-            state::get_for_pane(&target.pane_id, &config)
-        }
-        false => None,
-    };
-    let command = injected_command(&executable, &target.pane_id, label, record.as_ref())?;
+    let command = injected_command(
+        &executable,
+        &target.pane_id,
+        label,
+        record.as_ref(),
+        resume.as_deref(),
+    )?;
     client
         .pane_send_input(json!({
             "pane_id": target.pane_id,
@@ -201,7 +249,52 @@ fn restart_resolved(client: &dyn HerdrClient, target: &Pane) -> Result<()> {
             "keys": ["enter"],
         }))
         .context("failed to inject the restarted agent")?;
-    Ok(())
+    Ok(fallback)
+}
+
+/// The session a Resume should hand the harness, and the reason it will start fresh anyway.
+fn resolve_resume(
+    client: &dyn HerdrClient,
+    target: &Pane,
+    record: Option<&state::LastAgentRecord>,
+    config: Option<&Config>,
+) -> Result<(Option<String>, Option<&'static str>)> {
+    let Some(session) = resume_session(client, &target.pane_id, record)? else {
+        return Ok((None, Some(NO_SESSION)));
+    };
+    // A harness whose kind takes no resume argument would swallow the id and start over
+    // without a word. Only a record names the agent, so an unpinned pane is trusted.
+    let resumable = match (record, config) {
+        (Some(record), Some(config)) => crate::flows::agent::kind_can_resume(
+            config
+                .agent(&record.agent)
+                .and_then(|agent| agent.kind.as_deref()),
+        ),
+        _ => true,
+    };
+    Ok(match resumable {
+        true => (Some(session), None),
+        false => (None, Some(CANNOT_RESUME)),
+    })
+}
+
+/// Herdr's own report wins over the one the workbench reporter stored, so installing the
+/// official integration later improves accuracy without touching this fallback.
+fn resume_session(
+    client: &dyn HerdrClient,
+    pane_id: &str,
+    record: Option<&state::LastAgentRecord>,
+) -> Result<Option<String>> {
+    let pane = client
+        .pane_get(json!({ "pane_id": pane_id }))
+        .context("failed to read the agent session")?
+        .pane;
+    Ok(pane
+        .agent_session
+        // `kind` says what `value` is, and a transcript path is not what a harness resumes.
+        .filter(|session| session.kind == "id")
+        .map(|session| session.value)
+        .or_else(|| record.and_then(|record| record.session.clone())))
 }
 
 fn should_kill(group: i32, shell: i32) -> bool {
@@ -234,6 +327,7 @@ fn injected_command(
     pane_id: &str,
     label: &str,
     record: Option<&state::LastAgentRecord>,
+    resume: Option<&str>,
 ) -> Result<String> {
     let executable = executable
         .to_str()
@@ -259,91 +353,64 @@ fn injected_command(
             record.pane.clone(),
         ]);
     }
+    if let Some(resume) = resume {
+        argv.extend(["--resume".to_owned(), resume.to_owned()]);
+    }
     argv.extend(["--no-layout".to_owned(), "--restart".to_owned()]);
     let launcher = build_command(&argv);
     Ok(format!("{TTY_RESET}{launcher}"))
 }
 
-fn run_confirm() -> Result<bool> {
-    // `COLUMNS` used to answer here, but zsh never exports it to this process, so the
-    // banner was always laid out for an 80-column pane.
-    let cols = super::terminal_size().map_or(80, |(cols, _lines)| cols);
-    let content_width = 44_u16.min(cols.saturating_sub(4));
-    let content_margin = cols.saturating_sub(content_width + 2) / 2;
-    let subtitle = Command::new("gum")
-        .args([
-            "style",
-            "--foreground",
-            "240",
-            "The agent will relaunch in place.",
-        ])
-        .output()
-        .context("failed to style the restart subtitle")?;
-    if !subtitle.status.success() {
-        return Err(anyhow!("gum style failed for the restart subtitle"));
-    }
-    let subtitle = String::from_utf8(subtitle.stdout).context("gum produced invalid UTF-8")?;
-    let banner = Command::new("gum")
-        .args([
-            "style",
-            "--border",
-            "rounded",
-            "--padding",
-            "1 3",
-            "--width",
-        ])
-        .arg(content_width.to_string())
-        .arg("--bold")
-        .arg("\u{f002a}  Current session will end")
-        .arg("")
-        .arg(subtitle.trim_end())
-        .output()
-        .context("failed to style the restart banner")?;
-    if !banner.status.success() {
-        return Err(anyhow!("gum style failed for the restart banner"));
-    }
-    let banner = String::from_utf8(banner.stdout).context("gum produced invalid UTF-8")?;
-    let status = Command::new("gum")
-        .args([
-            "confirm",
-            "--affirmative",
-            "Restart",
-            "--negative",
-            "Cancel",
-            "--selected.background",
-            "214",
-            "--selected.foreground",
-            "235",
-            "--unselected.background",
-            "237",
-            "--unselected.foreground",
-            "223",
-            "--padding",
-        ])
-        .arg(format!("1 {content_margin}"))
-        .arg(banner.trim_end())
-        .status()
-        .context("failed to run the restart confirmation")?;
-    match status.code() {
-        Some(0) => Ok(true),
-        Some(1) => Ok(false),
-        code => Err(anyhow!("gum confirm failed with status {code:?}")),
-    }
+/// The three-way restart menu.
+///
+/// All three rows draw every time. Deciding whether a session id exists would mean a
+/// socket call, and the popup pane dies the moment this returns — so the resolution is
+/// the worker's, and a Resume with nothing to resume falls back there.
+fn run_confirm() -> Result<Option<RestartMode>> {
+    let (cols, lines) = popup_viewport();
+    let mut menu = GumMenu::new(cols, lines);
+    choose_mode(&mut menu)
+}
+
+fn choose_mode(menu: &mut impl Menu) -> Result<Option<RestartMode>> {
+    let options = [
+        RESUME_OPTION.to_owned(),
+        FRESH_OPTION.to_owned(),
+        CANCEL_OPTION.to_owned(),
+    ];
+    let Some(selection) = menu.choose(MENU_TITLE, MENU_SUBTITLE, &options, MENU_HEIGHT)? else {
+        return Ok(None);
+    };
+    let selection = strip_pad(&selection);
+
+    // Resolved by position, like the tab layout menu. Cancel and anything matching no row
+    // land in the same arm, so an unexpected answer is a cancel rather than a panic.
+    Ok(
+        match options.iter().position(|option| *option == selection) {
+            Some(0) => Some(RestartMode::Resume),
+            Some(1) => Some(RestartMode::Fresh),
+            _ => None,
+        },
+    )
 }
 
 /// The worker's argv tail. `--pane` carries the invocation pane, never the target: the
 /// worker re-resolves so it can tell "already on the agent" from "focus must move".
-fn worker_argv(pane_id: &str) -> Vec<String> {
-    vec![
+fn worker_argv(pane_id: &str, mode: RestartMode) -> Vec<String> {
+    let mut argv = vec![
         "agent".to_owned(),
         "restart-worker".to_owned(),
         "--pane".to_owned(),
         pane_id.to_owned(),
-    ]
+    ];
+    if mode == RestartMode::Resume {
+        argv.push("--resume".to_owned());
+    }
+    argv
 }
 
 /// Builds a command that outlives both the popup and the process group it will kill.
-fn detached_command(program: &Path, args: &[String]) -> Command {
+pub(crate) fn detached_command(program: &Path, args: &[String]) -> Command {
     let mut command = Command::new(program);
     // Null stdio prevents a surviving worker from holding or corrupting the popup TTY.
     command
@@ -366,8 +433,12 @@ fn detached_command(program: &Path, args: &[String]) -> Command {
     command
 }
 
-fn spawn_worker(executable: &Path, pane_id: &str) -> Result<std::process::Child> {
-    detached_command(executable, &worker_argv(pane_id))
+fn spawn_worker(
+    executable: &Path,
+    pane_id: &str,
+    mode: RestartMode,
+) -> Result<std::process::Child> {
+    detached_command(executable, &worker_argv(pane_id, mode))
         .spawn()
         .context("failed to spawn the restart worker")
 }
@@ -379,7 +450,54 @@ mod tests {
 
     use super::*;
     use crate::config::TabLayout;
+    use crate::flows::menu::InputIndent;
     use crate::herdr::FakeClient;
+
+    /// Only `choose` is exercised; the restart flow draws no other menu step.
+    struct FakeMenu {
+        answers: std::collections::VecDeque<Option<String>>,
+        options: Vec<Vec<String>>,
+    }
+
+    impl FakeMenu {
+        fn new<'a>(answers: impl IntoIterator<Item = Option<&'a str>>) -> Self {
+            Self {
+                answers: answers
+                    .into_iter()
+                    .map(|answer| answer.map(str::to_owned))
+                    .collect(),
+                options: Vec::new(),
+            }
+        }
+    }
+
+    impl Menu for FakeMenu {
+        fn choose(
+            &mut self,
+            _: &str,
+            _: &str,
+            options: &[String],
+            _: u8,
+        ) -> Result<Option<String>> {
+            self.options.push(options.to_vec());
+            Ok(self.answers.pop_front().flatten())
+        }
+
+        fn filter(&mut self, _: &str, _: &str, _: &[String], _: &str) -> Result<Option<String>> {
+            Ok(None)
+        }
+
+        fn input(
+            &mut self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: u16,
+            _: InputIndent,
+        ) -> Result<Option<String>> {
+            Ok(None)
+        }
+    }
 
     fn pane(id: &str, tab: &str, agent: bool) -> serde_json::Value {
         json!({"pane_id": id, "tab_id": tab, "agent": agent.then(|| json!({}))})
@@ -411,39 +529,256 @@ mod tests {
 
     #[test]
     fn confirm_spawns_the_worker_with_the_invocation_pane_and_calls_no_herdr_method() {
-        let client = FakeClient::default();
-        let spawned = RefCell::new(Vec::<String>::new());
+        for mode in [RestartMode::Resume, RestartMode::Fresh] {
+            let client = FakeClient::default();
+            let spawned = RefCell::new(Vec::<(String, RestartMode)>::new());
 
-        confirm_and_spawn("w1:p3", &|| Ok(true), &|pane_id| {
-            spawned.borrow_mut().push(pane_id.to_owned());
-            Ok(())
-        })
-        .unwrap();
+            confirm_and_spawn("w1:p3", &|| Ok(Some(mode)), &|pane_id, chosen| {
+                spawned.borrow_mut().push((pane_id.to_owned(), chosen));
+                Ok(())
+            })
+            .unwrap();
 
-        // The yazi pane the action fired from, not the agent pane it will restart.
-        assert_eq!(spawned.into_inner(), ["w1:p3"]);
-        assert!(client.calls.borrow().is_empty());
+            // The yazi pane the action fired from, not the agent pane it will restart.
+            assert_eq!(spawned.into_inner(), [("w1:p3".to_owned(), mode)]);
+            assert!(client.calls.borrow().is_empty());
+        }
     }
 
     #[test]
     fn rejecting_the_confirmation_spawns_nothing_and_exits_cleanly() {
         let spawned = RefCell::new(0);
 
-        confirm_and_spawn("w1:p3", &|| Ok(false), &|_| {
-            *spawned.borrow_mut() += 1;
-            Ok(())
-        })
-        .unwrap();
+        assert_eq!(
+            confirm_and_spawn("w1:p3", &|| Ok(None), &|_, _| {
+                *spawned.borrow_mut() += 1;
+                Ok(())
+            })
+            .unwrap(),
+            None
+        );
 
         assert_eq!(spawned.into_inner(), 0);
     }
 
     #[test]
-    fn worker_argv_carries_the_hidden_subcommand_and_the_pane_flag() {
+    fn the_menu_always_draws_resume_fresh_and_cancel() {
+        let mut menu = FakeMenu::new([Some(RESUME_OPTION)]);
+        assert_eq!(choose_mode(&mut menu).unwrap(), Some(RestartMode::Resume));
+        // Three rows whatever the pane holds: the popup cannot look a session id up.
+        assert_eq!(menu.options, [[RESUME_OPTION, FRESH_OPTION, CANCEL_OPTION]]);
+
+        let mut menu = FakeMenu::new([Some(FRESH_OPTION)]);
+        assert_eq!(choose_mode(&mut menu).unwrap(), Some(RestartMode::Fresh));
+
+        // Cancel, escape, and anything gum returned that matches no row all read as cancel.
+        let mut menu = FakeMenu::new([Some(CANCEL_OPTION), None, Some("")]);
+        for _ in 0..3 {
+            assert_eq!(choose_mode(&mut menu).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn worker_argv_carries_the_hidden_subcommand_the_pane_flag_and_the_mode() {
         assert_eq!(
-            worker_argv("w1:p3"),
+            worker_argv("w1:p3", RestartMode::Fresh),
             ["agent", "restart-worker", "--pane", "w1:p3"]
         );
+        assert_eq!(
+            worker_argv("w1:p3", RestartMode::Resume),
+            ["agent", "restart-worker", "--pane", "w1:p3", "--resume"]
+        );
+    }
+
+    #[test]
+    fn resume_prefers_the_pane_snapshot_session_over_the_stored_one() {
+        let stored = state::LastAgentRecord {
+            agent: "codex".to_owned(),
+            option: None,
+            layout: "agentic-coding".to_owned(),
+            pane: "agent".to_owned(),
+            session: Some("stored-id".to_owned()),
+            recorded_at: 1,
+        };
+
+        // Herdr's own report wins, so installing the official integration later silently
+        // improves accuracy without touching the fallback.
+        let reported = FakeClient::default();
+        let mut pane = labelled_pane("p2", "t1", true, "review");
+        pane["agent_session"] = json!({
+            "source": "q.workbench",
+            "agent": "codex",
+            "kind": "id",
+            "value": "reported-id",
+        });
+        reported.queue_response("pane.get", json!({"pane": pane}));
+        assert_eq!(
+            resume_session(&reported, "p2", Some(&stored)).unwrap(),
+            Some("reported-id".to_owned())
+        );
+
+        let unreported = FakeClient::default();
+        unreported.queue_response(
+            "pane.get",
+            json!({"pane": labelled_pane("p2", "t1", true, "review")}),
+        );
+        assert_eq!(
+            resume_session(&unreported, "p2", Some(&stored)).unwrap(),
+            Some("stored-id".to_owned())
+        );
+
+        let neither = FakeClient::default();
+        neither.queue_response(
+            "pane.get",
+            json!({"pane": labelled_pane("p2", "t1", true, "review")}),
+        );
+        assert_eq!(resume_session(&neither, "p2", None).unwrap(), None);
+    }
+
+    /// `kind` is what says whether `value` is an id or a transcript path, and a path is
+    /// not something a harness can be told to resume.
+    #[test]
+    fn a_session_reported_as_a_path_falls_back_to_the_stored_id() {
+        let stored = state::LastAgentRecord {
+            agent: "codex".to_owned(),
+            option: None,
+            layout: "agentic-coding".to_owned(),
+            pane: "agent".to_owned(),
+            session: Some("stored-id".to_owned()),
+            recorded_at: 1,
+        };
+        let mut pane = labelled_pane("p2", "t1", true, "review");
+        pane["agent_session"] = json!({
+            "source": "herdr",
+            "agent": "codex",
+            "kind": "path",
+            "value": "/Users/q/.codex/sessions/rollout-abc.jsonl",
+        });
+
+        for (record, expected) in [(Some(&stored), Some("stored-id".to_owned())), (None, None)] {
+            let client = FakeClient::default();
+            client.queue_response("pane.get", json!({"pane": pane}));
+            assert_eq!(resume_session(&client, "p2", record).unwrap(), expected);
+        }
+    }
+
+    /// `resume_args` has nothing to append for these kinds, so promising the resume would
+    /// start a brand-new session without a word.
+    #[test]
+    fn a_kind_that_cannot_resume_reports_the_fallback() {
+        let config = Config::test_default();
+        let target: Pane =
+            serde_json::from_value(labelled_pane("p2", "t1", true, "review")).unwrap();
+        let record = |agent: &str| state::LastAgentRecord {
+            agent: agent.to_owned(),
+            option: None,
+            layout: "agentic-coding".to_owned(),
+            pane: "agent".to_owned(),
+            session: Some("stored-id".to_owned()),
+            recorded_at: 1,
+        };
+
+        for (agent, expected) in [
+            ("codex", (Some("stored-id".to_owned()), None)),
+            ("opencode", (None, Some(CANNOT_RESUME))),
+        ] {
+            let client = FakeClient::default();
+            client.queue_response(
+                "pane.get",
+                json!({"pane": labelled_pane("p2", "t1", true, "review")}),
+            );
+            assert_eq!(
+                resolve_resume(&client, &target, Some(&record(agent)), Some(&config)).unwrap(),
+                expected,
+                "{agent}"
+            );
+        }
+    }
+
+    /// Herdr binds a reported session to the agent it detected, so reading it after the
+    /// harness has been killed would find nothing.
+    #[test]
+    fn the_session_is_read_before_the_harness_is_killed() {
+        let _guard = crate::state::env_lock();
+        env::remove_var("Q_WORKBENCH_STATE_FILE");
+        let client = FakeClient::default();
+        client.queue_response("pane.process_info", json!({"process_info": null}));
+        client.queue_response(
+            "pane.get",
+            json!({"pane": labelled_pane("p2", "t1", true, "review")}),
+        );
+        let target: Pane =
+            serde_json::from_value(labelled_pane("p2", "t1", true, "review")).unwrap();
+
+        restart_resolved(&client, &target, RestartMode::Resume).unwrap();
+
+        let calls = client.calls.borrow();
+        let methods: Vec<&str> = calls.iter().map(|call| call.0.as_str()).collect();
+        assert_eq!(methods, ["pane.get", "pane.process_info", "pane.send_input"]);
+    }
+
+    #[test]
+    fn a_resolved_session_reaches_the_injected_launcher() {
+        let _guard = crate::state::env_lock();
+        env::remove_var("Q_WORKBENCH_STATE_FILE");
+        let client = FakeClient::default();
+        client.queue_response("pane.process_info", json!({"process_info": null}));
+        let mut pane = labelled_pane("p2", "t1", true, "review");
+        pane["agent_session"] = json!({
+            "source": "q.workbench",
+            "agent": "codex",
+            "kind": "id",
+            "value": "reported-id",
+        });
+        client.queue_response("pane.get", json!({"pane": pane}));
+        let target: Pane =
+            serde_json::from_value(labelled_pane("p2", "t1", true, "review")).unwrap();
+
+        assert_eq!(
+            restart_resolved(&client, &target, RestartMode::Resume).unwrap(),
+            None
+        );
+
+        let calls = client.calls.borrow();
+        let text = calls.last().unwrap().1["text"].as_str().unwrap();
+        assert!(text.contains("'--resume' 'reported-id'"), "{text}");
+    }
+
+    #[test]
+    fn resume_without_any_session_id_restarts_fresh_and_says_why() {
+        let _guard = crate::state::env_lock();
+        env::remove_var("Q_WORKBENCH_STATE_FILE");
+        let client = FakeClient::default();
+        client.queue_response("pane.process_info", json!({"process_info": null}));
+        client.queue_response(
+            "pane.get",
+            json!({"pane": labelled_pane("p2", "t1", true, "review")}),
+        );
+        let target: Pane =
+            serde_json::from_value(labelled_pane("p2", "t1", true, "review")).unwrap();
+
+        assert_eq!(
+            restart_resolved(&client, &target, RestartMode::Resume).unwrap(),
+            Some(NO_SESSION)
+        );
+
+        let calls = client.calls.borrow();
+        let text = calls.last().unwrap().1["text"].as_str().unwrap();
+        assert!(!text.contains("'--resume'"), "{text}");
+    }
+
+    #[test]
+    fn a_fresh_restart_never_reads_the_pane_snapshot() {
+        let client = FakeClient::default();
+        client.queue_response("pane.process_info", json!({"process_info": null}));
+        let target: Pane =
+            serde_json::from_value(labelled_pane("p2", "t1", true, "review")).unwrap();
+
+        restart_resolved(&client, &target, RestartMode::Fresh).unwrap();
+
+        let calls = client.calls.borrow();
+        let methods: Vec<&str> = calls.iter().map(|call| call.0.as_str()).collect();
+        assert_eq!(methods, ["pane.process_info", "pane.send_input"]);
     }
 
     #[test]
@@ -466,7 +801,7 @@ mod tests {
         client.queue_response("pane.focus_direction", json!({"type": "ok"}));
         client.queue_response("pane.process_info", json!({"process_info": null}));
 
-        restart_worker(&client, "p3").unwrap();
+        restart_worker(&client, "p3", RestartMode::Fresh).unwrap();
 
         let calls = client.calls.borrow();
         let methods: Vec<&str> = calls.iter().map(|call| call.0.as_str()).collect();
@@ -501,7 +836,7 @@ mod tests {
         missing.queue_response("pane.get", json!({"pane": pane("p1", "t1", false)}));
         missing.queue_response("pane.list", json!({"panes": [pane("p1", "t1", false)]}));
         assert_eq!(
-            restart_worker(&missing, "p1").unwrap(),
+            restart_worker(&missing, "p1", RestartMode::Fresh).unwrap(),
             Outcome::Notice {
                 title: NOTIFICATION_TITLE.to_owned(),
                 body: NO_AGENT.to_owned(),
@@ -522,7 +857,7 @@ mod tests {
                 json!({"neighbor": {"neighbor_pane_id": null}}),
             );
         }
-        let error = restart_worker(&blocked, "p1").unwrap_err();
+        let error = restart_worker(&blocked, "p1", RestartMode::Fresh).unwrap_err();
         let flow_error = error.downcast_ref::<FlowError>().unwrap();
         assert_eq!(flow_error.title(), Some(NOTIFICATION_TITLE));
         assert_eq!(flow_error.chain(), CANNOT_FOCUS);
@@ -531,6 +866,30 @@ mod tests {
             .borrow()
             .iter()
             .any(|call| call.0 == "notification.show"));
+    }
+
+    /// The worker is the only half that can resolve a session, so it is also the only half
+    /// that can tell the user its Resume turned into a fresh start.
+    #[test]
+    fn a_resume_the_worker_cannot_satisfy_reaches_the_user_as_a_notice() {
+        let _guard = crate::state::env_lock();
+        env::remove_var("Q_WORKBENCH_STATE_FILE");
+        let client = FakeClient::default();
+        for _ in 0..2 {
+            client.queue_response(
+                "pane.get",
+                json!({"pane": labelled_pane("p2", "t1", true, "debug")}),
+            );
+        }
+        client.queue_response("pane.process_info", json!({"process_info": null}));
+
+        assert_eq!(
+            restart_worker(&client, "p2", RestartMode::Resume).unwrap(),
+            Outcome::Notice {
+                title: NOTIFICATION_TITLE.to_owned(),
+                body: NO_SESSION.to_owned(),
+            }
+        );
     }
 
     #[test]
@@ -542,7 +901,7 @@ mod tests {
         );
         client.queue_response("pane.process_info", json!({"process_info": null}));
 
-        restart_worker(&client, "p2").unwrap();
+        restart_worker(&client, "p2", RestartMode::Fresh).unwrap();
 
         let calls = client.calls.borrow();
         let methods: Vec<&str> = calls.iter().map(|call| call.0.as_str()).collect();
@@ -640,7 +999,7 @@ mod tests {
         let _guard = crate::state::env_lock();
         env::remove_var("Q_WORKBENCH_STATE_FILE");
         let command =
-            injected_command(Path::new("/tmp/work bench"), "p 1", "review's", None).unwrap();
+            injected_command(Path::new("/tmp/work bench"), "p 1", "review's", None, None).unwrap();
         assert!(command.starts_with(TTY_RESET));
         assert!(!command.contains("'--layout'"));
         assert_eq!(command, "stty sane; printf '\\033[<u\\033[?7h\\033[?25h\\033[0m'; '/tmp/work bench' 'agent' 'launch' 'p 1' '--usage' 'review'\\''s' '--no-layout' '--restart'");
@@ -679,7 +1038,7 @@ mod tests {
             fs::write(
                 &path,
                 format!(
-                    r#"{{"version":3,"panes":{{"p1":{{"agent":"codex","layout":"{layout}","pane":"{pane}","recorded_at":1}}}}}}"#
+                    r#"{{"version":4,"panes":{{"p1":{{"agent":"codex","layout":"{layout}","pane":"{pane}","recorded_at":1}}}}}}"#
                 ),
             )
             .unwrap();
@@ -687,9 +1046,14 @@ mod tests {
             // Resolve through the state file exactly as `restart_resolved` does, so the
             // stored record still has to survive validation before it reaches the argv.
             let record = crate::state::get_for_pane("p1", &config).expect("stored record");
-            let command =
-                injected_command(Path::new("/tmp/workbench"), "p1", "review", Some(&record))
-                    .unwrap();
+            let command = injected_command(
+                Path::new("/tmp/workbench"),
+                "p1",
+                "review",
+                Some(&record),
+                None,
+            )
+            .unwrap();
 
             assert!(command.starts_with(TTY_RESET));
             assert!(

@@ -4,6 +4,7 @@ pub mod layout;
 pub(crate) mod menu;
 pub mod picker;
 pub mod restart;
+pub mod session;
 pub mod ssh;
 pub mod tab;
 

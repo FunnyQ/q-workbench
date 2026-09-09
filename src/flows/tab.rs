@@ -297,11 +297,16 @@ mod tests {
         let mut menu = FakeMenu::new([Some(selected.as_str())]);
         let client = FakeClient::default();
         client.queue_response(
-            "tab.create",
+            "layout.apply",
             json!({
-                "type": "tab_created",
-                "root_pane": {"pane_id": "p1"},
-                "tab": {"tab_id": "t1"},
+                "type": "layout_apply",
+                "layout": {
+                    "workspace_id": "w1",
+                    "tab_id": "t1",
+                    "zoomed": false,
+                    "focused_pane_id": "p1",
+                    "root": {"type": "pane", "pane_id": "p1"},
+                },
             }),
         );
 
@@ -315,10 +320,10 @@ mod tests {
 
         assert_eq!(outcome.unwrap(), Outcome::Done);
         let calls = client.calls.borrow();
-        let create = calls
+        let applied = calls
             .iter()
-            .find(|(method, _)| method == "tab.create")
-            .expect("tab.create call");
-        assert_eq!(create.1["label"], "Second tab");
+            .find(|(method, _)| method == "layout.apply")
+            .expect("layout.apply call");
+        assert_eq!(applied.1["tab_label"], "Second tab");
     }
 }

@@ -11,11 +11,12 @@ use crate::config::Config;
 use crate::herdr::HerdrClient;
 use crate::registry::project::write_json_atomically;
 
-// Bumped to 2 when the record moved from rendered menu labels to stable config names, and
-// to 3 when `pane` arrived. `read_state()` filters on this, so an older file is discarded
-// whole rather than deserialized into the new shape: a v2 record carries no pane name, and
-// guessing one would restart a side agent pane with the first agent pane's pin.
-const STATE_VERSION: u8 = 3;
+// Bumped to 2 when the record moved from rendered menu labels to stable config names, to
+// 3 when `pane` arrived, and to 4 when `session` did. `read_state()` filters on this, so
+// an older file is discarded whole rather than deserialized into the new shape: a v2
+// record carries no pane name, and guessing one would restart a side agent pane with the
+// first agent pane's pin.
+const STATE_VERSION: u8 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastAgentRecord {
@@ -26,6 +27,10 @@ pub struct LastAgentRecord {
     /// The layout pane this agent was launched as. Restart replays that pane's pin, which
     /// is not the first agent pane's once a layout declares several.
     pub pane: String,
+    /// Fallback for restart's resume when Herdr's own snapshot carries no session; absent
+    /// simply means none was captured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
     pub recorded_at: u64,
 }
 
@@ -99,6 +104,20 @@ pub fn get_for_pane(pane_id: &str, config: &Config) -> Option<LastAgentRecord> {
     Some(record)
 }
 
+/// The session reporter runs long after the launch, so it patches one field rather than
+/// rewriting a record whose other fields it never learned.
+pub fn set_session(pane_id: &str, session: &str) -> Result<()> {
+    let Some(path) = state_path() else {
+        return Ok(());
+    };
+    let mut state = read_state();
+    let Some(record) = state.panes.get_mut(pane_id) else {
+        return Ok(());
+    };
+    record.session = Some(session.to_owned());
+    write_json_atomically(&path, &state)
+}
+
 pub fn write_state(
     client: &dyn HerdrClient,
     pane_id: &str,
@@ -146,7 +165,7 @@ mod tests {
         env::set_var("Q_WORKBENCH_STATE_FILE", &path);
         fs::write(
             &path,
-            r#"{"version":3,"panes":{"dead":{"agent":"old","layout":"agentic-coding","pane":"agent","recorded_at":1}}}"#,
+            r#"{"version":4,"panes":{"dead":{"agent":"old","layout":"agentic-coding","pane":"agent","recorded_at":1}}}"#,
         )
         .unwrap();
         let client = FakeClient::default();
@@ -157,6 +176,7 @@ mod tests {
             option: None,
             layout: "agentic-coding".to_owned(),
             pane: "agent".to_owned(),
+            session: None,
             recorded_at: 42,
         };
         write_state(&client, "w2N:p1", &record).unwrap();
@@ -186,8 +206,9 @@ mod tests {
     #[test]
     fn older_state_versions_are_discarded() {
         let _guard = env_lock();
-        // v1 keyed the harness by rendered label; v2 carried no pane name. Both would
-        // deserialize into a record that names the wrong thing, so the file goes whole.
+        // v1 keyed the harness by rendered label; v2 carried no pane name; v3 no session.
+        // The filter is by version, not by shape, so each goes whole rather than leaving
+        // the reader to guess which of those a partial record is.
         for (name, contents) in [
             (
                 "v1",
@@ -196,6 +217,10 @@ mod tests {
             (
                 "v2",
                 r#"{"version":2,"panes":{"p1":{"agent":"codex","layout":"agentic-coding","recorded_at":1}}}"#,
+            ),
+            (
+                "v3",
+                r#"{"version":3,"panes":{"p1":{"agent":"codex","layout":"agentic-coding","pane":"agent","recorded_at":1}}}"#,
             ),
         ] {
             let path = fixture(name);
@@ -233,6 +258,7 @@ mod tests {
                 option: None,
                 layout: "agentic-coding".to_owned(),
                 pane: "agent".to_owned(),
+                session: None,
                 recorded_at: 1,
             },
         );
@@ -248,6 +274,7 @@ mod tests {
                 option: Some("Removed".to_owned()),
                 layout: "agentic-coding".to_owned(),
                 pane: "agent".to_owned(),
+                session: None,
                 recorded_at: 1,
             },
         );
@@ -263,6 +290,7 @@ mod tests {
                 option: None,
                 layout: "agentic-coding".to_owned(),
                 pane: "agent".to_owned(),
+                session: None,
                 recorded_at: 1,
             },
         );
@@ -278,6 +306,7 @@ mod tests {
                 option: Some("Removed".to_owned()),
                 layout: "agentic-coding".to_owned(),
                 pane: "agent".to_owned(),
+                session: None,
                 recorded_at: 1,
             },
         );
@@ -293,6 +322,7 @@ mod tests {
                 option: None,
                 layout: "removed-layout".to_owned(),
                 pane: "agent".to_owned(),
+                session: None,
                 recorded_at: 1,
             },
         );
@@ -310,6 +340,7 @@ mod tests {
                 option: None,
                 layout: "agentic-coding".to_owned(),
                 pane: "term".to_owned(),
+                session: None,
                 recorded_at: 1,
             },
         );

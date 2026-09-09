@@ -1,6 +1,6 @@
 use std::env;
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
@@ -10,6 +10,7 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::flows::menu::{popup_viewport, strip_pad, GumMenu, Menu};
+use crate::flows::session;
 use crate::flows::{FlowError, FlowResult, Outcome};
 use crate::herdr::types::Pane;
 use crate::herdr::HerdrClient;
@@ -26,7 +27,7 @@ const MENU_TITLE: &str = "\u{f002a}  Restart Agent";
 const MENU_SUBTITLE: &str = "The agent will relaunch in place.";
 const MENU_HEIGHT: u8 = 8;
 const RESUME_OPTION: &str = "\u{f0709}  resume this session";
-const FRESH_OPTION: &str = "\u{f169f}  start fresh";
+const FRESH_OPTION: &str = "\u{ec58}  start fresh";
 const CANCEL_OPTION: &str = "\u{ea76}  cancel";
 
 // Codex leaves raw mode and Kitty CSI-u enabled, breaking line wrapping and menu arrow keys.
@@ -259,17 +260,19 @@ fn resolve_resume(
     record: Option<&state::LastAgentRecord>,
     config: Option<&Config>,
 ) -> Result<(Option<String>, Option<&'static str>)> {
-    let Some(session) = resume_session(client, &target.pane_id, record)? else {
+    let kind = match (record, config) {
+        (Some(record), Some(config)) => config
+            .agent(&record.agent)
+            .and_then(|agent| agent.kind.as_deref()),
+        _ => None,
+    };
+    let Some(session) = resume_session(client, &target.pane_id, record, kind)? else {
         return Ok((None, Some(NO_SESSION)));
     };
     // A harness whose kind takes no resume argument would swallow the id and start over
     // without a word. Only a record names the agent, so an unpinned pane is trusted.
     let resumable = match (record, config) {
-        (Some(record), Some(config)) => crate::flows::agent::kind_can_resume(
-            config
-                .agent(&record.agent)
-                .and_then(|agent| agent.kind.as_deref()),
-        ),
+        (Some(_), Some(_)) => crate::flows::agent::kind_can_resume(kind),
         _ => true,
     };
     Ok(match resumable {
@@ -278,23 +281,47 @@ fn resolve_resume(
     })
 }
 
-/// Herdr's own report wins over the one the workbench reporter stored, so installing the
-/// official integration later improves accuracy without touching this fallback.
+/// Herdr's own report is tried first so installing its integration later improves accuracy
+/// without touching either fallback.
 fn resume_session(
     client: &dyn HerdrClient,
     pane_id: &str,
     record: Option<&state::LastAgentRecord>,
+    kind: Option<&str>,
 ) -> Result<Option<String>> {
     let pane = client
         .pane_get(json!({ "pane_id": pane_id }))
         .context("failed to read the agent session")?
         .pane;
-    Ok(pane
+    let reported = pane
         .agent_session
+        .as_ref()
         // `kind` says what `value` is, and a transcript path is not what a harness resumes.
         .filter(|session| session.kind == "id")
-        .map(|session| session.value)
-        .or_else(|| record.and_then(|record| record.session.clone())))
+        .map(|session| session.value.clone())
+        .or_else(|| record.and_then(|record| record.session.clone()));
+    Ok(match reported {
+        Some(session) => Some(session),
+        None => {
+            let home = env::var_os("HOME").map(PathBuf::from);
+            home.and_then(|home| sweep_session(&home, &pane, record, kind))
+        }
+    })
+}
+
+/// The launch-time reporter gives up after a minute, but a harness writes its session file
+/// only once its first turn starts, which may be hours after the pane opened.
+fn sweep_session(
+    home: &Path,
+    pane: &Pane,
+    record: Option<&state::LastAgentRecord>,
+    kind: Option<&str>,
+) -> Option<String> {
+    let cwd = pane.cwd.as_deref()?;
+    // The record's stamp is this pane's launch, so the sweep cannot pick up a session that
+    // predates the agent now running in it.
+    let since_ms = record?.recorded_at.saturating_mul(1_000);
+    session::resolve_session(kind?, home, Path::new(cwd), since_ms).map(|session| session.id)
 }
 
 fn should_kill(group: i32, shell: i32) -> bool {
@@ -373,9 +400,11 @@ fn run_confirm() -> Result<Option<RestartMode>> {
 }
 
 fn choose_mode(menu: &mut impl Menu) -> Result<Option<RestartMode>> {
+    // Fresh leads because it is the one row that always does what it says; resume depends on
+    // a session id the menu cannot check for.
     let options = [
-        RESUME_OPTION.to_owned(),
         FRESH_OPTION.to_owned(),
+        RESUME_OPTION.to_owned(),
         CANCEL_OPTION.to_owned(),
     ];
     let Some(selection) = menu.choose(MENU_TITLE, MENU_SUBTITLE, &options, MENU_HEIGHT)? else {
@@ -387,8 +416,8 @@ fn choose_mode(menu: &mut impl Menu) -> Result<Option<RestartMode>> {
     // land in the same arm, so an unexpected answer is a cancel rather than a panic.
     Ok(
         match options.iter().position(|option| *option == selection) {
-            Some(0) => Some(RestartMode::Resume),
-            Some(1) => Some(RestartMode::Fresh),
+            Some(0) => Some(RestartMode::Fresh),
+            Some(1) => Some(RestartMode::Resume),
             _ => None,
         },
     )
@@ -562,14 +591,14 @@ mod tests {
     }
 
     #[test]
-    fn the_menu_always_draws_resume_fresh_and_cancel() {
-        let mut menu = FakeMenu::new([Some(RESUME_OPTION)]);
-        assert_eq!(choose_mode(&mut menu).unwrap(), Some(RestartMode::Resume));
-        // Three rows whatever the pane holds: the popup cannot look a session id up.
-        assert_eq!(menu.options, [[RESUME_OPTION, FRESH_OPTION, CANCEL_OPTION]]);
-
+    fn the_menu_always_draws_fresh_resume_and_cancel() {
         let mut menu = FakeMenu::new([Some(FRESH_OPTION)]);
         assert_eq!(choose_mode(&mut menu).unwrap(), Some(RestartMode::Fresh));
+        // Three rows whatever the pane holds: the popup cannot look a session id up.
+        assert_eq!(menu.options, [[FRESH_OPTION, RESUME_OPTION, CANCEL_OPTION]]);
+
+        let mut menu = FakeMenu::new([Some(RESUME_OPTION)]);
+        assert_eq!(choose_mode(&mut menu).unwrap(), Some(RestartMode::Resume));
 
         // Cancel, escape, and anything gum returned that matches no row all read as cancel.
         let mut menu = FakeMenu::new([Some(CANCEL_OPTION), None, Some("")]);
@@ -613,7 +642,7 @@ mod tests {
         });
         reported.queue_response("pane.get", json!({"pane": pane}));
         assert_eq!(
-            resume_session(&reported, "p2", Some(&stored)).unwrap(),
+            resume_session(&reported, "p2", Some(&stored), None).unwrap(),
             Some("reported-id".to_owned())
         );
 
@@ -623,7 +652,7 @@ mod tests {
             json!({"pane": labelled_pane("p2", "t1", true, "review")}),
         );
         assert_eq!(
-            resume_session(&unreported, "p2", Some(&stored)).unwrap(),
+            resume_session(&unreported, "p2", Some(&stored), None).unwrap(),
             Some("stored-id".to_owned())
         );
 
@@ -632,7 +661,7 @@ mod tests {
             "pane.get",
             json!({"pane": labelled_pane("p2", "t1", true, "review")}),
         );
-        assert_eq!(resume_session(&neither, "p2", None).unwrap(), None);
+        assert_eq!(resume_session(&neither, "p2", None, None).unwrap(), None);
     }
 
     /// `kind` is what says whether `value` is an id or a transcript path, and a path is
@@ -658,8 +687,65 @@ mod tests {
         for (record, expected) in [(Some(&stored), Some("stored-id".to_owned())), (None, None)] {
             let client = FakeClient::default();
             client.queue_response("pane.get", json!({"pane": pane}));
-            assert_eq!(resume_session(&client, "p2", record).unwrap(), expected);
+            assert_eq!(
+                resume_session(&client, "p2", record, None).unwrap(),
+                expected
+            );
         }
+    }
+
+    /// The reporter polls for a minute after launch, but claude writes no transcript until
+    /// its first turn — so a pane prompted later has nothing stored and only this finds it.
+    #[test]
+    fn a_session_written_after_the_reporter_gave_up_is_swept_at_restart() {
+        let home = env::temp_dir().join(format!("workbench-sweep-{}", std::process::id()));
+        let directory = home.join(".claude/projects/-Users-q-Projects-demo");
+        std::fs::create_dir_all(&directory).unwrap();
+        let transcript = directory.join("late-session.jsonl");
+        std::fs::write(&transcript, "{}").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&transcript)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new()
+                    .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(9)),
+            )
+            .unwrap();
+        let pane: Pane =
+            serde_json::from_value(json!({"pane_id": "p2", "cwd": "/Users/q/Projects/demo"}))
+                .unwrap();
+        let stamped = |seconds| state::LastAgentRecord {
+            agent: "claude code".to_owned(),
+            option: None,
+            layout: "agentic-coding".to_owned(),
+            pane: "agent".to_owned(),
+            session: None,
+            recorded_at: seconds,
+        };
+
+        let launched_before = stamped(5);
+        assert_eq!(
+            sweep_session(&home, &pane, Some(&launched_before), Some("claude")),
+            Some("late-session".to_owned())
+        );
+
+        // A stamp later than the transcript belongs to a launch that has written nothing yet.
+        let launched_after = stamped(20);
+        assert_eq!(
+            sweep_session(&home, &pane, Some(&launched_after), Some("claude")),
+            None
+        );
+
+        // No record means no launch stamp to bound the sweep, and no kind means no harness
+        // whose files could be swept.
+        assert_eq!(sweep_session(&home, &pane, None, Some("claude")), None);
+        assert_eq!(
+            sweep_session(&home, &pane, Some(&launched_before), None),
+            None
+        );
+
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// `resume_args` has nothing to append for these kinds, so promising the resume would
@@ -714,7 +800,10 @@ mod tests {
 
         let calls = client.calls.borrow();
         let methods: Vec<&str> = calls.iter().map(|call| call.0.as_str()).collect();
-        assert_eq!(methods, ["pane.get", "pane.process_info", "pane.send_input"]);
+        assert_eq!(
+            methods,
+            ["pane.get", "pane.process_info", "pane.send_input"]
+        );
     }
 
     #[test]

@@ -70,7 +70,25 @@ enum AgentCommand {
     RestartWorker {
         #[arg(long)]
         pane: String,
+        #[arg(long)]
+        resume: bool,
     },
+    #[command(hide = true)]
+    SessionReport(SessionReportArgs),
+}
+
+#[derive(Debug, Args)]
+struct SessionReportArgs {
+    #[arg(long)]
+    pane: String,
+    #[arg(long)]
+    agent: String,
+    #[arg(long)]
+    kind: String,
+    #[arg(long)]
+    cwd: PathBuf,
+    #[arg(long)]
+    since: u64,
 }
 
 #[derive(Debug, Args)]
@@ -86,6 +104,9 @@ struct LaunchArgs {
     no_layout: bool,
     #[arg(long, hide = true)]
     restart: bool,
+    /// Resume this session id instead of starting the harness fresh.
+    #[arg(long, hide = true)]
+    resume: Option<String>,
     #[arg(long)]
     layout: Option<String>,
     /// Which agent pane of the layout to launch. Defaults to the layout's first.
@@ -167,6 +188,11 @@ impl Cli {
             Command::Agent {
                 command: AgentCommand::Restart | AgentCommand::RestartWorker { .. },
             } => Channel::Notification("Agent restart failed"),
+            // The reporter is detached with null stdio: a notification would be the only
+            // thing it could say, and a heuristic miss is not worth interrupting for.
+            Command::Agent {
+                command: AgentCommand::SessionReport(_),
+            } => Channel::Stderr { uses_herdr: true },
             Command::Project {
                 command: ProjectCommand::Pick,
             } => Channel::Notification("Project picker"),
@@ -220,6 +246,7 @@ impl Cli {
                 AgentCommand::Inject(_) => "agent inject",
                 AgentCommand::Restart => "agent restart",
                 AgentCommand::RestartWorker { .. } => "agent restart-worker",
+                AgentCommand::SessionReport(_) => "agent session-report",
             },
             Command::Project { command } => match command {
                 ProjectCommand::Pick => "project pick",
@@ -273,6 +300,7 @@ impl Cli {
                             worktree: args.worktree,
                             no_layout: args.no_layout,
                             restart: args.restart,
+                            resume: args.resume,
                             layout: args.layout,
                             pane: args.pane,
                         },
@@ -295,10 +323,28 @@ impl Cli {
                     let client = client.context("Herdr client is required for agent restart")?;
                     return flows::restart::confirm_restart(client);
                 }
-                AgentCommand::RestartWorker { pane } => {
+                AgentCommand::RestartWorker { pane, resume } => {
                     let client =
                         client.context("Herdr client is required for agent restart worker")?;
-                    return flows::restart::restart_worker(client, &pane);
+                    let mode = match resume {
+                        true => flows::restart::RestartMode::Resume,
+                        false => flows::restart::RestartMode::Fresh,
+                    };
+                    return flows::restart::restart_worker(client, &pane, mode);
+                }
+                AgentCommand::SessionReport(args) => {
+                    let client =
+                        client.context("Herdr client is required for agent session report")?;
+                    return flows::session::report(
+                        client,
+                        &flows::session::ReportOptions {
+                            pane_id: args.pane,
+                            agent: args.agent,
+                            kind: args.kind,
+                            cwd: args.cwd,
+                            since_ms: args.since,
+                        },
+                    );
                 }
             },
             Command::Project { command } => match command {
@@ -691,6 +737,8 @@ mod tests {
                 "--worktree",
                 "--no-layout",
                 "--restart",
+                "--resume",
+                "session-1",
             ],
             vec![
                 "workbench",
@@ -704,7 +752,29 @@ mod tests {
                 "--worktree",
             ],
             vec!["workbench", "agent", "restart"],
-            vec!["workbench", "agent", "restart-worker", "--pane", "w1:p1"],
+            vec![
+                "workbench",
+                "agent",
+                "restart-worker",
+                "--pane",
+                "w1:p1",
+                "--resume",
+            ],
+            vec![
+                "workbench",
+                "agent",
+                "session-report",
+                "--pane",
+                "w1:p1",
+                "--agent",
+                "claude code",
+                "--kind",
+                "claude",
+                "--cwd",
+                "/tmp/project",
+                "--since",
+                "1757416563000",
+            ],
             vec!["workbench", "project", "pick"],
             vec!["workbench", "project", "source", "query"],
             vec!["workbench", "project", "scan"],
@@ -872,6 +942,24 @@ mod tests {
                 vec!["workbench", "tab", "new"],
                 Channel::Notification("New tab"),
             ),
+            (
+                vec![
+                    "workbench",
+                    "agent",
+                    "session-report",
+                    "--pane",
+                    "w1:p1",
+                    "--agent",
+                    "codex",
+                    "--kind",
+                    "codex",
+                    "--cwd",
+                    "/tmp/project",
+                    "--since",
+                    "1",
+                ],
+                Channel::Stderr { uses_herdr: true },
+            ),
         ];
 
         for (argv, expected) in cases {
@@ -996,6 +1084,49 @@ mod tests {
         assert!(client.calls.borrow().is_empty());
     }
 
+    /// The flag is the only thing that decides between resuming and starting over, and a
+    /// Resume is the only mode that reads the pane's session back.
+    #[test]
+    fn the_resume_flag_is_what_makes_the_worker_resolve_a_session() {
+        for (argv, reads) in [
+            (
+                vec!["workbench", "agent", "restart-worker", "--pane", "p1"],
+                1,
+            ),
+            (
+                vec![
+                    "workbench",
+                    "agent",
+                    "restart-worker",
+                    "--pane",
+                    "p1",
+                    "--resume",
+                ],
+                2,
+            ),
+        ] {
+            let client = herdr::FakeClient::default();
+            for _ in 0..2 {
+                client.queue_response(
+                    "pane.get",
+                    serde_json::json!({"pane": {
+                        "pane_id": "p1", "tab_id": "t1", "agent": {}, "label": "review"
+                    }}),
+                );
+            }
+            client.queue_response(
+                "pane.process_info",
+                serde_json::json!({"process_info": null}),
+            );
+
+            Cli::parse_from(&argv).run(Some(&client)).unwrap();
+
+            let calls = client.calls.borrow();
+            let gets = calls.iter().filter(|call| call.0 == "pane.get").count();
+            assert_eq!(gets, reads, "{argv:?}");
+        }
+    }
+
     #[test]
     fn restart_worker_reports_resolve_kill_and_reinject_failures_once() {
         let clients = [
@@ -1039,7 +1170,8 @@ mod tests {
         ];
 
         for client in clients {
-            let result = flows::restart::restart_worker(&client, "p1");
+            let result =
+                flows::restart::restart_worker(&client, "p1", flows::restart::RestartMode::Fresh);
             assert_eq!(
                 handle_flow_result(&client, "Agent restart failed", result),
                 ExitCode::FAILURE

@@ -34,8 +34,9 @@ pub struct ReportOptions {
     pub since_ms: u64,
 }
 
-/// A heuristic: two agents launched into one cwd at once — which the `pair` layout does
-/// — can be credited each other's session, and `since_ms` only narrows that window.
+/// A heuristic: two agents launched into one cwd within the same window — which the `pair`
+/// layout does — can still be credited each other's session. Creation time is what keeps an
+/// agent that was already running there out of the answer.
 pub fn resolve_session(
     kind: &str,
     home: &Path,
@@ -165,8 +166,8 @@ fn claude_slug(cwd: &Path) -> String {
         .collect()
 }
 
-/// Matching files modified after `since_ms`, newest first. The mtime filter runs before
-/// any file is opened, which is what keeps a poll over thousands of rollouts affordable.
+/// Matching files created after `since_ms`, newest first. The stamp is read before any
+/// file is opened, which is what keeps a poll over thousands of rollouts affordable.
 fn files_newer_than(
     directory: &Path,
     since_ms: u64,
@@ -203,17 +204,19 @@ fn collect_newer(
         if !file_type.is_file() || !matches(&path) {
             continue;
         }
-        let Some(modified) = entry
+        // Created, not modified: a session already running in this cwd keeps its transcript
+        // newer than any launch stamp, so modification time claims it for every new pane.
+        let Some(created) = entry
             .metadata()
             .ok()
-            .and_then(|metadata| metadata.modified().ok())
-            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+            .and_then(|metadata| metadata.created().ok())
+            .and_then(|created| created.duration_since(UNIX_EPOCH).ok())
             .map(|elapsed| elapsed.as_millis() as u64)
         else {
             continue;
         };
-        if modified > since_ms {
-            found.push((path, modified));
+        if created > since_ms {
+            found.push((path, created));
         }
     }
 }
@@ -221,6 +224,7 @@ fn collect_newer(
 #[cfg(test)]
 mod tests {
     use std::fs::{File, FileTimes};
+    use std::os::macos::fs::FileTimesExt;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
@@ -245,13 +249,21 @@ mod tests {
 
         /// Writes a file and pins its mtime, so "newer than `--since`" is asserted
         /// against a fixed clock rather than however fast the test ran.
-        fn write_at(&self, path: &str, contents: &str, mtime_ms: u64) {
+        /// Stamps creation, which is what the sweep reads, and modification with it so a
+        /// fixture cannot pass by accident on the wrong one.
+        fn write_at(&self, path: &str, contents: &str, created_ms: u64) {
+            self.write_stamped(path, contents, created_ms, created_ms);
+        }
+
+        fn write_stamped(&self, path: &str, contents: &str, created_ms: u64, modified_ms: u64) {
             let path = self.home.join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(&path, contents).unwrap();
             let file = File::options().write(true).open(&path).unwrap();
             file.set_times(
-                FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_millis(mtime_ms)),
+                FileTimes::new()
+                    .set_created(UNIX_EPOCH + Duration::from_millis(created_ms))
+                    .set_modified(UNIX_EPOCH + Duration::from_millis(modified_ms)),
             )
             .unwrap();
         }
@@ -270,6 +282,32 @@ mod tests {
             "payload": {"id": id, "cwd": cwd},
         })
         .to_string()
+    }
+
+    /// An agent already running in this cwd keeps writing, so modification time made its
+    /// live session the newest file and handed it to every new pane.
+    #[test]
+    fn a_session_already_running_in_this_cwd_is_not_claimed() {
+        let fixture = Fixture::new("claude-running");
+        let slug = "-Users-q-Projects-demo";
+        // Started long before this pane, still being written to.
+        fixture.write_stamped(
+            &format!(".claude/projects/{slug}/live-elsewhere.jsonl"),
+            "{}",
+            1_000,
+            9_000,
+        );
+        fixture.write_at(&format!(".claude/projects/{slug}/ours.jsonl"), "{}", 5_000);
+
+        let resolved = resolve_session(
+            "claude",
+            &fixture.home,
+            Path::new("/Users/q/Projects/demo"),
+            4_000,
+        )
+        .unwrap();
+
+        assert_eq!(resolved.id, "ours");
     }
 
     #[test]

@@ -19,7 +19,7 @@ The plugin exposes ten actions. Keys are yours to choose. See [Bind it](#bind-it
 | `project` | Fuzzy-find a project; focus its workspace or create one. Typing widens the list past the registry, into `zoxide` and a live sweep of `projects_root` |
 | `project-review` | Review the project registry in a popup — build it the first time, re-review it after that |
 | `ssh` | Fuzzy-find an SSH host; connect in a dedicated tab that closes itself on disconnect |
-| `restart-agent` | Confirm, then relaunch the agent **in place** — the yazi/terminal side panes survive |
+| `restart-agent` | Resume the session or start fresh, then relaunch the agent **in place** — the yazi/terminal side panes survive |
 | `dashboard` | Open a tab that starts Claude with the usage-dashboard prompt |
 | `even-out-panes` | Even out the split ratios in the focused pane's row or column, leaving any orthogonal split (e.g. a Files/term stack in one slot) untouched |
 

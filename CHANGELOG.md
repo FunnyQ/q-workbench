@@ -5,6 +5,40 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Restarting an agent now asks: resume this session, start fresh, or cancel. The
+  three rows always draw, since the popup closes before it could check whether a
+  session id exists; the detached worker resolves it, preferring Herdr's own
+  `agent_session` over the id the workbench recorded, and reading it before the
+  harness is killed. A Resume that ends up with no usable id — none recorded, one
+  reported as a transcript path, or an agent whose harness takes no resume
+  argument — falls back to a fresh start and says why in a notification instead
+  of silently starting over.
+- Every agent pane spawns a detached reporter that finds the session file the
+  agent wrote, reports it to Herdr through `pane.report_agent_session`, and
+  stores the id for restart. It matches on the pane's cwd and the launch time,
+  so two agents sharing a cwd can still be credited each other's session, and it
+  gives up after a minute of finding nothing.
+- A new optional `kind` on `[[agents]]` names Herdr's agent kind. It decides
+  whether the pane is started through `agent.start`, which makes it an agent
+  Herdr can see, and which session files the reporter reads. Because
+  `agent.start` derives the executable from the kind, an agent whose `command`
+  is anything but that bare executable — or an option that overrides `command` —
+  keeps the old typed-argv start.
+
+### Changed
+- The popup builds a tab in one `layout.apply` instead of a `tab.create` plus a
+  split, rename, and input call per pane. Apply is atomic, so a structure that
+  fails to build leaves nothing behind; a pane that fails to start afterwards
+  still closes the tab and reports. The new tab is focused as soon as it exists,
+  rather than after every harness has become ready. The in-pane `agent launch`
+  path keeps its split loop: apply destroys the pane it is given, which would
+  kill the launcher before its `exec`.
+- `MINIMUM_PROTOCOL` is now 22. Herdr older than that no longer runs the plugin
+  at all, which is the deliberate cost of the three methods above.
+
 ## [0.8.1] - 2026-08-21
 
 _tracks tag `v0.8.1`_

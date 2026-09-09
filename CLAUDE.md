@@ -32,7 +32,7 @@ The new-tab menu lists layouts in config order — `default_tab_layout` selects 
 
 A layout may declare no agent pane, one, or several, at any position. Each unpinned agent pane runs its own harness and model menu, in the order the panes are written, and the usage menu runs once afterwards for the tab. A layout with no agent pane runs none of them; it asks for a plain tab name instead, where submitting nothing keeps the layout's own label and escaping cancels. Reach the agent panes through `TabLayout::agent_panes`; nothing may assume `panes[0]` runs a harness.
 
-All validation runs at config load, before the first socket call. The popup path closes its tab when construction fails, but the in-pane path has no such cleanup, so deferred validation could leave a half-built layout on screen.
+All validation runs at config load, before the first socket call. An agent's `kind` is the exception the plugin cannot check: the list of kinds is Herdr's, so a mistyped one is only refused by `agent.start`, which closes the tab it was building and reports. Layout construction is not atomic either — the popup path closes its tab on failure and the in-pane path splits pane by pane — so deferred validation could leave a half-built layout on screen.
 
 ### Herdr socket contract
 
@@ -42,15 +42,29 @@ Requests and responses are newline-delimited JSON. A response can arrive in mult
 
 `pane.send_input` replaces the old run-command path. Its `keys` field uses Herdr's key vocabulary: use `"enter"` to submit text. `"Enter"` and `"return"` are accepted, but `"cr"` is rejected. Sending `text` with `keys: ["enter"]` types into the pane's interactive shell and executes it.
 
+`layout.apply` builds a whole tab — structure, labels, cwd, env — from one tree in one call, and it is atomic, so a failure leaves no half-built tab behind. It does not adopt existing panes: handing it a tab id rebuilds that tab, losing scrollback and issuing fresh pane and tab ids, so it can create a tab but never edit the one the caller lives in. Its reply carries Herdr's pane ids and none of our pane names, so in-order traversal position is the only link back.
+
+`agent.start` starts a harness Herdr recognises, which is what makes the pane an agent Herdr can see and report sessions for. It requires a pane already sitting at its interactive shell prompt, and it derives the executable from `kind` and appends only the args — so it can stand in only for an agent whose `command` is that bare executable. An option that overrides `command`, an agent command carrying fixed arguments, and an agent command naming a different binary all keep the typed-argv path; otherwise the same config would launch two different argvs depending on which path built the pane.
+
+`pane.report_agent_session` is how a session id reaches Herdr's snapshot. `MINIMUM_PROTOCOL` is 22 for these three methods: the constant now also rises when the plugin starts needing a method older servers never had, not only when a protocol drops something the plugin reads.
+
 ### Agent launch and restart
 
 The popup gathers any choices that the selected layout leaves open before it creates the final layout. The launcher deliberately defers non-agent panes until every menu is complete. Splitting sooner resizes the agent pane while menus are drawing, and a chosen worktree must determine the cwd of every pane.
 
+The popup path builds its tab with a single `layout.apply`: `build_layout_tree` folds the layout's flat pane list into a tree, and the reply names every pane at once. Only that call is atomic. Focusing the tab and starting what each pane runs happen afterwards, one call at a time, so a failure there closes the tab it built and says so — an `agent.start` that never reaches ready would otherwise strand a tab with no agent in it. The focus comes before the starts, because `agent.start` blocks until its harness is ready and the caller would sit on the old tab until then.
+
+The in-pane path keeps its `pane.split` loop, and the two construction paths are a deliberate cost of the atomic popup build. `layout.apply` destroys the panes it is given, so it would kill the launcher before its `exec` ever ran, and `agent.start` needs a pane already at its shell prompt — the launcher itself is what occupies that prompt. Neither can serve a pane the plugin is running inside.
+
 The injected launcher ends with `exec` so the harness replaces the launcher process. Restart depends on this: terminating the foreground harness returns the pane to its interactive shell, then the restart worker can inject a new launcher without destroying the side panes.
 
-Only the root agent pane is reachable that way. `agent launch` replaces the process of the pane it runs in, so it treats that pane as the tab root and rejects a layout whose root is not an agent pane; such layouts open from the popup instead. A non-root agent pane is started the way a command pane is, by typing its quoted argv into the split.
+Only the root agent pane is reachable that way. `agent launch` replaces the process of the pane it runs in, so it treats that pane as the tab root and rejects a layout whose root is not an agent pane; such layouts open from the popup instead. Every pane the plugin does not `exec` into is started after it exists: through `agent.start` when the agent declares a `kind` whose bare executable is its whole command, and otherwise by typing its quoted argv into the pane, the way a command pane is started.
 
 Restart state is per pane id, and each record carries the layout pane it was launched as. Without that name a side agent pane would relaunch under the first agent pane's pin. Bump `STATE_VERSION` when the record's shape changes; a stale file is discarded whole rather than read into the new shape.
+
+The restart menu always draws all three rows — resume, fresh, cancel — because deciding whether a session id exists would mean a socket call, and the popup pane dies the moment the menu returns. Resolution is the detached worker's: it reads Herdr's `agent_session` first and the state record's own `session` second, and a Resume that ends up with nothing degrades to a fresh start reported through `Outcome::Notice` rather than starting over in silence. Two things end up with nothing besides an absent id: an `agent_session` whose `kind` is `path` rather than `id`, which is a transcript and not something a harness resumes, and an agent whose kind takes no resume argument at all. The worker reads the session **before** it kills the harness, because Herdr binds a reported session to the agent it detected and clears it with that agent.
+
+That stored session id comes from a reporter spawned detached for every agent pane: `launch` spawns its own just before `exec`, since after `exec` the launcher no longer exists, and `start_pane` spawns one for every pane the plugin does not `exec` into. Without the second the popup — the main entry point — would record nothing, and a `pair` layout's side agent could never resume. The reporter polls the kind's session files for one written under this pane's cwd after launch, which is a heuristic: two agents sharing a cwd — what the `pair` layout does — can be credited each other's session, and the launch timestamp only narrows that window. It also gives up after a minute, so an agent left idle at its prompt longer than that records nothing — claude writes no transcript until the first turn. Herdr's own `agent_session` wins on read, so installing Herdr's integration later improves accuracy without touching the fallback.
 
 Restart injection crosses a shell boundary. `pane.send_input` sends command text, then the pane's shell parses it. Build reinjection commands with `src/shell.rs`; quote every executable path and argument separately so spaces, quotes, and shell metacharacters cannot change argv.
 

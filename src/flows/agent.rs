@@ -9,7 +9,10 @@ use serde_json::{json, Map, Value};
 
 use crate::config::{render_label, Agent, Config, LayoutPane, PaneType, TabLayout};
 use crate::flows::menu::{popup_viewport, strip_pad, GumMenu, InputIndent, Menu};
-use crate::flows::{invoking_pane_cwd, nonempty_env, FlowError, FlowResult, Outcome, PaneCwd};
+use crate::flows::{
+    invoking_pane_cwd, nonempty_env, session, FlowError, FlowResult, Outcome, PaneCwd,
+};
+use crate::herdr::types::LayoutNode;
 use crate::herdr::HerdrClient;
 use crate::shell::build_command;
 use crate::state;
@@ -44,6 +47,9 @@ pub struct LaunchOptions {
     pub worktree: bool,
     pub no_layout: bool,
     pub restart: bool,
+    /// The session the restarted harness should pick up. Only the pane being restarted
+    /// resumes; any other agent pane the layout builds still starts fresh.
+    pub resume: Option<String>,
     pub layout: Option<String>,
     /// Which agent pane of the layout this launch is. Restart names the pane it is
     /// replacing; without it the layout's first agent pane drives the launch.
@@ -118,10 +124,20 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
             None => choice = without_worktree(choice, &repo_root),
         }
     }
-    let launch = choice
+    let mut launch = choice
         .agent(Some(&target.name))
         .expect("the target pane was asked about")
         .clone();
+    // Rebuilt rather than threaded through the menus: resume belongs to this one pane,
+    // and the menus decide for every agent pane the layout builds.
+    if let Some(session) = &options.resume {
+        launch.launch = build_launch(
+            config,
+            &launch.agent_name,
+            launch.option_name.as_deref(),
+            Some(session),
+        )?;
+    }
     apply_launch_layout(client, layout, options, &choice)?;
     std::env::set_current_dir(&choice.project_dir)
         .with_context(|| format!("failed to enter {}", choice.project_dir.display()))?;
@@ -129,8 +145,18 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
         .status()
         .context("failed to clear the terminal before launching the agent")?;
 
-    let record = last_agent_record(&launch, layout)?;
+    // Narrowest possible window: the harness this pane is about to become writes its
+    // session file after the exec below.
+    let since_ms = session::now_ms();
+    let mut record = last_agent_record(&launch, layout)?;
+    // A resume already knows its session, and losing it here would leave the next resume
+    // with nothing to fall back on when the reporter finds no file.
+    record.session = options.resume.clone();
     let _ = state::write_state(client, &options.pane_id, &record);
+    // exec destroys this process, so the only moment a reporter can be started is here.
+    if let Some(report) = reporter_options(&launch, &choice, &options.pane_id, since_ms) {
+        let _ = session::spawn_reporter(&report);
+    }
 
     // A child wrapper breaks restart-in-place. exec only returns when execvp fails.
     let error = Command::new(&launch.launch[0])
@@ -296,52 +322,235 @@ fn build_side_panes(
                 pane.name
             ));
         }
-        // An agent pane that names no label says which harness it is running instead;
-        // "codex" beside "claude code" is what tells two agent panes apart.
-        let fallback = (pane.pane_type == PaneType::Agent)
-            .then(|| choice.agent(Some(&pane.name)))
-            .flatten()
-            .map(|agent| render_label(pane.icon.as_deref(), &agent.agent_name));
-        let label = pane
-            .label
-            .as_deref()
-            .map(|label| render_label(pane.icon.as_deref(), label))
-            .or(fallback);
-        if let Some(label) = label {
+        let label = pane_label(pane, choice);
+        if let Some(label) = &label {
             client
                 .pane_rename(json!({ "pane_id": pane_id, "label": label }))
                 .with_context(|| format!("failed to rename pane {}", pane.name))?;
         }
-
-        // The harness is typed into the split pane's shell exactly as a command pane's
-        // line is; only the root agent pane replaces a process with exec.
-        let input = match pane.pane_type {
-            PaneType::Command => pane.command.clone(),
-            PaneType::Agent => choice
-                .agent(Some(&pane.name))
-                .map(|agent| build_command(&agent.launch)),
-            PaneType::Shell => None,
-        };
-        if let Some(input) = input {
-            client
-                .pane_send_input(json!({
-                    "pane_id": pane_id,
-                    "text": input,
-                    "keys": ["enter"],
-                }))
-                .with_context(|| format!("failed to start command in pane {}", pane.name))?;
-            if pane.pane_type == PaneType::Agent {
-                let record = last_agent_record(
-                    choice.agent(Some(&pane.name)).expect("input was built"),
-                    layout,
-                )?;
-                let _ = state::write_state(client, &pane_id, &record);
-            }
-        }
+        start_pane(
+            client,
+            layout,
+            pane,
+            &pane_id,
+            choice,
+            label.as_deref().unwrap_or(&pane.name),
+        )?;
         pane_ids.insert(pane.name.as_str(), pane_id.clone());
         previous_pane_id = pane_id;
     }
     Ok(())
+}
+
+/// The label a pane of a whole tab wears: the tab root wears the usage label the tab
+/// itself is named after, every other pane its own.
+fn tab_pane_label(index: usize, pane: &LayoutPane, choice: &AgentChoice) -> Option<String> {
+    match index {
+        0 => Some(choice.label.clone()),
+        _ => pane_label(pane, choice),
+    }
+}
+
+/// Start what one pane runs, and record an agent pane's choice for restart.
+///
+/// Herdr starts a harness it knows the kind of, which is what makes the pane an agent it
+/// can see; everything else — a command pane's shell line, or an option that overrides the
+/// executable — is typed into the pane's interactive shell instead. `name` is the label the
+/// pane already wears, so an agent Herdr starts is listed under the same name.
+fn start_pane(
+    client: &dyn HerdrClient,
+    layout: &TabLayout,
+    pane: &LayoutPane,
+    pane_id: &str,
+    choice: &AgentChoice,
+    name: &str,
+) -> Result<()> {
+    if pane.pane_type == PaneType::Agent {
+        let Some(agent) = choice.agent(Some(&pane.name)) else {
+            return Ok(());
+        };
+        // Read before the harness starts: a transcript written during startup would
+        // otherwise be older than the window the reporter searches.
+        let since_ms = session::now_ms();
+        match &agent.start {
+            Some(start) => {
+                client
+                    .agent_start(json!({
+                        "pane_id": pane_id,
+                        "name": name,
+                        "kind": start.kind,
+                        "args": start.args,
+                    }))
+                    .with_context(|| format!("failed to start the agent in pane {}", pane.name))?;
+            }
+            None => send_pane_input(client, pane_id, &build_command(&agent.launch), &pane.name)?,
+        }
+        let record = last_agent_record(agent, layout)?;
+        let _ = state::write_state(client, pane_id, &record);
+        // Every agent pane the plugin does not `exec` into reports from here; the one it
+        // does reports from `launch`, which has no process left after the exec.
+        if let Some(options) = reporter_options(agent, choice, pane_id, since_ms) {
+            let _ = session::spawn_reporter(&options);
+        }
+        return Ok(());
+    }
+    if let (PaneType::Command, Some(command)) = (pane.pane_type, &pane.command) {
+        send_pane_input(client, pane_id, command, &pane.name)?;
+    }
+    Ok(())
+}
+
+/// What the session reporter needs for one agent pane, or None for an agent whose kind
+/// names no session files to poll.
+fn reporter_options(
+    agent: &PaneAgent,
+    choice: &AgentChoice,
+    pane_id: &str,
+    since_ms: u64,
+) -> Option<session::ReportOptions> {
+    Some(session::ReportOptions {
+        pane_id: pane_id.to_owned(),
+        agent: agent.agent_name.clone(),
+        kind: agent.kind.clone()?,
+        cwd: choice.project_dir.clone(),
+        since_ms,
+    })
+}
+
+fn send_pane_input(
+    client: &dyn HerdrClient,
+    pane_id: &str,
+    text: &str,
+    pane_name: &str,
+) -> Result<()> {
+    client
+        .pane_send_input(json!({
+            "pane_id": pane_id,
+            "text": text,
+            "keys": ["enter"],
+        }))
+        .with_context(|| format!("failed to start command in pane {pane_name}"))?;
+    Ok(())
+}
+
+fn pane_label(pane: &LayoutPane, choice: &AgentChoice) -> Option<String> {
+    // An agent pane that names no label says which harness it is running instead;
+    // "codex" beside "claude code" is what tells two agent panes apart.
+    let fallback = (pane.pane_type == PaneType::Agent)
+        .then(|| choice.agent(Some(&pane.name)))
+        .flatten()
+        .map(|agent| render_label(pane.icon.as_deref(), &agent.agent_name));
+    pane.label
+        .as_deref()
+        .map(|label| render_label(pane.icon.as_deref(), label))
+        .or(fallback)
+}
+
+/// One node of the fold before it becomes a `LayoutNode`; a leaf names the layout pane it
+/// stands for, and a split refers back into the arena that holds it.
+enum FoldNode {
+    Leaf(usize),
+    Split {
+        direction: &'static str,
+        ratio: f64,
+        first: usize,
+        second: usize,
+    },
+}
+
+/// Fold a layout's flat pane list into the tree `layout.apply` takes, alongside its leaves'
+/// layout pane names in traversal order.
+///
+/// Each pane takes the place of the leaf it splits from, pushing that leaf down as the
+/// split's first child. `split_from` is validated at load to name an earlier pane, so no
+/// step can miss its slot or close a cycle.
+fn build_layout_tree<'a>(
+    layout: &'a TabLayout,
+    choice: &AgentChoice,
+    cwd: &str,
+) -> (LayoutNode, Vec<&'a str>) {
+    let mut arena = vec![FoldNode::Leaf(0)];
+    let mut slots = BTreeMap::from([(layout.panes[0].name.as_str(), 0usize)]);
+    let mut previous = layout.panes[0].name.as_str();
+    for (index, pane) in layout.panes.iter().enumerate().skip(1) {
+        let target = pane.split_from.as_deref().unwrap_or(previous);
+        let slot = *slots.get(target).expect("validated at load");
+        let FoldNode::Leaf(target_index) = arena[slot] else {
+            unreachable!("a slot only ever holds a leaf");
+        };
+        let moved = arena.len();
+        arena.push(FoldNode::Leaf(target_index));
+        let added = arena.len();
+        arena.push(FoldNode::Leaf(index));
+        arena[slot] = FoldNode::Split {
+            direction: match pane.direction.expect("validated at load") {
+                crate::config::Direction::Right => "right",
+                crate::config::Direction::Down => "down",
+            },
+            // Config ratios are self-describing as each new pane's share, while Herdr's
+            // ratio is the original pane's share after the split. For example, `files`
+            // uses 0.62 so Files takes 62%, the agent keeps 38%, and Herdr receives 38%.
+            ratio: 1.0 - pane.ratio.expect("validated at load"),
+            first: moved,
+            second: added,
+        };
+        slots.insert(target, moved);
+        slots.insert(pane.name.as_str(), added);
+        previous = pane.name.as_str();
+    }
+    let mut names = Vec::with_capacity(layout.panes.len());
+    let root = materialise_layout(&arena, 0, layout, choice, cwd, &mut names);
+    (root, names)
+}
+
+fn materialise_layout<'a>(
+    arena: &[FoldNode],
+    index: usize,
+    layout: &'a TabLayout,
+    choice: &AgentChoice,
+    cwd: &str,
+    names: &mut Vec<&'a str>,
+) -> LayoutNode {
+    match &arena[index] {
+        FoldNode::Leaf(pane_index) => {
+            let pane = &layout.panes[*pane_index];
+            names.push(pane.name.as_str());
+            LayoutNode::Pane {
+                pane_id: None,
+                cwd: Some(cwd.to_owned()),
+                env: pane.env.clone(),
+                label: tab_pane_label(*pane_index, pane, choice),
+                command: None,
+            }
+        }
+        FoldNode::Split {
+            direction,
+            ratio,
+            first,
+            second,
+        } => LayoutNode::Split {
+            direction: (*direction).to_owned(),
+            ratio: *ratio,
+            first: Box::new(materialise_layout(
+                arena, *first, layout, choice, cwd, names,
+            )),
+            second: Box::new(materialise_layout(
+                arena, *second, layout, choice, cwd, names,
+            )),
+        },
+    }
+}
+
+/// Every leaf of a Herdr layout tree, left to right.
+fn leaf_pane_ids(node: &LayoutNode) -> Vec<String> {
+    match node {
+        LayoutNode::Pane { pane_id, .. } => vec![pane_id.clone().unwrap_or_default()],
+        LayoutNode::Split { first, second, .. } => {
+            let mut ids = leaf_pane_ids(first);
+            ids.extend(leaf_pane_ids(second));
+            ids
+        }
+    }
 }
 
 fn pane_viewport(client: &dyn HerdrClient, pane_id: &str) -> (u16, u16) {
@@ -431,38 +640,20 @@ fn adopt_invoking_pane_cwd(client: &dyn HerdrClient) -> Result<()> {
     Ok(())
 }
 
+/// Build the tab's whole structure in one `layout.apply`, then start what each pane runs.
+///
+/// Only apply is atomic, so only its failure leaves nothing to close; a harness that never
+/// becomes ready would otherwise strand a built tab with no agent in it.
 fn create_popup_tab(
     client: &dyn HerdrClient,
     layout: &TabLayout,
     choice: &AgentChoice,
     workspace_id: Option<String>,
 ) -> Result<()> {
-    let cwd = choice.project_dir.to_string_lossy();
-    let mut params = Map::from_iter([
-        ("label".to_owned(), json!(choice.label)),
-        ("cwd".to_owned(), json!(cwd)),
-        ("focus".to_owned(), json!(false)),
-    ]);
-    if !layout.panes[0].env.is_empty() {
-        params.insert("env".to_owned(), json!(layout.panes[0].env));
-    }
-    if let Some(workspace_id) = workspace_id {
-        params.insert("workspace_id".to_owned(), json!(workspace_id));
-    }
-    let created = client
-        .tab_create(Value::Object(params))
-        .context("failed to create agent tab")?;
-    let tab_id = created.tab.tab_id;
-    let root_pane = created.root_pane.pane_id;
-    let result = if tab_id.is_empty() || root_pane.is_empty() {
-        Err(anyhow!("tab.create returned an empty tab or pane id"))
-    } else {
-        build_popup_tab(client, layout, choice, &tab_id, &root_pane)
-    };
-    if let Err(error) = result {
-        if !tab_id.is_empty() {
-            let _ = client.tab_close(json!({ "tab_id": tab_id }));
-        }
+    let applied = apply_popup_layout(client, layout, choice, workspace_id)
+        .map_err(|error| FlowError::titled("Agent tab failed", error))?;
+    if let Err(error) = fill_popup_tab(client, layout, choice, &applied) {
+        let _ = client.tab_close(json!({ "tab_id": applied.tab_id }));
         return Err(FlowError::prefixed(
             "Agent tab failed",
             "The incomplete tab was closed.",
@@ -473,40 +664,74 @@ fn create_popup_tab(
     Ok(())
 }
 
-fn build_popup_tab(
+/// The tab `layout.apply` built, with Herdr's pane ids under our own layout pane names.
+struct AppliedTab {
+    tab_id: String,
+    pane_ids: BTreeMap<String, String>,
+}
+
+fn apply_popup_layout(
     client: &dyn HerdrClient,
     layout: &TabLayout,
     choice: &AgentChoice,
-    tab_id: &str,
-    root_pane: &str,
-) -> Result<()> {
-    client
-        .pane_rename(json!({ "pane_id": root_pane, "label": choice.label }))
-        .context("failed to rename agent pane")?;
-    client
-        .tab_rename(json!({ "tab_id": tab_id, "label": choice.label }))
-        .context("failed to rename agent tab")?;
-    build_side_panes(client, layout, choice, root_pane)?;
-
-    // The root pane runs the layout's first agent only when the layout puts one there.
-    // A shell or command root is left as Herdr created it, and its agents, if any, were
-    // started by the splits above.
-    let root_agent = choice.agent(Some(&layout.panes[0].name));
-    if let Some(agent) = root_agent {
-        client
-            .pane_send_input(json!({
-                "pane_id": root_pane,
-                "text": build_command(&agent.launch),
-                "keys": ["enter"],
-            }))
-            .context("failed to start agent")?;
+    workspace_id: Option<String>,
+) -> Result<AppliedTab> {
+    let cwd = choice.project_dir.to_string_lossy();
+    let (root, names) = build_layout_tree(layout, choice, cwd.as_ref());
+    let mut params = Map::from_iter([
+        (
+            "root".to_owned(),
+            serde_json::to_value(&root).context("failed to encode the tab layout")?,
+        ),
+        ("tab_label".to_owned(), json!(choice.label)),
+        ("focus".to_owned(), json!(false)),
+    ]);
+    if let Some(workspace_id) = workspace_id {
+        params.insert("workspace_id".to_owned(), json!(workspace_id));
     }
+    let applied = client
+        .layout_apply(Value::Object(params))
+        .context("failed to create agent tab")?
+        .layout;
+
+    // Herdr's leaves carry none of our names, so traversal position is the only link back.
+    let pane_ids = leaf_pane_ids(&applied.root);
+    if pane_ids.len() != names.len() {
+        return Err(anyhow!(
+            "layout.apply returned {} panes for a layout of {} panes",
+            pane_ids.len(),
+            names.len()
+        ));
+    }
+    if pane_ids.iter().any(String::is_empty) {
+        return Err(anyhow!("layout.apply returned an empty pane id"));
+    }
+    Ok(AppliedTab {
+        tab_id: applied.tab_id,
+        pane_ids: names
+            .into_iter()
+            .map(str::to_owned)
+            .zip(pane_ids)
+            .collect::<BTreeMap<_, _>>(),
+    })
+}
+
+fn fill_popup_tab(
+    client: &dyn HerdrClient,
+    layout: &TabLayout,
+    choice: &AgentChoice,
+    applied: &AppliedTab,
+) -> Result<()> {
+    // Before the panes start: `agent.start` waits for its harness to be ready, so focusing
+    // afterwards would leave the caller on the old tab for as long as that takes.
     client
-        .tab_focus(json!({ "tab_id": tab_id }))
+        .tab_focus(json!({ "tab_id": applied.tab_id }))
         .context("failed to focus agent tab")?;
-    if let Some(agent) = root_agent {
-        let record = last_agent_record(agent, layout)?;
-        let _ = state::write_state(client, root_pane, &record);
+    // The layout's own order, so two agent panes start in the order they are written.
+    for (index, pane) in layout.panes.iter().enumerate() {
+        let pane_id = &applied.pane_ids[pane.name.as_str()];
+        let name = tab_pane_label(index, pane, choice).unwrap_or_else(|| pane.name.clone());
+        start_pane(client, layout, pane, pane_id, choice, &name)?;
     }
     Ok(())
 }
@@ -517,6 +742,7 @@ fn last_agent_record(agent: &PaneAgent, layout: &TabLayout) -> Result<state::Las
         option: agent.option_name.clone(),
         layout: layout.name.clone(),
         pane: agent.pane.clone(),
+        session: None,
         recorded_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .context("system clock is before Unix epoch")?
@@ -549,10 +775,24 @@ pub struct PaneAgent {
     pub pane: String,
     /// argv, ready for `exec` or for a pane command.
     pub launch: Vec<String>,
+    /// Set when Herdr can start this harness itself; None keeps the typed-argv path.
+    pub start: Option<AgentStart>,
+    /// Set even when `start` is None, because an overridden command still writes the
+    /// session files of its kind.
+    pub kind: Option<String>,
     /// The [[agents]] entry's `name`, not its rendered label.
     pub agent_name: String,
     /// The chosen [[agents.options]] entry's `name`; None for an agent with no options.
     pub option_name: Option<String>,
+}
+
+/// What `agent.start` needs to run a harness in a pane sitting at its shell prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentStart {
+    /// Herdr's agent kind, which is also where it derives the executable from.
+    pub kind: String,
+    /// Everything after that executable: the option's args, then the agent's extra args.
+    pub args: Vec<String>,
 }
 
 impl AgentChoice {
@@ -788,7 +1028,9 @@ fn choose_pane_agent(
 
     Ok(Some(PaneAgent {
         pane: pane.name.clone(),
-        launch: build_launch(config, &agent_name, option_name.as_deref())?,
+        launch: build_launch(config, &agent_name, option_name.as_deref(), None)?,
+        start: build_start(config, &agent_name, option_name.as_deref()),
+        kind: agent.kind.clone(),
         agent_name,
         option_name,
     }))
@@ -858,6 +1100,7 @@ fn build_launch(
     config: &Config,
     agent_name: &str,
     option_name: Option<&str>,
+    resume: Option<&str>,
 ) -> Result<Vec<String>> {
     let agent = config
         .agent(agent_name)
@@ -876,11 +1119,54 @@ fn build_launch(
         .and_then(|option| option.command.as_ref())
         .unwrap_or(&agent.command)
         .clone();
+    // Before the option args because codex takes a subcommand, which has to sit directly
+    // after the executable; claude's flag form is indifferent to the position.
+    if let Some(resume) = resume {
+        launch.extend(resume_args(agent.kind.as_deref(), resume));
+    }
     launch.extend(option.into_iter().flat_map(|option| option.args.clone()));
     // A command override changes only the executable; extra args apply to every
     // launch of the agent, including overridden commands.
     launch.extend(agent.extra_args.clone());
     Ok(launch)
+}
+
+fn resume_args(kind: Option<&str>, session: &str) -> Vec<String> {
+    match kind {
+        Some("claude") => vec!["--resume".to_owned(), session.to_owned()],
+        Some("codex") => vec!["resume".to_owned(), session.to_owned()],
+        _ => Vec::new(),
+    }
+}
+
+/// Herdr's own integration reports sessions for kinds this plugin cannot resolve, so the
+/// restart worker asks here before promising a resume it would drop.
+pub(crate) fn kind_can_resume(kind: Option<&str>) -> bool {
+    !resume_args(kind, "session").is_empty()
+}
+
+/// How Herdr would start this harness, or None when only typed argv can: `agent.start`
+/// appends its args to an executable derived from the kind, so an option that overrides
+/// the command has nowhere to put that override. Unknown names are [`build_launch`]'s to
+/// report, and every caller runs it first.
+fn build_start(config: &Config, agent_name: &str, option_name: Option<&str>) -> Option<AgentStart> {
+    let agent = config.agent(agent_name)?;
+    let kind = agent.kind.as_deref()?;
+    // The same reason covers the agent's own command: an executable the kind does not name,
+    // or fixed arguments sitting before the option's, would be dropped on the way.
+    if agent.command.len() != 1 || agent.command[0] != kind {
+        return None;
+    }
+    let option = option_name.and_then(|name| agent.option(name));
+    if option.is_some_and(|option| option.command.is_some()) {
+        return None;
+    }
+    let mut args = option.map(|option| option.args.clone()).unwrap_or_default();
+    args.extend(agent.extra_args.clone());
+    Some(AgentStart {
+        kind: kind.to_owned(),
+        args,
+    })
 }
 
 fn select_worktree(
@@ -1107,6 +1393,8 @@ mod popup {
         PaneAgent {
             pane: pane.to_owned(),
             launch: vec![agent.to_owned(), "--profile work".to_owned()],
+            start: None,
+            kind: None,
             agent_name: agent.to_owned(),
             option_name: None,
         }
@@ -1117,13 +1405,28 @@ mod popup {
         config.layout(&config.default_tab_layout).unwrap().clone()
     }
 
-    fn queue_popup_create(client: &FakeClient) {
+    /// Herdr's reply for the shipped layout: the tree it built, carrying pane ids and none
+    /// of our pane names.
+    fn queue_popup_apply(client: &FakeClient) {
         client.queue_response(
-            "tab.create",
+            "layout.apply",
             json!({
-                "type": "tab_created",
-                "root_pane": { "pane_id": "p1" },
-                "tab": { "tab_id": "t1" },
+                "type": "layout_apply",
+                "layout": {
+                    "workspace_id": "w1",
+                    "tab_id": "t1",
+                    "zoomed": false,
+                    "focused_pane_id": "p1",
+                    "root": {
+                        "type": "split", "direction": "right", "ratio": 0.38,
+                        "first": { "type": "pane", "pane_id": "p1" },
+                        "second": {
+                            "type": "split", "direction": "down", "ratio": 0.9,
+                            "first": { "type": "pane", "pane_id": "p2" },
+                            "second": { "type": "pane", "pane_id": "p3" },
+                        },
+                    },
+                },
             }),
         );
     }
@@ -1131,6 +1434,87 @@ mod popup {
     fn queue_popup_splits(client: &FakeClient) {
         client.queue_response("pane.split", json!({ "pane": { "pane_id": "p2" } }));
         client.queue_response("pane.split", json!({ "pane": { "pane_id": "p3" } }));
+    }
+
+    #[test]
+    fn the_shipped_layout_folds_into_a_right_split_over_a_down_split() {
+        let layout = default_layout();
+
+        let (root, leaves) = build_layout_tree(&layout, &popup_choice(), "/projects/example");
+
+        assert_eq!(leaves, ["agent", "files", "term"]);
+        let LayoutNode::Split {
+            direction,
+            ratio,
+            first,
+            second,
+        } = &root
+        else {
+            panic!("expected a split at the root: {root:?}");
+        };
+        assert_eq!(direction, "right");
+        // Config's 0.62 describes `files`; Herdr's ratio is the agent's remaining share.
+        assert_eq!(*ratio, 0.38);
+        assert_eq!(
+            **first,
+            LayoutNode::Pane {
+                pane_id: None,
+                cwd: Some("/projects/example".to_owned()),
+                env: BTreeMap::from([("Q_NO_BANNER".to_owned(), "1".to_owned())]),
+                label: Some("\u{f4af}  review".to_owned()),
+                command: None,
+            }
+        );
+        let LayoutNode::Split {
+            direction,
+            ratio,
+            first,
+            second,
+        } = &**second
+        else {
+            panic!("expected `term` to split `files`: {second:?}");
+        };
+        assert_eq!(direction, "down");
+        assert_eq!(*ratio, 0.9);
+        assert_eq!(
+            **first,
+            LayoutNode::Pane {
+                pane_id: None,
+                cwd: Some("/projects/example".to_owned()),
+                env: BTreeMap::from([("Q_NO_BANNER".to_owned(), "1".to_owned())]),
+                label: Some("\u{f0968}  Files".to_owned()),
+                command: None,
+            }
+        );
+        assert_eq!(
+            **second,
+            LayoutNode::Pane {
+                pane_id: None,
+                cwd: Some("/projects/example".to_owned()),
+                env: BTreeMap::new(),
+                label: Some("\u{f489}  term".to_owned()),
+                command: None,
+            }
+        );
+    }
+
+    /// `split_from` moves a pane's leaf down the tree, so the leaves stop matching config
+    /// order — which is why the response is mapped back by traversal position, not index.
+    #[test]
+    fn split_from_reorders_the_leaves_away_from_config_order() {
+        let mut layout = default_layout();
+        layout.panes[2].split_from = Some("agent".to_owned());
+
+        let (root, leaves) = build_layout_tree(&layout, &popup_choice(), "/projects/example");
+
+        assert_eq!(leaves, ["agent", "term", "files"]);
+        let LayoutNode::Split { first, .. } = &root else {
+            panic!("expected a split at the root: {root:?}");
+        };
+        let LayoutNode::Split { direction, .. } = &**first else {
+            panic!("expected `agent` to have been split: {first:?}");
+        };
+        assert_eq!(direction, "down");
     }
 
     #[test]
@@ -1264,6 +1648,8 @@ mod popup {
         choice.agents.push(PaneAgent {
             pane: "files".to_owned(),
             launch: vec!["claude".to_owned(), "--model".to_owned(), "opus".to_owned()],
+            start: None,
+            kind: None,
             agent_name: "claude code".to_owned(),
             option_name: Some("Opus".to_owned()),
         });
@@ -1279,6 +1665,49 @@ mod popup {
             .collect::<Vec<_>>();
         // Quoted argument by argument, exactly as the root agent pane is launched.
         assert_eq!(inputs, [(json!("p2"), json!("'claude' '--model' 'opus'"))]);
+    }
+
+    #[test]
+    fn a_side_agent_pane_with_a_kind_starts_through_herdr() {
+        let client = FakeClient::default();
+        let mut layout = default_layout();
+        layout.panes[1].pane_type = PaneType::Agent;
+        layout.panes[1].command = None;
+        let mut choice = popup_choice();
+        choice.agents.push(PaneAgent {
+            pane: "files".to_owned(),
+            launch: vec!["claude".to_owned(), "--model".to_owned(), "opus".to_owned()],
+            start: Some(AgentStart {
+                kind: "claude".to_owned(),
+                args: vec!["--model".to_owned(), "opus".to_owned()],
+            }),
+            kind: None,
+            agent_name: "claude code".to_owned(),
+            option_name: Some("Opus".to_owned()),
+        });
+        queue_popup_splits(&client);
+
+        build_side_panes(&client, &layout, &choice, "root").unwrap();
+
+        let calls = client.calls.into_inner();
+        let starts = calls
+            .iter()
+            .filter(|(method, _)| method == "agent.start")
+            .map(|(_, params)| params.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            starts,
+            [json!({
+                "pane_id": "p2", "name": "\u{f0968}  Files",
+                "kind": "claude", "args": ["--model", "opus"],
+            })]
+        );
+        assert!(
+            !calls
+                .iter()
+                .any(|(method, params)| method == "pane.send_input" && params["pane_id"] == "p2"),
+            "{calls:?}"
+        );
     }
 
     #[test]
@@ -1313,14 +1742,14 @@ mod popup {
             agents: Vec::new(),
             ..popup_choice()
         };
-        queue_popup_splits(&client);
+        queue_popup_apply(&client);
 
-        build_popup_tab(&client, &layout, &choice, "t1", "root").unwrap();
+        create_popup_tab(&client, &layout, &choice, None).unwrap();
 
         let calls = client.calls.into_inner();
         assert!(
             !calls.iter().any(|(method, params)| {
-                method == "pane.send_input" && params["pane_id"] == "root"
+                method == "pane.send_input" && params["pane_id"] == "p1"
             }),
             "{calls:?}"
         );
@@ -1414,6 +1843,7 @@ mod popup {
             no_layout,
             pane: None,
             restart: false,
+            resume: None,
             layout: None,
         }
     }
@@ -1607,80 +2037,196 @@ mod popup {
     }
 
     #[test]
-    fn popup_reproduces_the_exact_ten_call_sequence() {
+    fn popup_reproduces_the_exact_four_call_sequence() {
         let client = FakeClient::default();
-        queue_popup_create(&client);
-        queue_popup_splits(&client);
+        queue_popup_apply(&client);
 
-        let layout = default_layout();
-        create_popup_tab(&client, &layout, &popup_choice(), None).unwrap();
+        create_popup_tab(&client, &default_layout(), &popup_choice(), None).unwrap();
 
         assert_eq!(
             client.calls.into_inner(),
             vec![
                 (
-                    "tab.create".to_owned(),
+                    "layout.apply".to_owned(),
                     json!({
-                        "label": "\u{f4af}  review",
-                        "cwd": "/projects/example",
-                        "env": { "Q_NO_BANNER": "1" },
+                        "root": {
+                            "type": "split", "direction": "right", "ratio": 0.38,
+                            "first": {
+                                "type": "pane",
+                                "cwd": "/projects/example",
+                                "env": { "Q_NO_BANNER": "1" },
+                                "label": "\u{f4af}  review",
+                            },
+                            "second": {
+                                "type": "split", "direction": "down", "ratio": 0.9,
+                                "first": {
+                                    "type": "pane",
+                                    "cwd": "/projects/example",
+                                    "env": { "Q_NO_BANNER": "1" },
+                                    "label": "\u{f0968}  Files",
+                                },
+                                "second": {
+                                    "type": "pane",
+                                    "cwd": "/projects/example",
+                                    "label": "\u{f489}  term",
+                                },
+                            },
+                        },
+                        "tab_label": "\u{f4af}  review",
                         "focus": false,
                     }),
                 ),
-                (
-                    "pane.rename".to_owned(),
-                    json!({ "pane_id": "p1", "label": "\u{f4af}  review" })
-                ),
-                (
-                    "tab.rename".to_owned(),
-                    json!({ "tab_id": "t1", "label": "\u{f4af}  review" })
-                ),
-                (
-                    "pane.split".to_owned(),
-                    json!({
-                        "target_pane_id": "p1", "direction": "right", "ratio": 0.38,
-                        "cwd": "/projects/example", "env": { "Q_NO_BANNER": "1" }, "focus": false,
-                    })
-                ),
-                (
-                    "pane.rename".to_owned(),
-                    json!({
-                        "pane_id": "p2",
-                        "label": render_label(
-                            layout.panes[1].icon.as_deref(),
-                            layout.panes[1].label.as_deref().unwrap(),
-                        ),
-                    })
-                ),
-                (
-                    "pane.send_input".to_owned(),
-                    json!({ "pane_id": "p2", "text": "yazi .", "keys": ["enter"] })
-                ),
-                (
-                    "pane.split".to_owned(),
-                    json!({
-                        "target_pane_id": "p2", "direction": "down", "ratio": 0.9,
-                        "cwd": "/projects/example", "focus": false,
-                    })
-                ),
-                (
-                    "pane.rename".to_owned(),
-                    json!({
-                        "pane_id": "p3",
-                        "label": render_label(
-                            layout.panes[2].icon.as_deref(),
-                            layout.panes[2].label.as_deref().unwrap(),
-                        ),
-                    })
-                ),
+                ("tab.focus".to_owned(), json!({ "tab_id": "t1" })),
                 (
                     "pane.send_input".to_owned(),
                     json!({
                         "pane_id": "p1", "text": "'codex' '--profile work'", "keys": ["enter"],
                     })
                 ),
-                ("tab.focus".to_owned(), json!({ "tab_id": "t1" })),
+                (
+                    "pane.send_input".to_owned(),
+                    json!({ "pane_id": "p2", "text": "yazi .", "keys": ["enter"] })
+                ),
             ]
+        );
+    }
+
+    /// Herdr starts the harness itself, under the name the pane already wears.
+    #[test]
+    fn an_agent_with_a_kind_starts_through_herdr() {
+        let client = FakeClient::default();
+        queue_popup_apply(&client);
+        let mut choice = popup_choice();
+        choice.agents[0].start = Some(AgentStart {
+            kind: "codex".to_owned(),
+            args: vec!["--profile work".to_owned()],
+        });
+
+        create_popup_tab(&client, &default_layout(), &choice, None).unwrap();
+
+        let calls = client.calls.into_inner();
+        let starts = calls
+            .iter()
+            .filter(|(method, _)| method == "agent.start")
+            .map(|(_, params)| params.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            starts,
+            [json!({
+                "pane_id": "p1", "name": "\u{f4af}  review",
+                "kind": "codex", "args": ["--profile work"],
+            })]
+        );
+        // Nothing is typed into the agent pane any more; the command pane still is.
+        let inputs = calls
+            .iter()
+            .filter(|(method, _)| method == "pane.send_input")
+            .map(|(_, params)| params["pane_id"].clone())
+            .collect::<Vec<_>>();
+        assert_eq!(inputs, [json!("p2")]);
+    }
+
+    #[test]
+    fn a_command_override_keeps_the_typed_argv_path() {
+        // `ccr code` replaces the executable a kind implies, so `agent.start` cannot run it.
+        assert!(build_start(&Config::test_default(), "claude code", Some("CCR")).is_none());
+
+        let client = FakeClient::default();
+        queue_popup_apply(&client);
+        let mut choice = popup_choice();
+        choice.agents[0] = PaneAgent {
+            pane: "agent".to_owned(),
+            launch: vec!["ccr".to_owned(), "code".to_owned()],
+            start: None,
+            kind: None,
+            agent_name: "claude code".to_owned(),
+            option_name: Some("CCR".to_owned()),
+        };
+
+        create_popup_tab(&client, &default_layout(), &choice, None).unwrap();
+
+        let calls = client.calls.into_inner();
+        assert!(
+            !calls.iter().any(|(method, _)| method == "agent.start"),
+            "{calls:?}"
+        );
+        assert!(
+            calls.iter().any(|(method, params)| {
+                method == "pane.send_input" && params["text"] == "'ccr' 'code'"
+            }),
+            "{calls:?}"
+        );
+    }
+
+    /// `agent.start` waits for the harness to be ready, so its timeout is a tab failure.
+    #[test]
+    fn a_timed_out_agent_start_becomes_a_flow_error() {
+        let client = FakeClient::default();
+        queue_popup_apply(&client);
+        client.queue_error("agent.start", "timeout", "agent did not become ready");
+        let mut choice = popup_choice();
+        choice.agents[0].start = Some(AgentStart {
+            kind: "codex".to_owned(),
+            args: Vec::new(),
+        });
+
+        let error = create_popup_tab(&client, &default_layout(), &choice, None).unwrap_err();
+
+        let flow_error = error.downcast_ref::<FlowError>().unwrap();
+        assert_eq!(flow_error.title(), Some("Agent tab failed"));
+        let chain = flow_error.chain();
+        assert!(chain.contains("agent did not become ready"), "{chain}");
+        assert!(chain.contains("pane agent"), "{chain}");
+    }
+
+    #[test]
+    fn build_start_carries_the_kind_with_option_and_extra_args() {
+        let mut config = Config::test_default();
+        config.agents[0].extra_args = vec!["--search".to_owned()];
+
+        let start = build_start(&config, "claude code", Some("Opus")).unwrap();
+
+        assert_eq!(start.kind, "claude");
+        assert_eq!(start.args, ["--model", "claude-opus-4-8", "--search"]);
+        // An agent whose entry names no kind has no executable Herdr can derive.
+        config.agents[1].kind = None;
+        assert!(build_start(&config, "codex", None).is_none());
+    }
+
+    /// `agent.start` derives the executable from the kind and appends only the args, so an
+    /// agent that names anything else in `command` has to keep the typed-argv path.
+    #[test]
+    fn an_agent_command_that_is_not_the_bare_kind_keeps_the_typed_argv_path() {
+        for command in [
+            vec!["claude".to_owned(), "--verbose".to_owned()],
+            vec!["claude-latest".to_owned()],
+        ] {
+            let mut config = Config::test_default();
+            config.agents[0].command = command.clone();
+            assert!(
+                build_start(&config, "claude code", Some("Opus")).is_none(),
+                "{command:?}"
+            );
+        }
+    }
+
+    /// Every agent pane the plugin does not `exec` into reports from `start_pane`, so its
+    /// options come from the pane's own agent rather than the launch it never runs.
+    #[test]
+    fn a_reporter_is_described_for_an_agent_pane_that_names_a_kind() {
+        let mut choice = popup_choice();
+        assert_eq!(reporter_options(&choice.agents[0], &choice, "p1", 7), None);
+
+        choice.agents[0].kind = Some("codex".to_owned());
+        assert_eq!(
+            reporter_options(&choice.agents[0], &choice, "p1", 7),
+            Some(session::ReportOptions {
+                pane_id: "p1".to_owned(),
+                agent: "codex".to_owned(),
+                kind: "codex".to_owned(),
+                cwd: PathBuf::from("/projects/example"),
+                since_ms: 7,
+            })
         );
     }
 
@@ -1688,14 +2234,61 @@ mod popup {
     fn popup_workspace_id_is_omitted_when_empty_and_sent_when_present() {
         for (workspace, expected) in [(None, None), (Some("w1".to_owned()), Some(json!("w1")))] {
             let client = FakeClient::default();
-            queue_popup_create(&client);
-            queue_popup_splits(&client);
+            queue_popup_apply(&client);
             create_popup_tab(&client, &default_layout(), &popup_choice(), workspace).unwrap();
             assert_eq!(
                 client.calls.borrow()[0].1.get("workspace_id"),
                 expected.as_ref()
             );
         }
+    }
+
+    /// The response's leaves carry Herdr's pane ids in the order we sent ours, so the third
+    /// leaf's id is what the third pane of the fold — not of the config — receives.
+    #[test]
+    fn a_reordered_fold_still_sends_each_command_to_its_own_pane() {
+        let client = FakeClient::default();
+        let mut layout = default_layout();
+        layout.panes[2].split_from = Some("agent".to_owned());
+        queue_popup_apply(&client);
+
+        create_popup_tab(&client, &layout, &popup_choice(), None).unwrap();
+
+        let inputs = client
+            .calls
+            .into_inner()
+            .iter()
+            .filter(|(method, _)| method == "pane.send_input")
+            .map(|(_, params)| (params["pane_id"].clone(), params["text"].clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            inputs,
+            [
+                (json!("p1"), json!("'codex' '--profile work'")),
+                (json!("p3"), json!("yazi .")),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_layout_apply_reply_that_does_not_match_the_layout_is_rejected() {
+        let client = FakeClient::default();
+        client.queue_response(
+            "layout.apply",
+            json!({
+                "type": "layout_apply",
+                "layout": {
+                    "workspace_id": "w1", "tab_id": "t1", "zoomed": false,
+                    "focused_pane_id": "p1",
+                    "root": { "type": "pane", "pane_id": "p1" },
+                },
+            }),
+        );
+
+        let error =
+            create_popup_tab(&client, &default_layout(), &popup_choice(), None).unwrap_err();
+
+        assert!(format!("{error:#}").contains("1 pane"), "{error:#}");
     }
 
     #[test]
@@ -1727,49 +2320,48 @@ mod popup {
         );
     }
 
+    /// Apply is atomic, so its own failure leaves nothing on screen; every later step runs
+    /// inside a tab that exists, and abandoning it would strand a tab with no agent.
     #[test]
-    fn popup_failure_at_every_post_create_step_closes_and_returns_metadata() {
+    fn a_popup_failure_after_apply_closes_the_tab_it_built() {
         let methods = [
-            "pane.rename",
-            "tab.rename",
-            "pane.split",
-            "pane.rename",
-            "pane.send_input",
-            "pane.split",
-            "pane.rename",
-            "pane.send_input",
+            "layout.apply",
             "tab.focus",
+            "pane.send_input",
+            "pane.send_input",
         ];
         for failure_index in 0..methods.len() {
             let client = FakeClient::default();
-            queue_popup_create(&client);
-            let mut method_counts = std::collections::HashMap::<&str, usize>::new();
             for (index, method) in methods.iter().enumerate() {
-                let count = method_counts.entry(method).or_default();
                 if index == failure_index {
                     client.queue_error(method, "injected", "failure");
                     break;
                 }
-                if *method == "pane.split" {
-                    let pane_id = if *count == 0 { "p2" } else { "p3" };
-                    client.queue_response(method, json!({ "pane": { "pane_id": pane_id } }));
+                if *method == "layout.apply" {
+                    queue_popup_apply(&client);
                 } else {
                     client.queue_response(method, json!({ "type": "ok" }));
                 }
-                *count += 1;
             }
 
             let error =
                 create_popup_tab(&client, &default_layout(), &popup_choice(), None).unwrap_err();
             let flow_error = error.downcast_ref::<FlowError>().unwrap();
             assert_eq!(flow_error.title(), Some("Agent tab failed"));
-            assert_eq!(flow_error.prefix(), Some("The incomplete tab was closed."));
             assert!(flow_error.chain().contains("injected"));
             let calls = client.calls.borrow();
-            assert_eq!(
-                calls[calls.len() - 1],
-                ("tab.close".to_owned(), json!({ "tab_id": "t1" }))
-            );
+            let closed = calls
+                .iter()
+                .filter(|call| call.0 == "tab.close")
+                .map(|call| call.1.clone())
+                .collect::<Vec<_>>();
+            if failure_index == 0 {
+                assert_eq!(flow_error.prefix(), None);
+                assert!(closed.is_empty(), "{calls:?}");
+            } else {
+                assert_eq!(flow_error.prefix(), Some("The incomplete tab was closed."));
+                assert_eq!(closed, [json!({ "tab_id": "t1" })]);
+            }
             assert!(!calls.iter().any(|call| call.0 == "notification.show"));
         }
     }
@@ -1788,22 +2380,25 @@ mod popup {
     fn popup_extra_args_preserve_toml_array_boundaries_and_bypass_is_opt_in() {
         let mut config = config();
         config.agents[1].extra_args = Vec::new();
-        assert_eq!(build_launch(&config, "codex", None).unwrap(), ["codex"]);
+        assert_eq!(
+            build_launch(&config, "codex", None, None).unwrap(),
+            ["codex"]
+        );
         config.agents[1].extra_args = vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()];
         assert_eq!(
-            build_launch(&config, "codex", None).unwrap(),
+            build_launch(&config, "codex", None, None).unwrap(),
             ["codex", "--dangerously-bypass-approvals-and-sandbox"]
         );
         config.agents[1].extra_args = ["--search", "--profile", "work"]
             .map(str::to_owned)
             .to_vec();
         assert_eq!(
-            build_launch(&config, "codex", None).unwrap(),
+            build_launch(&config, "codex", None, None).unwrap(),
             ["codex", "--search", "--profile", "work"]
         );
         config.agents[1].extra_args = vec!["--profile work".to_owned()];
         assert_eq!(
-            build_launch(&config, "codex", None).unwrap(),
+            build_launch(&config, "codex", None, None).unwrap(),
             ["codex", "--profile work"]
         );
     }
@@ -2168,6 +2763,7 @@ mod popup {
                 option: Some("Opus".to_owned()),
                 layout: "agentic-coding".to_owned(),
                 pane: "agent".to_owned(),
+                session: None,
                 recorded_at: 1,
             }),
             &mut menu,
@@ -2320,6 +2916,7 @@ mod popup {
                 option: Some("Opus".to_owned()),
                 layout: "agentic-coding".to_owned(),
                 pane: "agent".to_owned(),
+                session: None,
                 recorded_at: 1,
             }),
             &mut menu,
@@ -2356,6 +2953,7 @@ mod popup {
                 option: Some("Removed".to_owned()),
                 layout: "agentic-coding".to_owned(),
                 pane: "agent".to_owned(),
+                session: None,
                 recorded_at: 1,
             }),
             &mut menu,
@@ -2466,27 +3064,59 @@ mod popup {
     }
 
     #[test]
+    fn resume_arguments_sit_between_the_command_and_the_option_args() {
+        let mut config = Config::test_default();
+        config.agents[1].extra_args = vec!["--search".to_owned()];
+
+        // codex's `resume` is a subcommand, so it has to follow the executable directly
+        // and precede the model args; claude's flag form lands in the same slot.
+        assert_eq!(
+            build_launch(&config, "codex", None, Some("019-abc")).unwrap(),
+            ["codex", "resume", "019-abc", "--search"]
+        );
+        assert_eq!(
+            build_launch(&config, "claude code", Some("Opus"), Some("uuid-1")).unwrap(),
+            ["claude", "--resume", "uuid-1", "--model", "claude-opus-4-8"]
+        );
+        // A command override still resumes: `ccr code` writes a claude transcript.
+        assert_eq!(
+            build_launch(&config, "claude code", Some("CCR"), Some("uuid-1")).unwrap(),
+            ["ccr", "code", "--resume", "uuid-1"]
+        );
+
+        // An agent Herdr has no kind for gets no resume arguments at all.
+        config.agents[1].kind = None;
+        assert_eq!(
+            build_launch(&config, "codex", None, Some("019-abc")).unwrap(),
+            ["codex", "--search"]
+        );
+    }
+
+    #[test]
     fn launch_commands_match_every_harness_and_model_rule() {
         let config = Config::test_default();
-        assert_eq!(build_launch(&config, "codex", None).unwrap(), ["codex"]);
         assert_eq!(
-            build_launch(&config, "opencode", None).unwrap(),
+            build_launch(&config, "codex", None, None).unwrap(),
+            ["codex"]
+        );
+        assert_eq!(
+            build_launch(&config, "opencode", None, None).unwrap(),
             ["opencode"]
         );
         assert_eq!(
-            build_launch(&config, "claude code", Some("CCR")).unwrap(),
+            build_launch(&config, "claude code", Some("CCR"), None).unwrap(),
             ["ccr", "code"]
         );
         assert_eq!(
-            build_launch(&config, "claude code", Some("Opus")).unwrap(),
+            build_launch(&config, "claude code", Some("Opus"), None).unwrap(),
             ["claude", "--model", "claude-opus-4-8"]
         );
         assert_eq!(
-            build_launch(&config, "claude code", Some("OpusPlan (Sonnet)")).unwrap(),
+            build_launch(&config, "claude code", Some("OpusPlan (Sonnet)"), None).unwrap(),
             ["claude", "--model", "opusplan", "--effort", "medium"]
         );
         assert_eq!(
-            build_launch(&config, "claude code", Some("Fable 5")).unwrap(),
+            build_launch(&config, "claude code", Some("Fable 5"), None).unwrap(),
             ["claude", "--model", "claude-fable-5"]
         );
     }
@@ -2499,7 +3129,7 @@ mod popup {
             .to_vec();
 
         assert_eq!(
-            build_launch(&config, "claude code", Some("Opus")).unwrap(),
+            build_launch(&config, "claude code", Some("Opus"), None).unwrap(),
             [
                 "claude",
                 "--model",
@@ -2510,7 +3140,7 @@ mod popup {
             ]
         );
         assert_eq!(
-            build_launch(&config, "claude code", Some("CCR")).unwrap(),
+            build_launch(&config, "claude code", Some("CCR"), None).unwrap(),
             ["ccr", "code", "--search", "--profile", "work"]
         );
     }
@@ -2522,7 +3152,7 @@ mod popup {
         config.agents[0].options[2].args = vec!["--flag".to_owned()];
 
         assert_eq!(
-            build_launch(&config, "claude code", Some("CCR")).unwrap(),
+            build_launch(&config, "claude code", Some("CCR"), None).unwrap(),
             ["ccr", "code", "--flag"]
         );
     }
@@ -2536,7 +3166,7 @@ mod popup {
             ["--cd", "/Users/q/My Projects"].map(str::to_owned).to_vec();
 
         assert_eq!(
-            build_launch(&config, "claude code", Some("Opus")).unwrap(),
+            build_launch(&config, "claude code", Some("Opus"), None).unwrap(),
             ["claude", "code", "--cd", "/Users/q/My Projects"]
         );
     }
@@ -2545,12 +3175,12 @@ mod popup {
     fn missing_launch_names_are_named_errors() {
         let config = config();
 
-        let error = build_launch(&config, "missing agent", None).unwrap_err();
+        let error = build_launch(&config, "missing agent", None, None).unwrap_err();
         assert!(error.to_string().contains("missing agent"));
-        let error = build_launch(&config, "claude code", Some("missing option")).unwrap_err();
+        let error = build_launch(&config, "claude code", Some("missing option"), None).unwrap_err();
         assert!(error.to_string().contains("missing option"));
         let agent_name = "claude code";
-        let error = build_launch(&config, agent_name, None).unwrap_err();
+        let error = build_launch(&config, agent_name, None, None).unwrap_err();
         assert!(error.to_string().contains(agent_name));
     }
 
@@ -2560,15 +3190,18 @@ mod popup {
         config.agents[0].extra_args = Vec::new();
         config.agents[1].extra_args = Vec::new();
         assert_eq!(
-            build_launch(&config, "claude code", Some("Opus")).unwrap(),
+            build_launch(&config, "claude code", Some("Opus"), None).unwrap(),
             ["claude", "--model", "claude-opus-4-8"]
         );
-        assert_eq!(build_launch(&config, "codex", None).unwrap(), ["codex"]);
+        assert_eq!(
+            build_launch(&config, "codex", None, None).unwrap(),
+            ["codex"]
+        );
 
         config.agents[0].extra_args = vec!["--dangerously-skip-permissions".to_owned()];
         config.agents[1].extra_args = vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()];
         assert_eq!(
-            build_launch(&config, "claude code", Some("Opus")).unwrap(),
+            build_launch(&config, "claude code", Some("Opus"), None).unwrap(),
             [
                 "claude",
                 "--model",
@@ -2577,7 +3210,7 @@ mod popup {
             ]
         );
         assert_eq!(
-            build_launch(&config, "codex", None).unwrap(),
+            build_launch(&config, "codex", None, None).unwrap(),
             ["codex", "--dangerously-bypass-approvals-and-sandbox"]
         );
     }

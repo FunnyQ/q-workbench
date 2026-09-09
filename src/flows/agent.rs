@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Map, Value};
@@ -12,10 +13,15 @@ use crate::flows::menu::{popup_viewport, strip_pad, GumMenu, InputIndent, Menu};
 use crate::flows::{
     invoking_pane_cwd, nonempty_env, session, FlowError, FlowResult, Outcome, PaneCwd,
 };
-use crate::herdr::types::LayoutNode;
+use crate::herdr::types::{ErrorResponse, LayoutNode};
 use crate::herdr::HerdrClient;
 use crate::shell::build_command;
 use crate::state;
+
+/// Herdr's refusal when a pane is not yet sitting at an interactive shell prompt.
+const PANE_BUSY: &str = "agent_pane_busy";
+const START_TIMEOUT: Duration = Duration::from_secs(10);
+const START_RETRY: Duration = Duration::from_millis(250);
 
 const HARNESS_TITLE: &str = "\u{f169f}  Launch Agent";
 const USE_LAST_PREFIX: &str = "\u{f0709}  use last: ";
@@ -351,6 +357,54 @@ fn tab_pane_label(index: usize, pane: &LayoutPane, choice: &AgentChoice) -> Opti
     }
 }
 
+/// Herdr names an agent `[a-z][a-z0-9_-]{0,31}`, which a pane label is not: labels carry
+/// capitals, spaces and Nerd Font glyphs, and handing one over is refused outright.
+fn agent_name(label: &str, kind: &str) -> String {
+    let mut name = String::new();
+    for character in label.chars().flat_map(char::to_lowercase) {
+        let candidate = match character {
+            'a'..='z' | '0'..='9' | '-' | '_' => character,
+            _ => '-',
+        };
+        // Nothing before the first letter can start a name, and one separator says as much
+        // as a run of them.
+        if (name.is_empty() && !candidate.is_ascii_lowercase())
+            || (candidate == '-' && name.ends_with('-'))
+        {
+            continue;
+        }
+        name.push(candidate);
+        if name.len() == 32 {
+            break;
+        }
+    }
+    let name = name.trim_end_matches(['-', '_']);
+    match name.is_empty() {
+        // A kind is one of Herdr's own identifiers, so it always satisfies the rule.
+        true => kind.to_owned(),
+        false => name.to_owned(),
+    }
+}
+
+/// A pane whose shell has not reached its prompt is refused, and a real profile takes
+/// seconds to get there, so only that refusal is worth retrying.
+fn start_agent(client: &dyn HerdrClient, params: Value) -> Result<()> {
+    let deadline = Instant::now() + START_TIMEOUT;
+    loop {
+        let error = match client.agent_start(params.clone()) {
+            Ok(_) => return Ok(()),
+            Err(error) => error,
+        };
+        let busy = error
+            .downcast_ref::<ErrorResponse>()
+            .is_some_and(|response| response.code == PANE_BUSY);
+        if !busy || Instant::now() >= deadline {
+            return Err(error);
+        }
+        thread::sleep(START_RETRY);
+    }
+}
+
 /// Start what one pane runs, and record an agent pane's choice for restart.
 ///
 /// Herdr starts a harness it knows the kind of, which is what makes the pane an agent it
@@ -374,14 +428,16 @@ fn start_pane(
         let since_ms = session::now_ms();
         match &agent.start {
             Some(start) => {
-                client
-                    .agent_start(json!({
+                start_agent(
+                    client,
+                    json!({
                         "pane_id": pane_id,
-                        "name": name,
+                        "name": agent_name(name, &start.kind),
                         "kind": start.kind,
                         "args": start.args,
-                    }))
-                    .with_context(|| format!("failed to start the agent in pane {}", pane.name))?;
+                    }),
+                )
+                .with_context(|| format!("failed to start the agent in pane {}", pane.name))?;
             }
             None => send_pane_input(client, pane_id, &build_command(&agent.launch), &pane.name)?,
         }
@@ -1698,7 +1754,7 @@ mod popup {
         assert_eq!(
             starts,
             [json!({
-                "pane_id": "p2", "name": "\u{f0968}  Files",
+                "pane_id": "p2", "name": "files",
                 "kind": "claude", "args": ["--model", "opus"],
             })]
         );
@@ -2113,7 +2169,7 @@ mod popup {
         assert_eq!(
             starts,
             [json!({
-                "pane_id": "p1", "name": "\u{f4af}  review",
+                "pane_id": "p1", "name": "review",
                 "kind": "codex", "args": ["--profile work"],
             })]
         );
@@ -2177,6 +2233,75 @@ mod popup {
         let chain = flow_error.chain();
         assert!(chain.contains("agent did not become ready"), "{chain}");
         assert!(chain.contains("pane agent"), "{chain}");
+    }
+
+    /// A pane `layout.apply` created moments ago is still loading its shell profile, so the
+    /// first `agent.start` is refused and only a retry gets the tab built.
+    #[test]
+    fn a_pane_not_yet_at_its_prompt_is_retried_until_it_is() {
+        let client = FakeClient::default();
+        queue_popup_apply(&client);
+        client.queue_error(
+            "agent.start",
+            PANE_BUSY,
+            "agent target pane w1:p1 is not an available shell",
+        );
+        let mut choice = popup_choice();
+        choice.agents[0].start = Some(AgentStart {
+            kind: "codex".to_owned(),
+            args: Vec::new(),
+        });
+
+        create_popup_tab(&client, &default_layout(), &choice, None).unwrap();
+
+        let calls = client.calls.borrow();
+        let starts = calls
+            .iter()
+            .filter(|(method, _)| method == "agent.start")
+            .count();
+        assert_eq!(starts, 2);
+        // The refusal is spent on the retry, not reported, so no tab was torn down.
+        assert!(
+            !calls.iter().any(|(method, _)| method == "tab.close"),
+            "{calls:?}"
+        );
+    }
+
+    /// Herdr refuses `invalid_agent_name` outright, and every real layout labels its panes
+    /// with a glyph, a capital, or a space.
+    #[test]
+    fn a_pane_label_is_reduced_to_a_name_herdr_accepts() {
+        for (label, expected) in [
+            ("\u{f09d1}  main", "main"),
+            ("VERIFY", "verify"),
+            ("Agentic Coding", "agentic-coding"),
+            ("claude code", "claude-code"),
+            ("gpt-5.6_sol", "gpt-5-6_sol"),
+            // Nothing usable in the label at all, so the kind stands in.
+            ("\u{f09d1}", "claude"),
+            ("", "claude"),
+            ("繁體中文", "claude"),
+        ] {
+            let name = agent_name(label, "claude");
+            assert_eq!(name, expected, "{label:?}");
+            assert!(name.len() <= 32, "{name}");
+            assert!(
+                name.starts_with(|first: char| first.is_ascii_lowercase()),
+                "{name}"
+            );
+            assert!(
+                name.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'),
+                "{name}"
+            );
+        }
+
+        // Thirty-three characters in, thirty-two out, with no separator left dangling.
+        assert_eq!(agent_name(&"a".repeat(33), "claude").len(), 32);
+        assert_eq!(
+            agent_name(&format!("{}-x", "b".repeat(31)), "claude").len(),
+            31
+        );
     }
 
     #[test]

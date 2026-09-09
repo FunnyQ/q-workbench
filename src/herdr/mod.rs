@@ -13,16 +13,17 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use self::types::{
-    ErrorResponse, LayoutExportResponse, OkResponse, PaneLayoutResponse, PaneListResponse,
-    PaneNeighborResponse, PaneProcessInfoResponse, PaneResponse, PingResponse, Request,
-    SessionSnapshotResponse, TabCreateResponse, WorkspaceCreateResponse, WorkspaceListResponse,
+    ErrorResponse, LayoutApplyResponse, LayoutExportResponse, OkResponse, PaneLayoutResponse,
+    PaneListResponse, PaneNeighborResponse, PaneProcessInfoResponse, PaneResponse, PingResponse,
+    Request, SessionSnapshotResponse, TabCreateResponse, WorkspaceCreateResponse,
+    WorkspaceListResponse,
 };
 
 /// The oldest protocol whose request and response shapes this plugin was verified
 /// against. Newer protocols are accepted: Herdr adds methods and fields far more
 /// often than it removes them, so an upper bound would reject working servers.
-/// Raise this only after a protocol drops something the plugin reads.
-pub const MINIMUM_PROTOCOL: u64 = 17;
+/// Raise it when a protocol drops something the plugin reads, or — the reason for 22 — when the plugin starts needing methods older servers never had.
+pub const MINIMUM_PROTOCOL: u64 = 22;
 
 #[derive(Debug)]
 pub enum ProtocolGuardError {
@@ -99,6 +100,21 @@ pub trait HerdrClient {
 
     fn layout_export(&self, params: Value) -> Result<LayoutExportResponse> {
         decode(self.call("layout.export", params), "layout.export")
+    }
+
+    fn layout_apply(&self, params: Value) -> Result<LayoutApplyResponse> {
+        decode(self.call("layout.apply", params), "layout.apply")
+    }
+
+    fn agent_start(&self, params: Value) -> Result<OkResponse> {
+        decode(self.call("agent.start", params), "agent.start")
+    }
+
+    fn pane_report_agent_session(&self, params: Value) -> Result<OkResponse> {
+        decode(
+            self.call("pane.report_agent_session", params),
+            "pane.report_agent_session",
+        )
     }
 
     fn layout_set_split_ratio(&self, params: Value) -> Result<OkResponse> {
@@ -313,6 +329,60 @@ mod tests {
         let error = client.call("tab.focus", json!({})).unwrap_err().to_string();
         assert!(error.contains("not_found"));
         assert!(error.contains("missing tab"));
+    }
+
+    #[test]
+    fn layout_apply_decodes_the_returned_layout_description() {
+        let client = FakeClient::default();
+        client.queue_response(
+            "layout.apply",
+            json!({
+                "type": "layout_apply",
+                "layout": {
+                    "workspace_id": "w1",
+                    "tab_id": "t6",
+                    "zoomed": false,
+                    "focused_pane_id": "pD",
+                    "root": {"type": "pane", "pane_id": "pD"}
+                }
+            }),
+        );
+
+        let response = client
+            .layout_apply(json!({"root": {"type": "pane"}}))
+            .unwrap();
+
+        assert_eq!(response.layout.tab_id, "t6");
+        assert_eq!(
+            client.calls.borrow()[0],
+            ("layout.apply".to_owned(), json!({"root": {"type": "pane"}}))
+        );
+    }
+
+    #[test]
+    fn agent_start_and_report_agent_session_use_their_protocol_method_names() {
+        let client = FakeClient::default();
+        client.queue_response(
+            "agent.start",
+            json!({"type": "agent_started", "agent": {}, "argv": ["claude"]}),
+        );
+
+        client
+            .agent_start(json!({"name": "claude", "kind": "claude", "pane_id": "p1"}))
+            .unwrap();
+        client
+            .pane_report_agent_session(
+                json!({"pane_id": "p1", "source": "q.workbench", "agent": "claude"}),
+            )
+            .unwrap();
+
+        let methods: Vec<String> = client
+            .calls
+            .borrow()
+            .iter()
+            .map(|(method, _)| method.clone())
+            .collect();
+        assert_eq!(methods, ["agent.start", "pane.report_agent_session"]);
     }
 
     #[test]

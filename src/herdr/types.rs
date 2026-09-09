@@ -16,6 +16,16 @@ pub struct ErrorResponse {
     pub message: String,
 }
 
+impl std::fmt::Display for ErrorResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "Herdr error {}: {}", self.code, self.message)
+    }
+}
+
+// Carried as the error itself, not formatted into a string, so a caller can tell one refusal
+// from another without matching on prose Herdr is free to reword.
+impl std::error::Error for ErrorResponse {}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OkResponse {
     #[serde(rename = "type")]

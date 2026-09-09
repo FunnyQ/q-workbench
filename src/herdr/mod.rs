@@ -248,7 +248,7 @@ impl HerdrClient for SocketClient {
         if let Some(error) = envelope.get("error") {
             let error: ErrorResponse =
                 serde_json::from_value(error.clone()).context("invalid Herdr error response")?;
-            return Err(anyhow!("Herdr error {}: {}", error.code, error.message));
+            return Err(error.into());
         }
 
         envelope
@@ -292,7 +292,7 @@ impl HerdrClient for FakeClient {
         if let Some(error) = response.get("error") {
             let error: ErrorResponse =
                 serde_json::from_value(error.clone()).context("invalid fake Herdr error")?;
-            Err(anyhow!("Herdr error {}: {}", error.code, error.message))
+            Err(error.into())
         } else {
             Ok(response)
         }

@@ -361,7 +361,7 @@ fn extract_cwd(line: &str) -> Option<String> {
     None
 }
 
-fn first_line(path: &Path) -> Option<String> {
+pub(crate) fn first_line(path: &Path) -> Option<String> {
     let file = File::open(path).ok()?;
     BufReader::new(file).lines().next()?.ok()
 }

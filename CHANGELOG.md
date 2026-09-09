@@ -8,19 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Restarting an agent now asks: resume this session, start fresh, or cancel. The
+- Restarting an agent now asks: start fresh, resume this session, or cancel. The
   three rows always draw, since the popup closes before it could check whether a
   session id exists; the detached worker resolves it, preferring Herdr's own
-  `agent_session` over the id the workbench recorded, and reading it before the
-  harness is killed. A Resume that ends up with no usable id — none recorded, one
-  reported as a transcript path, or an agent whose harness takes no resume
-  argument — falls back to a fresh start and says why in a notification instead
-  of silently starting over.
+  `agent_session` over the id the workbench recorded, falling back to a sweep of
+  the harness's own session files, and reading all of it before the harness is
+  killed. A Resume that ends up with no usable id — none found, one reported as a
+  transcript path, or an agent whose harness takes no resume argument — falls
+  back to a fresh start and says why in a notification instead of silently
+  starting over.
 - Every agent pane spawns a detached reporter that finds the session file the
   agent wrote, reports it to Herdr through `pane.report_agent_session`, and
   stores the id for restart. It matches on the pane's cwd and the launch time,
-  so two agents sharing a cwd can still be credited each other's session, and it
-  gives up after a minute of finding nothing.
+  so two agents sharing a cwd can still be credited each other's session. It gives
+  up after a minute, which is why restart sweeps the same files again rather than
+  trusting what the reporter stored: claude writes no transcript until its first
+  turn, so a pane prompted later than that recorded nothing.
+- Starting a pane through `agent.start` now retries while Herdr answers
+  `agent_pane_busy`, because a pane created moments earlier is still loading its
+  shell profile, and reduces the pane's label to the `[a-z][a-z0-9_-]{0,31}` name
+  Herdr accepts instead of being rejected outright for a glyph or a capital.
 - A new optional `kind` on `[[agents]]` names Herdr's agent kind. It decides
   whether the pane is started through `agent.start`, which makes it an agent
   Herdr can see, and which session files the reporter reads. Because

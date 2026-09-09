@@ -1,12 +1,26 @@
 {
-  "protocol": 19,
+  "protocol": 22,
   "methods": {
     "layout.export": {
       "required": [],
       "props": [
         "pane_id",
         "tab_id"
-      ]
+      ],
+      "schemas": {
+        "pane_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "tab_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
     },
     "layout.set_split_ratio": {
       "required": [
@@ -18,7 +32,31 @@
         "path",
         "ratio",
         "tab_id"
-      ]
+      ],
+      "schemas": {
+        "pane_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "path": {
+          "items": {
+            "type": "boolean"
+          },
+          "type": "array"
+        },
+        "ratio": {
+          "format": "float",
+          "type": "number"
+        },
+        "tab_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
     },
     "notification.show": {
       "required": [
@@ -29,13 +67,56 @@
         "position",
         "sound",
         "title"
-      ]
+      ],
+      "schemas": {
+        "body": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "position": {
+          "anyOf": [
+            {
+              "enum": [
+                "bottom-left",
+                "bottom-right",
+                "top-left",
+                "top-right"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sound": {
+          "enum": [
+            "done",
+            "none",
+            "request"
+          ],
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      }
     },
     "pane.current": {
       "required": [],
       "props": [
         "caller_pane_id"
-      ]
+      ],
+      "schemas": {
+        "caller_pane_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
     },
     "pane.focus": {
       "required": [
@@ -43,7 +124,12 @@
       ],
       "props": [
         "pane_id"
-      ]
+      ],
+      "schemas": {
+        "pane_id": {
+          "type": "string"
+        }
+      }
     },
     "pane.focus_direction": {
       "required": [
@@ -52,7 +138,24 @@
       "props": [
         "direction",
         "pane_id"
-      ]
+      ],
+      "schemas": {
+        "direction": {
+          "enum": [
+            "down",
+            "left",
+            "right",
+            "up"
+          ],
+          "type": "string"
+        },
+        "pane_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
     },
     "pane.get": {
       "required": [
@@ -60,19 +163,40 @@
       ],
       "props": [
         "pane_id"
-      ]
+      ],
+      "schemas": {
+        "pane_id": {
+          "type": "string"
+        }
+      }
     },
     "pane.layout": {
       "required": [],
       "props": [
         "pane_id"
-      ]
+      ],
+      "schemas": {
+        "pane_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
     },
     "pane.list": {
       "required": [],
       "props": [
         "workspace_id"
-      ]
+      ],
+      "schemas": {
+        "workspace_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
     },
     "pane.neighbor": {
       "required": [
@@ -81,13 +205,38 @@
       "props": [
         "direction",
         "pane_id"
-      ]
+      ],
+      "schemas": {
+        "direction": {
+          "enum": [
+            "down",
+            "left",
+            "right",
+            "up"
+          ],
+          "type": "string"
+        },
+        "pane_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
     },
     "pane.process_info": {
       "required": [],
       "props": [
         "pane_id"
-      ]
+      ],
+      "schemas": {
+        "pane_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
     },
     "pane.rename": {
       "required": [
@@ -96,7 +245,18 @@
       "props": [
         "label",
         "pane_id"
-      ]
+      ],
+      "schemas": {
+        "label": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "pane_id": {
+          "type": "string"
+        }
+      }
     },
     "pane.send_input": {
       "required": [
@@ -106,7 +266,21 @@
         "keys",
         "pane_id",
         "text"
-      ]
+      ],
+      "schemas": {
+        "keys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pane_id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
     },
     "pane.split": {
       "required": [
@@ -118,13 +292,70 @@
         "env",
         "focus",
         "ratio",
+        "right_click",
         "target_pane_id",
         "workspace_id"
-      ]
+      ],
+      "schemas": {
+        "cwd": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "direction": {
+          "enum": [
+            "down",
+            "right"
+          ],
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "focus": {
+          "type": "boolean"
+        },
+        "ratio": {
+          "format": "float",
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "right_click": {
+          "enum": [
+            "herdr",
+            "pane"
+          ],
+          "type": "string"
+        },
+        "target_pane_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "workspace_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "ping": {
+      "required": [],
+      "props": [],
+      "schemas": {}
     },
     "session.snapshot": {
       "required": [],
-      "props": []
+      "props": [],
+      "schemas": {}
     },
     "tab.close": {
       "required": [
@@ -132,7 +363,12 @@
       ],
       "props": [
         "tab_id"
-      ]
+      ],
+      "schemas": {
+        "tab_id": {
+          "type": "string"
+        }
+      }
     },
     "tab.create": {
       "required": [],
@@ -142,7 +378,36 @@
         "focus",
         "label",
         "workspace_id"
-      ]
+      ],
+      "schemas": {
+        "cwd": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "focus": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "workspace_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
     },
     "tab.focus": {
       "required": [
@@ -150,7 +415,12 @@
       ],
       "props": [
         "tab_id"
-      ]
+      ],
+      "schemas": {
+        "tab_id": {
+          "type": "string"
+        }
+      }
     },
     "tab.rename": {
       "required": [
@@ -160,7 +430,15 @@
       "props": [
         "label",
         "tab_id"
-      ]
+      ],
+      "schemas": {
+        "label": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        }
+      }
     },
     "workspace.create": {
       "required": [],
@@ -168,8 +446,38 @@
         "cwd",
         "env",
         "focus",
-        "label"
-      ]
+        "label",
+        "source_workspace_id"
+      ],
+      "schemas": {
+        "cwd": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "focus": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "source_workspace_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
     },
     "workspace.focus": {
       "required": [
@@ -177,11 +485,17 @@
       ],
       "props": [
         "workspace_id"
-      ]
+      ],
+      "schemas": {
+        "workspace_id": {
+          "type": "string"
+        }
+      }
     },
     "workspace.list": {
       "required": [],
-      "props": []
+      "props": [],
+      "schemas": {}
     }
   },
   "responses": {
@@ -196,7 +510,56 @@
         "protocol",
         "type",
         "version"
-      ]
+      ],
+      "schemas": {
+        "capabilities": {
+          "anyOf": [
+            {
+              "properties": {
+                "detached_server_daemon": {
+                  "type": "boolean"
+                },
+                "endpoint_protocol_generation": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "health_check": {
+                  "type": "boolean"
+                },
+                "live_handoff": {
+                  "type": "boolean"
+                },
+                "surface_interest": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "live_handoff"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protocol": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "pong",
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      }
     },
     "session_snapshot": {
       "required": [
@@ -206,17 +569,718 @@
       "props": [
         "snapshot",
         "type"
-      ]
-    },
-    "workspace_info": {
-      "required": [
-        "type",
-        "workspace"
       ],
-      "props": [
-        "type",
-        "workspace"
-      ]
+      "schemas": {
+        "snapshot": {
+          "properties": {
+            "agents": {
+              "items": {
+                "properties": {
+                  "agent": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "agent_session": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "agent": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "enum": [
+                              "id",
+                              "path"
+                            ],
+                            "type": "string"
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "agent",
+                          "kind",
+                          "source",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "agent_status": {
+                    "enum": [
+                      "blocked",
+                      "done",
+                      "idle",
+                      "unknown",
+                      "working"
+                    ],
+                    "type": "string"
+                  },
+                  "cwd": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "display_agent": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "focused": {
+                    "type": "boolean"
+                  },
+                  "foreground_cwd": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "interactive_ready": {
+                    "type": "boolean"
+                  },
+                  "launch_pending": {
+                    "type": "boolean"
+                  },
+                  "name": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "pane_id": {
+                    "type": "string"
+                  },
+                  "revision": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "screen_detection_skipped": {
+                    "type": "boolean"
+                  },
+                  "state_change_seq": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "state_labels": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "tab_id": {
+                    "type": "string"
+                  },
+                  "terminal_id": {
+                    "type": "string"
+                  },
+                  "terminal_title": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "terminal_title_stripped": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "title": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "tokens": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "maxProperties": 32,
+                    "propertyNames": {
+                      "pattern": "^[A-Za-z0-9_-]{1,32}$"
+                    },
+                    "type": "object"
+                  },
+                  "workspace_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "agent_status",
+                  "focused",
+                  "pane_id",
+                  "revision",
+                  "tab_id",
+                  "terminal_id",
+                  "workspace_id"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "focused_pane_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "focused_tab_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "focused_workspace_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "layouts": {
+              "items": {
+                "properties": {
+                  "area": {
+                    "properties": {
+                      "height": {
+                        "format": "uint16",
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "width": {
+                        "format": "uint16",
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "x": {
+                        "format": "uint16",
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "y": {
+                        "format": "uint16",
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "height",
+                      "width",
+                      "x",
+                      "y"
+                    ],
+                    "type": "object"
+                  },
+                  "focused_pane_id": {
+                    "type": "string"
+                  },
+                  "panes": {
+                    "items": {
+                      "properties": {
+                        "focused": {
+                          "type": "boolean"
+                        },
+                        "pane_id": {
+                          "type": "string"
+                        },
+                        "rect": {
+                          "properties": {
+                            "height": {
+                              "format": "uint16",
+                              "maximum": 65535,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "width": {
+                              "format": "uint16",
+                              "maximum": 65535,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "x": {
+                              "format": "uint16",
+                              "maximum": 65535,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "y": {
+                              "format": "uint16",
+                              "maximum": 65535,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "height",
+                            "width",
+                            "x",
+                            "y"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "focused",
+                        "pane_id",
+                        "rect"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "splits": {
+                    "items": {
+                      "properties": {
+                        "direction": {
+                          "enum": [
+                            "down",
+                            "right"
+                          ],
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "ratio": {
+                          "format": "float",
+                          "type": "number"
+                        },
+                        "rect": {
+                          "properties": {
+                            "height": {
+                              "format": "uint16",
+                              "maximum": 65535,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "width": {
+                              "format": "uint16",
+                              "maximum": 65535,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "x": {
+                              "format": "uint16",
+                              "maximum": 65535,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "y": {
+                              "format": "uint16",
+                              "maximum": 65535,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "height",
+                            "width",
+                            "x",
+                            "y"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "direction",
+                        "id",
+                        "ratio",
+                        "rect"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "tab_id": {
+                    "type": "string"
+                  },
+                  "workspace_id": {
+                    "type": "string"
+                  },
+                  "zoomed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "area",
+                  "focused_pane_id",
+                  "panes",
+                  "splits",
+                  "tab_id",
+                  "workspace_id",
+                  "zoomed"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "panes": {
+              "items": {
+                "properties": {
+                  "agent": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "agent_session": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "agent": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "enum": [
+                              "id",
+                              "path"
+                            ],
+                            "type": "string"
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "agent",
+                          "kind",
+                          "source",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "agent_status": {
+                    "enum": [
+                      "blocked",
+                      "done",
+                      "idle",
+                      "unknown",
+                      "working"
+                    ],
+                    "type": "string"
+                  },
+                  "cwd": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "display_agent": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "focused": {
+                    "type": "boolean"
+                  },
+                  "foreground_cwd": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "label": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "pane_id": {
+                    "type": "string"
+                  },
+                  "revision": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "scroll": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "max_offset_from_bottom": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "offset_from_bottom": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "viewport_rows": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "max_offset_from_bottom",
+                          "offset_from_bottom",
+                          "viewport_rows"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "state_labels": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "tab_id": {
+                    "type": "string"
+                  },
+                  "terminal_id": {
+                    "type": "string"
+                  },
+                  "terminal_title": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "terminal_title_stripped": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "title": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "tokens": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "maxProperties": 32,
+                    "propertyNames": {
+                      "pattern": "^[A-Za-z0-9_-]{1,32}$"
+                    },
+                    "type": "object"
+                  },
+                  "workspace_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "agent_status",
+                  "focused",
+                  "pane_id",
+                  "revision",
+                  "tab_id",
+                  "terminal_id",
+                  "workspace_id"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "protocol": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tabs": {
+              "items": {
+                "properties": {
+                  "agent_status": {
+                    "enum": [
+                      "blocked",
+                      "done",
+                      "idle",
+                      "unknown",
+                      "working"
+                    ],
+                    "type": "string"
+                  },
+                  "focused": {
+                    "type": "boolean"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "number": {
+                    "format": "uint",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "pane_count": {
+                    "format": "uint",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "tab_id": {
+                    "type": "string"
+                  },
+                  "workspace_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "agent_status",
+                  "focused",
+                  "label",
+                  "number",
+                  "pane_count",
+                  "tab_id",
+                  "workspace_id"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "version": {
+              "type": "string"
+            },
+            "workspaces": {
+              "items": {
+                "properties": {
+                  "active_tab_id": {
+                    "type": "string"
+                  },
+                  "agent_status": {
+                    "enum": [
+                      "blocked",
+                      "done",
+                      "idle",
+                      "unknown",
+                      "working"
+                    ],
+                    "type": "string"
+                  },
+                  "focused": {
+                    "type": "boolean"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "number": {
+                    "format": "uint",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "pane_count": {
+                    "format": "uint",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "tab_count": {
+                    "format": "uint",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "tokens": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "maxProperties": 32,
+                    "propertyNames": {
+                      "pattern": "^[A-Za-z0-9_-]{1,32}$"
+                    },
+                    "type": "object"
+                  },
+                  "workspace_id": {
+                    "type": "string"
+                  },
+                  "worktree": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "checkout_path": {
+                            "type": "string"
+                          },
+                          "is_linked_worktree": {
+                            "type": "boolean"
+                          },
+                          "repo_key": {
+                            "type": "string"
+                          },
+                          "repo_name": {
+                            "type": "string"
+                          },
+                          "repo_root": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "checkout_path",
+                          "is_linked_worktree",
+                          "repo_key",
+                          "repo_name",
+                          "repo_root"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "active_tab_id",
+                  "agent_status",
+                  "focused",
+                  "label",
+                  "number",
+                  "pane_count",
+                  "tab_count",
+                  "workspace_id"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "agents",
+            "layouts",
+            "panes",
+            "protocol",
+            "tabs",
+            "version",
+            "workspaces"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "const": "session_snapshot",
+          "type": "string"
+        }
+      }
     },
     "workspace_created": {
       "required": [
@@ -230,87 +1294,329 @@
         "tab",
         "type",
         "workspace"
-      ]
-    },
-    "workspace_list": {
-      "required": [
-        "type",
-        "workspaces"
       ],
-      "props": [
-        "type",
-        "workspaces"
-      ]
-    },
-    "worktree_list": {
-      "required": [
-        "source",
-        "type",
-        "worktrees"
-      ],
-      "props": [
-        "source",
-        "type",
-        "worktrees"
-      ]
-    },
-    "worktree_created": {
-      "required": [
-        "root_pane",
-        "tab",
-        "type",
-        "workspace",
-        "worktree"
-      ],
-      "props": [
-        "root_pane",
-        "tab",
-        "type",
-        "workspace",
-        "worktree"
-      ]
-    },
-    "worktree_opened": {
-      "required": [
-        "already_open",
-        "root_pane",
-        "tab",
-        "type",
-        "workspace",
-        "worktree"
-      ],
-      "props": [
-        "already_open",
-        "root_pane",
-        "tab",
-        "type",
-        "workspace",
-        "worktree"
-      ]
-    },
-    "worktree_removed": {
-      "required": [
-        "forced",
-        "path",
-        "type",
-        "workspace_id"
-      ],
-      "props": [
-        "forced",
-        "path",
-        "type",
-        "workspace_id"
-      ]
-    },
-    "tab_info": {
-      "required": [
-        "tab",
-        "type"
-      ],
-      "props": [
-        "tab",
-        "type"
-      ]
+      "schemas": {
+        "root_pane": {
+          "properties": {
+            "agent": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "agent_session": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "agent": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "id",
+                        "path"
+                      ],
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "agent",
+                    "kind",
+                    "source",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "agent_status": {
+              "enum": [
+                "blocked",
+                "done",
+                "idle",
+                "unknown",
+                "working"
+              ],
+              "type": "string"
+            },
+            "cwd": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "display_agent": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "focused": {
+              "type": "boolean"
+            },
+            "foreground_cwd": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "label": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "scroll": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "max_offset_from_bottom": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "offset_from_bottom": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "viewport_rows": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "max_offset_from_bottom",
+                    "offset_from_bottom",
+                    "viewport_rows"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "state_labels": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "terminal_id": {
+              "type": "string"
+            },
+            "terminal_title": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "terminal_title_stripped": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "title": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "tokens": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "maxProperties": 32,
+              "propertyNames": {
+                "pattern": "^[A-Za-z0-9_-]{1,32}$"
+              },
+              "type": "object"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "agent_status",
+            "focused",
+            "pane_id",
+            "revision",
+            "tab_id",
+            "terminal_id",
+            "workspace_id"
+          ],
+          "type": "object"
+        },
+        "tab": {
+          "properties": {
+            "agent_status": {
+              "enum": [
+                "blocked",
+                "done",
+                "idle",
+                "unknown",
+                "working"
+              ],
+              "type": "string"
+            },
+            "focused": {
+              "type": "boolean"
+            },
+            "label": {
+              "type": "string"
+            },
+            "number": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pane_count": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "agent_status",
+            "focused",
+            "label",
+            "number",
+            "pane_count",
+            "tab_id",
+            "workspace_id"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "const": "workspace_created",
+          "type": "string"
+        },
+        "workspace": {
+          "properties": {
+            "active_tab_id": {
+              "type": "string"
+            },
+            "agent_status": {
+              "enum": [
+                "blocked",
+                "done",
+                "idle",
+                "unknown",
+                "working"
+              ],
+              "type": "string"
+            },
+            "focused": {
+              "type": "boolean"
+            },
+            "label": {
+              "type": "string"
+            },
+            "number": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pane_count": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tab_count": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tokens": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "maxProperties": 32,
+              "propertyNames": {
+                "pattern": "^[A-Za-z0-9_-]{1,32}$"
+              },
+              "type": "object"
+            },
+            "workspace_id": {
+              "type": "string"
+            },
+            "worktree": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "checkout_path": {
+                      "type": "string"
+                    },
+                    "is_linked_worktree": {
+                      "type": "boolean"
+                    },
+                    "repo_key": {
+                      "type": "string"
+                    },
+                    "repo_name": {
+                      "type": "string"
+                    },
+                    "repo_root": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "checkout_path",
+                    "is_linked_worktree",
+                    "repo_key",
+                    "repo_name",
+                    "repo_root"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "active_tab_id",
+            "agent_status",
+            "focused",
+            "label",
+            "number",
+            "pane_count",
+            "tab_count",
+            "workspace_id"
+          ],
+          "type": "object"
+        }
+      }
     },
     "tab_created": {
       "required": [
@@ -322,141 +1628,233 @@
         "root_pane",
         "tab",
         "type"
-      ]
-    },
-    "tab_list": {
-      "required": [
-        "tabs",
-        "type"
       ],
-      "props": [
-        "tabs",
-        "type"
-      ]
-    },
-    "agent_info": {
-      "required": [
-        "agent",
-        "type"
-      ],
-      "props": [
-        "agent",
-        "type"
-      ]
-    },
-    "agent_started": {
-      "required": [
-        "agent",
-        "argv",
-        "type"
-      ],
-      "props": [
-        "agent",
-        "argv",
-        "type"
-      ]
-    },
-    "agent_prompted": {
-      "required": [
-        "agent",
-        "type"
-      ],
-      "props": [
-        "agent",
-        "type"
-      ]
-    },
-    "agent_list": {
-      "required": [
-        "agents",
-        "type"
-      ],
-      "props": [
-        "agents",
-        "type"
-      ]
-    },
-    "agent_view": {
-      "required": [
-        "active",
-        "type"
-      ],
-      "props": [
-        "active",
-        "label",
-        "source",
-        "type"
-      ]
-    },
-    "pane_info": {
-      "required": [
-        "pane",
-        "type"
-      ],
-      "props": [
-        "pane",
-        "type"
-      ]
-    },
-    "pane_list": {
-      "required": [
-        "panes",
-        "type"
-      ],
-      "props": [
-        "panes",
-        "type"
-      ]
-    },
-    "pane_current": {
-      "required": [
-        "pane",
-        "type"
-      ],
-      "props": [
-        "pane",
-        "type"
-      ]
-    },
-    "pane_swap": {
-      "required": [
-        "swap",
-        "type"
-      ],
-      "props": [
-        "swap",
-        "type"
-      ]
-    },
-    "pane_move": {
-      "required": [
-        "move_result",
-        "type"
-      ],
-      "props": [
-        "move_result",
-        "type"
-      ]
-    },
-    "pane_zoom": {
-      "required": [
-        "type",
-        "zoom"
-      ],
-      "props": [
-        "type",
-        "zoom"
-      ]
-    },
-    "pane_layout": {
-      "required": [
-        "layout",
-        "type"
-      ],
-      "props": [
-        "layout",
-        "type"
-      ]
+      "schemas": {
+        "root_pane": {
+          "properties": {
+            "agent": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "agent_session": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "agent": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "id",
+                        "path"
+                      ],
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "agent",
+                    "kind",
+                    "source",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "agent_status": {
+              "enum": [
+                "blocked",
+                "done",
+                "idle",
+                "unknown",
+                "working"
+              ],
+              "type": "string"
+            },
+            "cwd": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "display_agent": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "focused": {
+              "type": "boolean"
+            },
+            "foreground_cwd": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "label": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "scroll": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "max_offset_from_bottom": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "offset_from_bottom": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "viewport_rows": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "max_offset_from_bottom",
+                    "offset_from_bottom",
+                    "viewport_rows"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "state_labels": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "terminal_id": {
+              "type": "string"
+            },
+            "terminal_title": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "terminal_title_stripped": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "title": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "tokens": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "maxProperties": 32,
+              "propertyNames": {
+                "pattern": "^[A-Za-z0-9_-]{1,32}$"
+              },
+              "type": "object"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "agent_status",
+            "focused",
+            "pane_id",
+            "revision",
+            "tab_id",
+            "terminal_id",
+            "workspace_id"
+          ],
+          "type": "object"
+        },
+        "tab": {
+          "properties": {
+            "agent_status": {
+              "enum": [
+                "blocked",
+                "done",
+                "idle",
+                "unknown",
+                "working"
+              ],
+              "type": "string"
+            },
+            "focused": {
+              "type": "boolean"
+            },
+            "label": {
+              "type": "string"
+            },
+            "number": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pane_count": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "agent_status",
+            "focused",
+            "label",
+            "number",
+            "pane_count",
+            "tab_id",
+            "workspace_id"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "const": "tab_created",
+          "type": "string"
+        }
+      }
     },
     "pane_process_info": {
       "required": [
@@ -466,340 +1864,93 @@
       "props": [
         "process_info",
         "type"
-      ]
-    },
-    "layout_export": {
-      "required": [
-        "layout",
-        "type"
       ],
-      "props": [
-        "layout",
-        "type"
-      ]
-    },
-    "layout_apply": {
-      "required": [
-        "layout",
-        "type"
-      ],
-      "props": [
-        "layout",
-        "type"
-      ]
-    },
-    "layout_split_ratio_set": {
-      "required": [
-        "layout",
-        "type"
-      ],
-      "props": [
-        "layout",
-        "type"
-      ]
-    },
-    "pane_neighbor": {
-      "required": [
-        "neighbor",
-        "type"
-      ],
-      "props": [
-        "neighbor",
-        "type"
-      ]
-    },
-    "pane_edges": {
-      "required": [
-        "edges",
-        "type"
-      ],
-      "props": [
-        "edges",
-        "type"
-      ]
-    },
-    "pane_focus_direction": {
-      "required": [
-        "focus",
-        "type"
-      ],
-      "props": [
-        "focus",
-        "type"
-      ]
-    },
-    "pane_resize": {
-      "required": [
-        "resize",
-        "type"
-      ],
-      "props": [
-        "resize",
-        "type"
-      ]
-    },
-    "pane_read": {
-      "required": [
-        "read",
-        "type"
-      ],
-      "props": [
-        "read",
-        "type"
-      ]
-    },
-    "pane_graphics_info": {
-      "required": [
-        "cell_height_px",
-        "cell_width_px",
-        "type"
-      ],
-      "props": [
-        "cell_height_px",
-        "cell_width_px",
-        "type"
-      ]
-    },
-    "agent_explain": {
-      "required": [
-        "explain",
-        "type"
-      ],
-      "props": [
-        "explain",
-        "type"
-      ]
-    },
-    "subscription_started": {
-      "required": [
-        "type"
-      ],
-      "props": [
-        "type"
-      ]
-    },
-    "wait_matched": {
-      "required": [
-        "event",
-        "type"
-      ],
-      "props": [
-        "event",
-        "type"
-      ]
-    },
-    "output_matched": {
-      "required": [
-        "pane_id",
-        "read",
-        "revision",
-        "type"
-      ],
-      "props": [
-        "matched_line",
-        "pane_id",
-        "read",
-        "revision",
-        "type"
-      ]
-    },
-    "notification_show": {
-      "required": [
-        "reason",
-        "shown",
-        "type"
-      ],
-      "props": [
-        "reason",
-        "shown",
-        "type"
-      ]
-    },
-    "client_window_title": {
-      "required": [
-        "changed",
-        "reason",
-        "type"
-      ],
-      "props": [
-        "changed",
-        "reason",
-        "type"
-      ]
-    },
-    "integration_install": {
-      "required": [
-        "details",
-        "target",
-        "type"
-      ],
-      "props": [
-        "details",
-        "target",
-        "type"
-      ]
-    },
-    "integration_uninstall": {
-      "required": [
-        "details",
-        "target",
-        "type"
-      ],
-      "props": [
-        "details",
-        "target",
-        "type"
-      ]
-    },
-    "agent_manifest_reload": {
-      "required": [
-        "manifests",
-        "type"
-      ],
-      "props": [
-        "manifests",
-        "type"
-      ]
-    },
-    "agent_manifest_status": {
-      "required": [
-        "manifests",
-        "type"
-      ],
-      "props": [
-        "last_check_unix",
-        "last_result",
-        "manifests",
-        "type"
-      ]
-    },
-    "plugin_linked": {
-      "required": [
-        "plugin",
-        "type"
-      ],
-      "props": [
-        "plugin",
-        "type"
-      ]
-    },
-    "plugin_list": {
-      "required": [
-        "plugins",
-        "type"
-      ],
-      "props": [
-        "plugins",
-        "type"
-      ]
-    },
-    "plugin_unlinked": {
-      "required": [
-        "plugin_id",
-        "removed",
-        "type"
-      ],
-      "props": [
-        "plugin_id",
-        "removed",
-        "type"
-      ]
-    },
-    "plugin_enabled": {
-      "required": [
-        "plugin",
-        "type"
-      ],
-      "props": [
-        "plugin",
-        "type"
-      ]
-    },
-    "plugin_disabled": {
-      "required": [
-        "plugin",
-        "type"
-      ],
-      "props": [
-        "plugin",
-        "type"
-      ]
-    },
-    "plugin_action_list": {
-      "required": [
-        "actions",
-        "type"
-      ],
-      "props": [
-        "actions",
-        "type"
-      ]
-    },
-    "plugin_action_invoked": {
-      "required": [
-        "action",
-        "context",
-        "log",
-        "type"
-      ],
-      "props": [
-        "action",
-        "context",
-        "log",
-        "type"
-      ]
-    },
-    "plugin_log_list": {
-      "required": [
-        "logs",
-        "type"
-      ],
-      "props": [
-        "logs",
-        "type"
-      ]
-    },
-    "plugin_pane_opened": {
-      "required": [
-        "plugin_pane",
-        "type"
-      ],
-      "props": [
-        "plugin_pane",
-        "type"
-      ]
-    },
-    "plugin_pane_focused": {
-      "required": [
-        "plugin_pane",
-        "type"
-      ],
-      "props": [
-        "plugin_pane",
-        "type"
-      ]
-    },
-    "plugin_pane_closed": {
-      "required": [
-        "pane_id",
-        "type"
-      ],
-      "props": [
-        "pane_id",
-        "type"
-      ]
-    },
-    "config_reload": {
-      "required": [
-        "diagnostics",
-        "status",
-        "type"
-      ],
-      "props": [
-        "diagnostics",
-        "status",
-        "type"
-      ]
+      "schemas": {
+        "process_info": {
+          "properties": {
+            "foreground_process_group_id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "foreground_processes": {
+              "items": {
+                "properties": {
+                  "argv": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
+                  },
+                  "argv0": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "cmdline": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "cwd": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "pid": {
+                    "format": "uint32",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "name",
+                  "pid"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "shell_pid": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "tty": {
+              "type": [
+                "null",
+                "string"
+              ]
+            }
+          },
+          "required": [
+            "pane_id"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "const": "pane_process_info",
+          "type": "string"
+        }
+      }
     },
     "ok": {
       "required": [
@@ -807,808 +1958,13 @@
       ],
       "props": [
         "type"
-      ]
-    }
-  },
-  "defs": {
-    "AgentInfo": {
-      "required": [
-        "agent_status",
-        "focused",
-        "pane_id",
-        "revision",
-        "tab_id",
-        "terminal_id",
-        "workspace_id"
       ],
-      "props": [
-        "agent",
-        "agent_session",
-        "agent_status",
-        "cwd",
-        "display_agent",
-        "focused",
-        "foreground_cwd",
-        "interactive_ready",
-        "launch_pending",
-        "name",
-        "pane_id",
-        "revision",
-        "screen_detection_skipped",
-        "state_change_seq",
-        "state_labels",
-        "tab_id",
-        "terminal_id",
-        "terminal_title",
-        "terminal_title_stripped",
-        "title",
-        "tokens",
-        "workspace_id"
-      ]
-    },
-    "AgentManifestInfo": {
-      "required": [
-        "agent",
-        "local_override_shadowing_remote",
-        "source",
-        "source_kind"
-      ],
-      "props": [
-        "active_version",
-        "agent",
-        "cached_remote_version",
-        "local_override_shadowing_remote",
-        "remote_last_checked_unix",
-        "remote_update_error",
-        "remote_update_result",
-        "source",
-        "source_kind",
-        "warning"
-      ]
-    },
-    "AgentSessionInfo": {
-      "required": [
-        "agent",
-        "kind",
-        "source",
-        "value"
-      ],
-      "props": [
-        "agent",
-        "kind",
-        "source",
-        "value"
-      ]
-    },
-    "AgentSessionRefKind": {
-      "required": [],
-      "props": []
-    },
-    "AgentStatus": {
-      "required": [],
-      "props": []
-    },
-    "ClientWindowTitleReason": {
-      "required": [],
-      "props": []
-    },
-    "ConfigReloadStatus": {
-      "required": [],
-      "props": []
-    },
-    "EventData": {
-      "required": [],
-      "props": []
-    },
-    "EventEnvelope": {
-      "required": [
-        "data",
-        "event"
-      ],
-      "props": [
-        "data",
-        "event"
-      ]
-    },
-    "EventKind": {
-      "required": [],
-      "props": []
-    },
-    "InstalledPluginInfo": {
-      "required": [
-        "enabled",
-        "manifest_path",
-        "name",
-        "plugin_id",
-        "plugin_root",
-        "version"
-      ],
-      "props": [
-        "actions",
-        "build",
-        "description",
-        "enabled",
-        "events",
-        "link_handlers",
-        "manifest_path",
-        "min_herdr_version",
-        "name",
-        "panes",
-        "platforms",
-        "plugin_id",
-        "plugin_root",
-        "source",
-        "startup",
-        "version",
-        "warnings"
-      ]
-    },
-    "IntegrationInstallResult": {
-      "required": [
-        "messages"
-      ],
-      "props": [
-        "messages"
-      ]
-    },
-    "IntegrationTarget": {
-      "required": [],
-      "props": []
-    },
-    "IntegrationUninstallResult": {
-      "required": [
-        "messages"
-      ],
-      "props": [
-        "messages"
-      ]
-    },
-    "LayoutDescription": {
-      "required": [
-        "focused_pane_id",
-        "root",
-        "tab_id",
-        "workspace_id",
-        "zoomed"
-      ],
-      "props": [
-        "focused_pane_id",
-        "root",
-        "tab_id",
-        "workspace_id",
-        "zoomed"
-      ]
-    },
-    "LayoutNode": {
-      "required": [],
-      "props": []
-    },
-    "NotificationShowReason": {
-      "required": [],
-      "props": []
-    },
-    "PaneDirection": {
-      "required": [],
-      "props": []
-    },
-    "PaneEdgesResult": {
-      "required": [
-        "down",
-        "layout",
-        "left",
-        "pane_id",
-        "right",
-        "up"
-      ],
-      "props": [
-        "down",
-        "layout",
-        "left",
-        "pane_id",
-        "right",
-        "up"
-      ]
-    },
-    "PaneFocusDirectionReason": {
-      "required": [],
-      "props": []
-    },
-    "PaneFocusDirectionResult": {
-      "required": [
-        "changed",
-        "layout",
-        "source_pane_id"
-      ],
-      "props": [
-        "changed",
-        "focused_pane_id",
-        "layout",
-        "reason",
-        "source_pane_id"
-      ]
-    },
-    "PaneInfo": {
-      "required": [
-        "agent_status",
-        "focused",
-        "pane_id",
-        "revision",
-        "tab_id",
-        "terminal_id",
-        "workspace_id"
-      ],
-      "props": [
-        "agent",
-        "agent_session",
-        "agent_status",
-        "cwd",
-        "display_agent",
-        "focused",
-        "foreground_cwd",
-        "label",
-        "pane_id",
-        "revision",
-        "scroll",
-        "state_labels",
-        "tab_id",
-        "terminal_id",
-        "terminal_title",
-        "terminal_title_stripped",
-        "title",
-        "tokens",
-        "workspace_id"
-      ]
-    },
-    "PaneLayoutPane": {
-      "required": [
-        "focused",
-        "pane_id",
-        "rect"
-      ],
-      "props": [
-        "focused",
-        "pane_id",
-        "rect"
-      ]
-    },
-    "PaneLayoutRect": {
-      "required": [
-        "height",
-        "width",
-        "x",
-        "y"
-      ],
-      "props": [
-        "height",
-        "width",
-        "x",
-        "y"
-      ]
-    },
-    "PaneLayoutSnapshot": {
-      "required": [
-        "area",
-        "focused_pane_id",
-        "panes",
-        "splits",
-        "tab_id",
-        "workspace_id",
-        "zoomed"
-      ],
-      "props": [
-        "area",
-        "focused_pane_id",
-        "panes",
-        "splits",
-        "tab_id",
-        "workspace_id",
-        "zoomed"
-      ]
-    },
-    "PaneLayoutSplit": {
-      "required": [
-        "direction",
-        "id",
-        "ratio",
-        "rect"
-      ],
-      "props": [
-        "direction",
-        "id",
-        "ratio",
-        "rect"
-      ]
-    },
-    "PaneMoveReason": {
-      "required": [],
-      "props": []
-    },
-    "PaneMoveResult": {
-      "required": [
-        "changed",
-        "focused_pane_id",
-        "pane",
-        "previous_pane_id",
-        "previous_tab_id",
-        "previous_workspace_id",
-        "target_layout"
-      ],
-      "props": [
-        "changed",
-        "closed_tab_id",
-        "closed_workspace_id",
-        "created_tab",
-        "created_workspace",
-        "focused_pane_id",
-        "pane",
-        "previous_pane_id",
-        "previous_tab_id",
-        "previous_workspace_id",
-        "reason",
-        "source_layout",
-        "target_layout"
-      ]
-    },
-    "PaneNeighborResult": {
-      "required": [
-        "direction",
-        "layout",
-        "pane_id"
-      ],
-      "props": [
-        "direction",
-        "layout",
-        "neighbor_pane_id",
-        "pane_id"
-      ]
-    },
-    "PaneProcessInfo": {
-      "required": [
-        "pane_id"
-      ],
-      "props": [
-        "foreground_process_group_id",
-        "foreground_processes",
-        "pane_id",
-        "shell_pid",
-        "tty"
-      ]
-    },
-    "PaneProcessInfoProcess": {
-      "required": [
-        "name",
-        "pid"
-      ],
-      "props": [
-        "argv",
-        "argv0",
-        "cmdline",
-        "cwd",
-        "name",
-        "pid"
-      ]
-    },
-    "PaneReadResult": {
-      "required": [
-        "format",
-        "pane_id",
-        "revision",
-        "source",
-        "tab_id",
-        "text",
-        "truncated",
-        "workspace_id"
-      ],
-      "props": [
-        "format",
-        "pane_id",
-        "revision",
-        "source",
-        "tab_id",
-        "text",
-        "truncated",
-        "workspace_id"
-      ]
-    },
-    "PaneResizeReason": {
-      "required": [],
-      "props": []
-    },
-    "PaneResizeResult": {
-      "required": [
-        "changed",
-        "focused_pane_id",
-        "layout",
-        "pane_id"
-      ],
-      "props": [
-        "changed",
-        "focused_pane_id",
-        "layout",
-        "pane_id",
-        "reason"
-      ]
-    },
-    "PaneScrollInfo": {
-      "required": [
-        "max_offset_from_bottom",
-        "offset_from_bottom",
-        "viewport_rows"
-      ],
-      "props": [
-        "max_offset_from_bottom",
-        "offset_from_bottom",
-        "viewport_rows"
-      ]
-    },
-    "PaneSwapReason": {
-      "required": [],
-      "props": []
-    },
-    "PaneSwapResult": {
-      "required": [
-        "changed",
-        "focused_pane_id",
-        "layout",
-        "source_pane_id"
-      ],
-      "props": [
-        "changed",
-        "focused_pane_id",
-        "layout",
-        "reason",
-        "source_pane_id",
-        "target_pane_id"
-      ]
-    },
-    "PaneZoomReason": {
-      "required": [],
-      "props": []
-    },
-    "PaneZoomResult": {
-      "required": [
-        "changed",
-        "focus_changed",
-        "focused_pane_id",
-        "layout",
-        "pane_id",
-        "zoom_changed",
-        "zoomed"
-      ],
-      "props": [
-        "changed",
-        "focus_changed",
-        "focused_pane_id",
-        "layout",
-        "pane_id",
-        "reason",
-        "zoom_changed",
-        "zoomed"
-      ]
-    },
-    "PluginActionContext": {
-      "required": [],
-      "props": []
-    },
-    "PluginActionInfo": {
-      "required": [
-        "action_id",
-        "command",
-        "plugin_id",
-        "title"
-      ],
-      "props": [
-        "action_id",
-        "command",
-        "contexts",
-        "description",
-        "platforms",
-        "plugin_id",
-        "title"
-      ]
-    },
-    "PluginCommandLogInfo": {
-      "required": [
-        "command",
-        "log_id",
-        "plugin_id",
-        "started_unix_ms",
-        "status"
-      ],
-      "props": [
-        "action_id",
-        "command",
-        "error",
-        "event",
-        "exit_code",
-        "finished_unix_ms",
-        "log_id",
-        "plugin_id",
-        "started_unix_ms",
-        "status",
-        "stderr",
-        "stdout"
-      ]
-    },
-    "PluginCommandStatus": {
-      "required": [],
-      "props": []
-    },
-    "PluginInvocationContext": {
-      "required": [],
-      "props": [
-        "clicked_url",
-        "correlation_id",
-        "focused_pane_agent",
-        "focused_pane_cwd",
-        "focused_pane_id",
-        "focused_pane_status",
-        "invocation_source",
-        "link_handler_id",
-        "selected_text",
-        "tab_id",
-        "tab_label",
-        "workspace_cwd",
-        "workspace_id",
-        "workspace_label",
-        "worktree"
-      ]
-    },
-    "PluginManifestAction": {
-      "required": [
-        "command",
-        "id",
-        "title"
-      ],
-      "props": [
-        "command",
-        "contexts",
-        "description",
-        "id",
-        "platforms",
-        "title"
-      ]
-    },
-    "PluginManifestBuild": {
-      "required": [
-        "command"
-      ],
-      "props": [
-        "command",
-        "platforms"
-      ]
-    },
-    "PluginManifestEventHook": {
-      "required": [
-        "command",
-        "on"
-      ],
-      "props": [
-        "command",
-        "on",
-        "platforms"
-      ]
-    },
-    "PluginManifestLinkHandler": {
-      "required": [
-        "action",
-        "id",
-        "pattern",
-        "title"
-      ],
-      "props": [
-        "action",
-        "id",
-        "pattern",
-        "platforms",
-        "title"
-      ]
-    },
-    "PluginManifestPane": {
-      "required": [
-        "command",
-        "id",
-        "title"
-      ],
-      "props": [
-        "command",
-        "description",
-        "height",
-        "id",
-        "placement",
-        "platforms",
-        "title",
-        "width"
-      ]
-    },
-    "PluginManifestStartup": {
-      "required": [
-        "command"
-      ],
-      "props": [
-        "command",
-        "platforms"
-      ]
-    },
-    "PluginPaneInfo": {
-      "required": [
-        "entrypoint",
-        "pane",
-        "plugin_id"
-      ],
-      "props": [
-        "entrypoint",
-        "pane",
-        "plugin_id"
-      ]
-    },
-    "PluginPanePlacement": {
-      "required": [],
-      "props": []
-    },
-    "PluginPlatform": {
-      "required": [],
-      "props": []
-    },
-    "PluginSourceInfo": {
-      "required": [],
-      "props": [
-        "installed_unix_ms",
-        "kind",
-        "managed_path",
-        "owner",
-        "repo",
-        "requested_ref",
-        "resolved_commit",
-        "subdir"
-      ]
-    },
-    "PluginSourceKind": {
-      "required": [],
-      "props": []
-    },
-    "PopupSize": {
-      "required": [],
-      "props": []
-    },
-    "ReadFormat": {
-      "required": [],
-      "props": []
-    },
-    "ReadSource": {
-      "required": [],
-      "props": []
-    },
-    "ServerCapabilities": {
-      "required": [
-        "live_handoff"
-      ],
-      "props": [
-        "detached_server_daemon",
-        "live_handoff"
-      ]
-    },
-    "SessionSnapshot": {
-      "required": [
-        "agents",
-        "layouts",
-        "panes",
-        "protocol",
-        "tabs",
-        "version",
-        "workspaces"
-      ],
-      "props": [
-        "agents",
-        "focused_pane_id",
-        "focused_tab_id",
-        "focused_workspace_id",
-        "layouts",
-        "panes",
-        "protocol",
-        "tabs",
-        "version",
-        "workspaces"
-      ]
-    },
-    "SplitDirection": {
-      "required": [],
-      "props": []
-    },
-    "TabInfo": {
-      "required": [
-        "agent_status",
-        "focused",
-        "label",
-        "number",
-        "pane_count",
-        "tab_id",
-        "workspace_id"
-      ],
-      "props": [
-        "agent_status",
-        "focused",
-        "label",
-        "number",
-        "pane_count",
-        "tab_id",
-        "workspace_id"
-      ]
-    },
-    "WorkspaceInfo": {
-      "required": [
-        "active_tab_id",
-        "agent_status",
-        "focused",
-        "label",
-        "number",
-        "pane_count",
-        "tab_count",
-        "workspace_id"
-      ],
-      "props": [
-        "active_tab_id",
-        "agent_status",
-        "focused",
-        "label",
-        "number",
-        "pane_count",
-        "tab_count",
-        "tokens",
-        "workspace_id",
-        "worktree"
-      ]
-    },
-    "WorkspaceWorktreeInfo": {
-      "required": [
-        "checkout_path",
-        "is_linked_worktree",
-        "repo_key",
-        "repo_name",
-        "repo_root"
-      ],
-      "props": [
-        "checkout_path",
-        "is_linked_worktree",
-        "repo_key",
-        "repo_name",
-        "repo_root"
-      ]
-    },
-    "WorktreeInfo": {
-      "required": [
-        "is_bare",
-        "is_detached",
-        "is_linked_worktree",
-        "is_prunable",
-        "label",
-        "path"
-      ],
-      "props": [
-        "branch",
-        "is_bare",
-        "is_detached",
-        "is_linked_worktree",
-        "is_prunable",
-        "label",
-        "open_workspace_id",
-        "path"
-      ]
-    },
-    "WorktreeSourceInfo": {
-      "required": [
-        "repo_key",
-        "repo_name",
-        "repo_root",
-        "source_checkout_path"
-      ],
-      "props": [
-        "repo_key",
-        "repo_name",
-        "repo_root",
-        "source_checkout_path",
-        "source_workspace_id"
-      ]
+      "schemas": {
+        "type": {
+          "const": "ok",
+          "type": "string"
+        }
+      }
     }
   }
 }

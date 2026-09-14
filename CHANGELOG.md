@@ -5,6 +5,16 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-09-14
+
+_tracks tag `v0.9.1`_
+
+### Fixed
+- Opening a second agent tab under the same usage label (e.g. "discuss") no
+  longer fails and closes the popup tab. Herdr rejected the reused agent name
+  with `agent_name_taken`; starting the pane now retries with a numbered name
+  (`discuss-2`, `discuss-3`, ...) instead of giving up.
+
 ## [0.9.0] - 2026-09-09
 
 _tracks tag `v0.9.0`_

@@ -20,6 +20,7 @@ use crate::state;
 
 /// Herdr's refusal when a pane is not yet sitting at an interactive shell prompt.
 const PANE_BUSY: &str = "agent_pane_busy";
+const NAME_TAKEN: &str = "agent_name_taken";
 const START_TIMEOUT: Duration = Duration::from_secs(10);
 const START_RETRY: Duration = Duration::from_millis(250);
 
@@ -386,22 +387,39 @@ fn agent_name(label: &str, kind: &str) -> String {
     }
 }
 
+/// `base-number`, truncating the base so the whole still fits Herdr's 32 characters.
+fn numbered_agent_name(base: &str, number: usize) -> String {
+    let suffix = format!("-{number}");
+    let base = &base[..base.len().min(32 - suffix.len())];
+    format!("{}{suffix}", base.trim_end_matches(['-', '_']))
+}
+
 /// A pane whose shell has not reached its prompt is refused, and a real profile takes
-/// seconds to get there, so only that refusal is worth retrying.
-fn start_agent(client: &dyn HerdrClient, params: Value) -> Result<()> {
+/// seconds to get there, so that refusal is retried as is. A name another agent already
+/// holds — two tabs opened under one usage label — is retried under a numbered name.
+fn start_agent(client: &dyn HerdrClient, mut params: Value) -> Result<()> {
     let deadline = Instant::now() + START_TIMEOUT;
+    let base = params["name"].as_str().unwrap_or_default().to_owned();
+    let mut number = 1;
     loop {
         let error = match client.agent_start(params.clone()) {
             Ok(_) => return Ok(()),
             Err(error) => error,
         };
-        let busy = error
+        let code = error
             .downcast_ref::<ErrorResponse>()
-            .is_some_and(|response| response.code == PANE_BUSY);
-        if !busy || Instant::now() >= deadline {
+            .map(|response| response.code.as_str());
+        if Instant::now() >= deadline {
             return Err(error);
         }
-        thread::sleep(START_RETRY);
+        match code {
+            Some(PANE_BUSY) => thread::sleep(START_RETRY),
+            Some(NAME_TAKEN) => {
+                number += 1;
+                params["name"] = json!(numbered_agent_name(&base, number));
+            }
+            _ => return Err(error),
+        }
     }
 }
 
@@ -2265,6 +2283,48 @@ mod popup {
             !calls.iter().any(|(method, _)| method == "tab.close"),
             "{calls:?}"
         );
+    }
+
+    /// Two tabs opened under the same usage label reduce to the same agent name, which Herdr
+    /// refuses, so the second start takes a numbered name instead of closing its tab.
+    #[test]
+    fn a_taken_agent_name_is_retried_with_a_number() {
+        let client = FakeClient::default();
+        queue_popup_apply(&client);
+        client.queue_error(
+            "agent.start",
+            NAME_TAKEN,
+            "agent name discuss is already used",
+        );
+        let mut choice = popup_choice();
+        choice.agents[0].start = Some(AgentStart {
+            kind: "codex".to_owned(),
+            args: Vec::new(),
+        });
+
+        create_popup_tab(&client, &default_layout(), &choice, None).unwrap();
+
+        let calls = client.calls.borrow();
+        let names: Vec<String> = calls
+            .iter()
+            .filter(|(method, _)| method == "agent.start")
+            .map(|(_, params)| params["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(names.len(), 2, "{calls:?}");
+        assert_eq!(names[1], format!("{}-2", names[0]));
+        assert!(
+            !calls.iter().any(|(method, _)| method == "tab.close"),
+            "{calls:?}"
+        );
+    }
+
+    #[test]
+    fn a_numbered_agent_name_stays_within_herdrs_limit() {
+        assert_eq!(numbered_agent_name("discuss", 2), "discuss-2");
+        let long = "a".repeat(32);
+        let numbered = numbered_agent_name(&long, 12);
+        assert_eq!(numbered.len(), 32);
+        assert!(numbered.ends_with("a-12"), "{numbered}");
     }
 
     /// Herdr refuses `invalid_agent_name` outright, and every real layout labels its panes

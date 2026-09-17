@@ -1009,7 +1009,7 @@ mod tests {
         client.queue_response(
             "tab.create",
             json!({
-                "type": "tab.created",
+                "type": "tab_created",
                 "root_pane": {"pane_id": "p-root"},
                 "tab": {"tab_id": "t-ssh"}
             }),

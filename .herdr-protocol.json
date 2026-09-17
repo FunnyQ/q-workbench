@@ -1,6 +1,162 @@
 {
   "protocol": 22,
   "methods": {
+    "agent.start": {
+      "required": [
+        "kind",
+        "name",
+        "pane_id"
+      ],
+      "props": [
+        "args",
+        "kind",
+        "name",
+        "pane_id",
+        "timeout_ms"
+      ],
+      "schemas": {
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "pane_id": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "layout.apply": {
+      "required": [
+        "root"
+      ],
+      "props": [
+        "focus",
+        "root",
+        "tab_id",
+        "tab_label",
+        "workspace_id"
+      ],
+      "schemas": {
+        "focus": {
+          "type": "boolean"
+        },
+        "root": {
+          "oneOf": [
+            {
+              "properties": {
+                "command": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                },
+                "cwd": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "env": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "label": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "pane_id": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "type": {
+                  "const": "pane",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "direction": {
+                  "enum": [
+                    "down",
+                    "right"
+                  ],
+                  "type": "string"
+                },
+                "first": {
+                  "$ref": "LayoutNode"
+                },
+                "ratio": {
+                  "format": "float",
+                  "type": "number"
+                },
+                "second": {
+                  "$ref": "LayoutNode"
+                },
+                "type": {
+                  "const": "split",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "direction",
+                "first",
+                "ratio",
+                "second",
+                "type"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "tab_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "tab_label": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "workspace_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
     "layout.export": {
       "required": [],
       "props": [
@@ -254,6 +410,59 @@
           ]
         },
         "pane_id": {
+          "type": "string"
+        }
+      }
+    },
+    "pane.report_agent_session": {
+      "required": [
+        "agent",
+        "pane_id",
+        "source"
+      ],
+      "props": [
+        "agent",
+        "agent_session_id",
+        "agent_session_path",
+        "pane_id",
+        "seq",
+        "session_start_source",
+        "source"
+      ],
+      "schemas": {
+        "agent": {
+          "type": "string"
+        },
+        "agent_session_id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "agent_session_path": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "pane_id": {
+          "type": "string"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "session_start_source": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "source": {
           "type": "string"
         }
       }
@@ -1618,19 +1827,19 @@
         }
       }
     },
-    "tab_created": {
+    "agent_started": {
       "required": [
-        "root_pane",
-        "tab",
+        "agent",
+        "argv",
         "type"
       ],
       "props": [
-        "root_pane",
-        "tab",
+        "agent",
+        "argv",
         "type"
       ],
       "schemas": {
-        "root_pane": {
+        "agent": {
           "properties": {
             "agent": {
               "type": [
@@ -1703,7 +1912,13 @@
                 "string"
               ]
             },
-            "label": {
+            "interactive_ready": {
+              "type": "boolean"
+            },
+            "launch_pending": {
+              "type": "boolean"
+            },
+            "name": {
               "type": [
                 "null",
                 "string"
@@ -1717,37 +1932,13 @@
               "minimum": 0,
               "type": "integer"
             },
-            "scroll": {
-              "anyOf": [
-                {
-                  "properties": {
-                    "max_offset_from_bottom": {
-                      "format": "uint64",
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    "offset_from_bottom": {
-                      "format": "uint64",
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    "viewport_rows": {
-                      "format": "uint64",
-                      "minimum": 0,
-                      "type": "integer"
-                    }
-                  },
-                  "required": [
-                    "max_offset_from_bottom",
-                    "offset_from_bottom",
-                    "viewport_rows"
-                  ],
-                  "type": "object"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+            "screen_detection_skipped": {
+              "type": "boolean"
+            },
+            "state_change_seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
             },
             "state_labels": {
               "additionalProperties": {
@@ -1804,54 +1995,14 @@
           ],
           "type": "object"
         },
-        "tab": {
-          "properties": {
-            "agent_status": {
-              "enum": [
-                "blocked",
-                "done",
-                "idle",
-                "unknown",
-                "working"
-              ],
-              "type": "string"
-            },
-            "focused": {
-              "type": "boolean"
-            },
-            "label": {
-              "type": "string"
-            },
-            "number": {
-              "format": "uint",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "pane_count": {
-              "format": "uint",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "tab_id": {
-              "type": "string"
-            },
-            "workspace_id": {
-              "type": "string"
-            }
+        "argv": {
+          "items": {
+            "type": "string"
           },
-          "required": [
-            "agent_status",
-            "focused",
-            "label",
-            "number",
-            "pane_count",
-            "tab_id",
-            "workspace_id"
-          ],
-          "type": "object"
+          "type": "array"
         },
         "type": {
-          "const": "tab_created",
+          "const": "agent_started",
           "type": "string"
         }
       }
@@ -1948,6 +2099,128 @@
         },
         "type": {
           "const": "pane_process_info",
+          "type": "string"
+        }
+      }
+    },
+    "layout_apply": {
+      "required": [
+        "layout",
+        "type"
+      ],
+      "props": [
+        "layout",
+        "type"
+      ],
+      "schemas": {
+        "layout": {
+          "properties": {
+            "focused_pane_id": {
+              "type": "string"
+            },
+            "root": {
+              "oneOf": [
+                {
+                  "properties": {
+                    "command": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
+                    },
+                    "cwd": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "env": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    },
+                    "label": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "pane_id": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "type": {
+                      "const": "pane",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "properties": {
+                    "direction": {
+                      "enum": [
+                        "down",
+                        "right"
+                      ],
+                      "type": "string"
+                    },
+                    "first": {
+                      "$ref": "LayoutNode"
+                    },
+                    "ratio": {
+                      "format": "float",
+                      "type": "number"
+                    },
+                    "second": {
+                      "$ref": "LayoutNode"
+                    },
+                    "type": {
+                      "const": "split",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "direction",
+                    "first",
+                    "ratio",
+                    "second",
+                    "type"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            },
+            "zoomed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "focused_pane_id",
+            "root",
+            "tab_id",
+            "workspace_id",
+            "zoomed"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "const": "layout_apply",
           "type": "string"
         }
       }

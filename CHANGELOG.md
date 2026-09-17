@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-09-17
+
+_tracks tag `v0.9.2`_
+
+### Changed
+- No user-facing behavior change. This release confirms compatibility with
+  Herdr 0.9.1 (the socket protocol stays at 22) and regenerates the
+  committed protocol baseline, which now tracks 17 response types instead
+  of 8. A test-fixture typo that used the event topic name `tab.created`
+  instead of the real result type `tab_created` is also fixed.
+
 ## [0.9.1] - 2026-09-14
 
 _tracks tag `v0.9.1`_

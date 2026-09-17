@@ -1827,6 +1827,359 @@
         }
       }
     },
+    "workspace_list": {
+      "required": [
+        "type",
+        "workspaces"
+      ],
+      "props": [
+        "type",
+        "workspaces"
+      ],
+      "schemas": {
+        "type": {
+          "const": "workspace_list",
+          "type": "string"
+        },
+        "workspaces": {
+          "items": {
+            "properties": {
+              "active_tab_id": {
+                "type": "string"
+              },
+              "agent_status": {
+                "enum": [
+                  "blocked",
+                  "done",
+                  "idle",
+                  "unknown",
+                  "working"
+                ],
+                "type": "string"
+              },
+              "focused": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "number": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "pane_count": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "tab_count": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "tokens": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "maxProperties": 32,
+                "propertyNames": {
+                  "pattern": "^[A-Za-z0-9_-]{1,32}$"
+                },
+                "type": "object"
+              },
+              "workspace_id": {
+                "type": "string"
+              },
+              "worktree": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "checkout_path": {
+                        "type": "string"
+                      },
+                      "is_linked_worktree": {
+                        "type": "boolean"
+                      },
+                      "repo_key": {
+                        "type": "string"
+                      },
+                      "repo_name": {
+                        "type": "string"
+                      },
+                      "repo_root": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "checkout_path",
+                      "is_linked_worktree",
+                      "repo_key",
+                      "repo_name",
+                      "repo_root"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "active_tab_id",
+              "agent_status",
+              "focused",
+              "label",
+              "number",
+              "pane_count",
+              "tab_count",
+              "workspace_id"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      }
+    },
+    "tab_created": {
+      "required": [
+        "root_pane",
+        "tab",
+        "type"
+      ],
+      "props": [
+        "root_pane",
+        "tab",
+        "type"
+      ],
+      "schemas": {
+        "root_pane": {
+          "properties": {
+            "agent": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "agent_session": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "agent": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "id",
+                        "path"
+                      ],
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "agent",
+                    "kind",
+                    "source",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "agent_status": {
+              "enum": [
+                "blocked",
+                "done",
+                "idle",
+                "unknown",
+                "working"
+              ],
+              "type": "string"
+            },
+            "cwd": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "display_agent": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "focused": {
+              "type": "boolean"
+            },
+            "foreground_cwd": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "label": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "scroll": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "max_offset_from_bottom": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "offset_from_bottom": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "viewport_rows": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "max_offset_from_bottom",
+                    "offset_from_bottom",
+                    "viewport_rows"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "state_labels": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "terminal_id": {
+              "type": "string"
+            },
+            "terminal_title": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "terminal_title_stripped": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "title": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "tokens": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "maxProperties": 32,
+              "propertyNames": {
+                "pattern": "^[A-Za-z0-9_-]{1,32}$"
+              },
+              "type": "object"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "agent_status",
+            "focused",
+            "pane_id",
+            "revision",
+            "tab_id",
+            "terminal_id",
+            "workspace_id"
+          ],
+          "type": "object"
+        },
+        "tab": {
+          "properties": {
+            "agent_status": {
+              "enum": [
+                "blocked",
+                "done",
+                "idle",
+                "unknown",
+                "working"
+              ],
+              "type": "string"
+            },
+            "focused": {
+              "type": "boolean"
+            },
+            "label": {
+              "type": "string"
+            },
+            "number": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pane_count": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "agent_status",
+            "focused",
+            "label",
+            "number",
+            "pane_count",
+            "tab_id",
+            "workspace_id"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "const": "tab_created",
+          "type": "string"
+        }
+      }
+    },
     "agent_started": {
       "required": [
         "agent",
@@ -2007,6 +2360,773 @@
         }
       }
     },
+    "pane_info": {
+      "required": [
+        "pane",
+        "type"
+      ],
+      "props": [
+        "pane",
+        "type"
+      ],
+      "schemas": {
+        "pane": {
+          "properties": {
+            "agent": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "agent_session": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "agent": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "id",
+                        "path"
+                      ],
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "agent",
+                    "kind",
+                    "source",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "agent_status": {
+              "enum": [
+                "blocked",
+                "done",
+                "idle",
+                "unknown",
+                "working"
+              ],
+              "type": "string"
+            },
+            "cwd": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "display_agent": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "focused": {
+              "type": "boolean"
+            },
+            "foreground_cwd": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "label": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "scroll": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "max_offset_from_bottom": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "offset_from_bottom": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "viewport_rows": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "max_offset_from_bottom",
+                    "offset_from_bottom",
+                    "viewport_rows"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "state_labels": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "terminal_id": {
+              "type": "string"
+            },
+            "terminal_title": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "terminal_title_stripped": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "title": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "tokens": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "maxProperties": 32,
+              "propertyNames": {
+                "pattern": "^[A-Za-z0-9_-]{1,32}$"
+              },
+              "type": "object"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "agent_status",
+            "focused",
+            "pane_id",
+            "revision",
+            "tab_id",
+            "terminal_id",
+            "workspace_id"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "const": "pane_info",
+          "type": "string"
+        }
+      }
+    },
+    "pane_list": {
+      "required": [
+        "panes",
+        "type"
+      ],
+      "props": [
+        "panes",
+        "type"
+      ],
+      "schemas": {
+        "panes": {
+          "items": {
+            "properties": {
+              "agent": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "agent_session": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "agent": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "enum": [
+                          "id",
+                          "path"
+                        ],
+                        "type": "string"
+                      },
+                      "source": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "agent",
+                      "kind",
+                      "source",
+                      "value"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "agent_status": {
+                "enum": [
+                  "blocked",
+                  "done",
+                  "idle",
+                  "unknown",
+                  "working"
+                ],
+                "type": "string"
+              },
+              "cwd": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "display_agent": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "focused": {
+                "type": "boolean"
+              },
+              "foreground_cwd": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "label": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "pane_id": {
+                "type": "string"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "scroll": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "max_offset_from_bottom": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "offset_from_bottom": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "viewport_rows": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "max_offset_from_bottom",
+                      "offset_from_bottom",
+                      "viewport_rows"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state_labels": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "tab_id": {
+                "type": "string"
+              },
+              "terminal_id": {
+                "type": "string"
+              },
+              "terminal_title": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "terminal_title_stripped": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "title": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "tokens": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "maxProperties": 32,
+                "propertyNames": {
+                  "pattern": "^[A-Za-z0-9_-]{1,32}$"
+                },
+                "type": "object"
+              },
+              "workspace_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "agent_status",
+              "focused",
+              "pane_id",
+              "revision",
+              "tab_id",
+              "terminal_id",
+              "workspace_id"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "pane_list",
+          "type": "string"
+        }
+      }
+    },
+    "pane_current": {
+      "required": [
+        "pane",
+        "type"
+      ],
+      "props": [
+        "pane",
+        "type"
+      ],
+      "schemas": {
+        "pane": {
+          "properties": {
+            "agent": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "agent_session": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "agent": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "id",
+                        "path"
+                      ],
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "agent",
+                    "kind",
+                    "source",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "agent_status": {
+              "enum": [
+                "blocked",
+                "done",
+                "idle",
+                "unknown",
+                "working"
+              ],
+              "type": "string"
+            },
+            "cwd": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "display_agent": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "focused": {
+              "type": "boolean"
+            },
+            "foreground_cwd": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "label": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "scroll": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "max_offset_from_bottom": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "offset_from_bottom": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "viewport_rows": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "max_offset_from_bottom",
+                    "offset_from_bottom",
+                    "viewport_rows"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "state_labels": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "terminal_id": {
+              "type": "string"
+            },
+            "terminal_title": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "terminal_title_stripped": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "title": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "tokens": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "maxProperties": 32,
+              "propertyNames": {
+                "pattern": "^[A-Za-z0-9_-]{1,32}$"
+              },
+              "type": "object"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "agent_status",
+            "focused",
+            "pane_id",
+            "revision",
+            "tab_id",
+            "terminal_id",
+            "workspace_id"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "const": "pane_current",
+          "type": "string"
+        }
+      }
+    },
+    "pane_layout": {
+      "required": [
+        "layout",
+        "type"
+      ],
+      "props": [
+        "layout",
+        "type"
+      ],
+      "schemas": {
+        "layout": {
+          "properties": {
+            "area": {
+              "properties": {
+                "height": {
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "width": {
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "x": {
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "y": {
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "height",
+                "width",
+                "x",
+                "y"
+              ],
+              "type": "object"
+            },
+            "focused_pane_id": {
+              "type": "string"
+            },
+            "panes": {
+              "items": {
+                "properties": {
+                  "focused": {
+                    "type": "boolean"
+                  },
+                  "pane_id": {
+                    "type": "string"
+                  },
+                  "rect": {
+                    "properties": {
+                      "height": {
+                        "format": "uint16",
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "width": {
+                        "format": "uint16",
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "x": {
+                        "format": "uint16",
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "y": {
+                        "format": "uint16",
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "height",
+                      "width",
+                      "x",
+                      "y"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "focused",
+                  "pane_id",
+                  "rect"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "splits": {
+              "items": {
+                "properties": {
+                  "direction": {
+                    "enum": [
+                      "down",
+                      "right"
+                    ],
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "ratio": {
+                    "format": "float",
+                    "type": "number"
+                  },
+                  "rect": {
+                    "properties": {
+                      "height": {
+                        "format": "uint16",
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "width": {
+                        "format": "uint16",
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "x": {
+                        "format": "uint16",
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "y": {
+                        "format": "uint16",
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "height",
+                      "width",
+                      "x",
+                      "y"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "direction",
+                  "id",
+                  "ratio",
+                  "rect"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            },
+            "zoomed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "area",
+            "focused_pane_id",
+            "panes",
+            "splits",
+            "tab_id",
+            "workspace_id",
+            "zoomed"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "const": "pane_layout",
+          "type": "string"
+        }
+      }
+    },
     "pane_process_info": {
       "required": [
         "process_info",
@@ -2099,6 +3219,128 @@
         },
         "type": {
           "const": "pane_process_info",
+          "type": "string"
+        }
+      }
+    },
+    "layout_export": {
+      "required": [
+        "layout",
+        "type"
+      ],
+      "props": [
+        "layout",
+        "type"
+      ],
+      "schemas": {
+        "layout": {
+          "properties": {
+            "focused_pane_id": {
+              "type": "string"
+            },
+            "root": {
+              "oneOf": [
+                {
+                  "properties": {
+                    "command": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
+                    },
+                    "cwd": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "env": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    },
+                    "label": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "pane_id": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "type": {
+                      "const": "pane",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "properties": {
+                    "direction": {
+                      "enum": [
+                        "down",
+                        "right"
+                      ],
+                      "type": "string"
+                    },
+                    "first": {
+                      "$ref": "LayoutNode"
+                    },
+                    "ratio": {
+                      "format": "float",
+                      "type": "number"
+                    },
+                    "second": {
+                      "$ref": "LayoutNode"
+                    },
+                    "type": {
+                      "const": "split",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "direction",
+                    "first",
+                    "ratio",
+                    "second",
+                    "type"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            },
+            "zoomed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "focused_pane_id",
+            "root",
+            "tab_id",
+            "workspace_id",
+            "zoomed"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "const": "layout_export",
           "type": "string"
         }
       }
@@ -2221,6 +3463,488 @@
         },
         "type": {
           "const": "layout_apply",
+          "type": "string"
+        }
+      }
+    },
+    "pane_neighbor": {
+      "required": [
+        "neighbor",
+        "type"
+      ],
+      "props": [
+        "neighbor",
+        "type"
+      ],
+      "schemas": {
+        "neighbor": {
+          "properties": {
+            "direction": {
+              "enum": [
+                "down",
+                "left",
+                "right",
+                "up"
+              ],
+              "type": "string"
+            },
+            "layout": {
+              "properties": {
+                "area": {
+                  "properties": {
+                    "height": {
+                      "format": "uint16",
+                      "maximum": 65535,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "width": {
+                      "format": "uint16",
+                      "maximum": 65535,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "x": {
+                      "format": "uint16",
+                      "maximum": 65535,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "y": {
+                      "format": "uint16",
+                      "maximum": 65535,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "height",
+                    "width",
+                    "x",
+                    "y"
+                  ],
+                  "type": "object"
+                },
+                "focused_pane_id": {
+                  "type": "string"
+                },
+                "panes": {
+                  "items": {
+                    "properties": {
+                      "focused": {
+                        "type": "boolean"
+                      },
+                      "pane_id": {
+                        "type": "string"
+                      },
+                      "rect": {
+                        "properties": {
+                          "height": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "width": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "x": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "y": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "height",
+                          "width",
+                          "x",
+                          "y"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "focused",
+                      "pane_id",
+                      "rect"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "splits": {
+                  "items": {
+                    "properties": {
+                      "direction": {
+                        "enum": [
+                          "down",
+                          "right"
+                        ],
+                        "type": "string"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "ratio": {
+                        "format": "float",
+                        "type": "number"
+                      },
+                      "rect": {
+                        "properties": {
+                          "height": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "width": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "x": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "y": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "height",
+                          "width",
+                          "x",
+                          "y"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "direction",
+                      "id",
+                      "ratio",
+                      "rect"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "tab_id": {
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "type": "string"
+                },
+                "zoomed": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "area",
+                "focused_pane_id",
+                "panes",
+                "splits",
+                "tab_id",
+                "workspace_id",
+                "zoomed"
+              ],
+              "type": "object"
+            },
+            "neighbor_pane_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "direction",
+            "layout",
+            "pane_id"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "const": "pane_neighbor",
+          "type": "string"
+        }
+      }
+    },
+    "pane_focus_direction": {
+      "required": [
+        "focus",
+        "type"
+      ],
+      "props": [
+        "focus",
+        "type"
+      ],
+      "schemas": {
+        "focus": {
+          "properties": {
+            "changed": {
+              "type": "boolean"
+            },
+            "focused_pane_id": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "layout": {
+              "properties": {
+                "area": {
+                  "properties": {
+                    "height": {
+                      "format": "uint16",
+                      "maximum": 65535,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "width": {
+                      "format": "uint16",
+                      "maximum": 65535,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "x": {
+                      "format": "uint16",
+                      "maximum": 65535,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "y": {
+                      "format": "uint16",
+                      "maximum": 65535,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "height",
+                    "width",
+                    "x",
+                    "y"
+                  ],
+                  "type": "object"
+                },
+                "focused_pane_id": {
+                  "type": "string"
+                },
+                "panes": {
+                  "items": {
+                    "properties": {
+                      "focused": {
+                        "type": "boolean"
+                      },
+                      "pane_id": {
+                        "type": "string"
+                      },
+                      "rect": {
+                        "properties": {
+                          "height": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "width": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "x": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "y": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "height",
+                          "width",
+                          "x",
+                          "y"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "focused",
+                      "pane_id",
+                      "rect"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "splits": {
+                  "items": {
+                    "properties": {
+                      "direction": {
+                        "enum": [
+                          "down",
+                          "right"
+                        ],
+                        "type": "string"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "ratio": {
+                        "format": "float",
+                        "type": "number"
+                      },
+                      "rect": {
+                        "properties": {
+                          "height": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "width": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "x": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "y": {
+                            "format": "uint16",
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "height",
+                          "width",
+                          "x",
+                          "y"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "direction",
+                      "id",
+                      "ratio",
+                      "rect"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "tab_id": {
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "type": "string"
+                },
+                "zoomed": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "area",
+                "focused_pane_id",
+                "panes",
+                "splits",
+                "tab_id",
+                "workspace_id",
+                "zoomed"
+              ],
+              "type": "object"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "no_neighbor"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "source_pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "changed",
+            "layout",
+            "source_pane_id"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "const": "pane_focus_direction",
+          "type": "string"
+        }
+      }
+    },
+    "notification_show": {
+      "required": [
+        "reason",
+        "shown",
+        "type"
+      ],
+      "props": [
+        "reason",
+        "shown",
+        "type"
+      ],
+      "schemas": {
+        "reason": {
+          "enum": [
+            "busy",
+            "disabled",
+            "no_foreground_client",
+            "rate_limited",
+            "shown"
+          ],
+          "type": "string"
+        },
+        "shown": {
+          "type": "boolean"
+        },
+        "type": {
+          "const": "notification_show",
           "type": "string"
         }
       }

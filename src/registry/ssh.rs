@@ -359,8 +359,9 @@ fn first_value(output: &str, expected_key: &str) -> Option<String> {
 }
 
 pub fn history_targets(history: &Path) -> Result<Vec<String>> {
-    let contents = match fs::read_to_string(history) {
-        Ok(contents) => contents,
+    // zsh metafies non-ASCII bytes, so history is rarely valid UTF-8; targets are ASCII-only anyway.
+    let contents = match fs::read(history) {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error).context("read shell history"),
     };
@@ -571,6 +572,17 @@ plain ssh ignored
             history_targets(&history).unwrap(),
             vec!["admin@[server]", "old", "web", "deploy@example.com"]
         );
+    }
+
+    #[test]
+    fn history_with_invalid_utf8_still_parses() {
+        let fixture = Fixture::new();
+        let history = fixture.directory.join("history");
+        let mut contents = b": 100:0;echo \x83\xa4\xe6\n".to_vec();
+        contents.extend_from_slice(b": 200:0;ssh web\n");
+        fs::write(&history, contents).unwrap();
+
+        assert_eq!(history_targets(&history).unwrap(), vec!["web"]);
     }
 
     #[test]

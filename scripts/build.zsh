@@ -8,4 +8,6 @@ mkdir -p bin
 # file plus `mv` swaps the inode instead, leaving nothing stale to match.
 cp target/release/workbench bin/workbench.new
 mv -f bin/workbench.new bin/workbench
+# A version bump changes every crate hash, and Cargo never deletes the stranded dev artifacts.
+cargo clean --profile dev
 print -r -- "built bin/workbench ($(du -h bin/workbench | cut -f1))"

@@ -188,10 +188,20 @@ icon = "󰓩"                    # nf-md-tab
 #               naming another binary is typed into the pane's shell instead.
 #   command     Executable and its fixed arguments.
 #   extra_args  Appended to every launch of this agent.
+#   efforts     Effort levels, in order. In the model menu, left and right step the
+#               highlighted row through them.
+#   effort_args How a chosen effort reaches the harness. Every "{effort}" in it is replaced
+#               by the level: claude takes ["--effort", "{effort}"], codex takes
+#               ["-c", "model_reasoning_effort={effort}"]. Required with efforts.
 #   options     Model menu, in menu order. An agent with no options skips that menu.
 #                 name     Menu text, and the value a pane's option field names.
-#                 args     Inserted after command, before extra_args.
+#                 args     Inserted after command, before effort_args and extra_args.
 #                 command  Replaces the agent's command for this option alone.
+#                 effort   The level this row starts on, and the one a pinned pane uses.
+#                          Omit it and the row takes no effort: nothing is passed and
+#                          left and right do nothing there.
+#                 efforts  Replaces the agent's efforts for this row alone, for a model
+#                          whose levels differ from its siblings'.
 #
 # Every argument is its own array entry. One whitespace-joined string would split
 # "--cd /Users/q/My Projects" into two arguments.
@@ -213,6 +223,8 @@ kind = "claude"
 icon = "󱗎"                    # nf-md-alpha_c_box
 command = ["claude"]
 extra_args = []
+efforts = ["low", "medium", "high", "xhigh", "max"]
+effort_args = ["--effort", "{effort}"]
 
   [[agents.options]]
   name = "Opus"
@@ -220,7 +232,8 @@ extra_args = []
 
   [[agents.options]]
   name = "OpusPlan (Sonnet)"
-  args = ["--model", "opusplan", "--effort", "medium"]
+  args = ["--model", "opusplan"]
+  effort = "medium"
 
   # CCR dispatches to its own binary and takes no model flag.
   [[agents.options]]

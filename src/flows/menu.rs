@@ -28,6 +28,223 @@ pub(crate) trait Menu {
         width: u16,
         indent: InputIndent,
     ) -> Result<Option<String>>;
+    /// Up and down pick a row, left and right step that row's effort. Returns the row's
+    /// index and, for a row that takes one, the effort it was left on.
+    fn choose_model(
+        &mut self,
+        title: &str,
+        subtitle: &str,
+        rows: &[ModelRow],
+    ) -> Result<Option<(usize, Option<String>)>>;
+}
+
+/// One model menu row. `effort` indexes `efforts`; an empty `efforts` takes no effort.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ModelRow {
+    pub label: String,
+    pub efforts: Vec<String>,
+    pub effort: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Key {
+    Up,
+    Down,
+    Left,
+    Right,
+    Enter,
+    Cancel,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    Continue,
+    Pick,
+    Cancel,
+}
+
+/// Every row keeps its own effort, so moving away from a row and back finds it as left.
+struct ModelMenuState {
+    row: usize,
+    efforts: Vec<usize>,
+}
+
+impl ModelMenuState {
+    fn new(rows: &[ModelRow]) -> Self {
+        Self {
+            row: 0,
+            efforts: rows.iter().map(|row| row.effort).collect(),
+        }
+    }
+
+    fn press(&mut self, rows: &[ModelRow], key: Key) -> Step {
+        let levels = rows[self.row].efforts.len();
+        let effort = &mut self.efforts[self.row];
+        match key {
+            Key::Up => self.row = self.row.checked_sub(1).unwrap_or(rows.len() - 1),
+            Key::Down => self.row = (self.row + 1) % rows.len(),
+            Key::Left => *effort = effort.saturating_sub(1),
+            Key::Right if *effort + 1 < levels => *effort += 1,
+            Key::Enter => return Step::Pick,
+            Key::Cancel => return Step::Cancel,
+            Key::Right | Key::Other => {}
+        }
+        Step::Continue
+    }
+
+    fn picked(&self, rows: &[ModelRow]) -> (usize, Option<String>) {
+        let effort = rows[self.row].efforts.get(self.efforts[self.row]).cloned();
+        (self.row, effort)
+    }
+}
+
+/// Every key in one read. A held arrow key repeats faster than the loop reads, so a single
+/// read can carry several sequences.
+fn parse_keys(bytes: &[u8]) -> Vec<Key> {
+    let mut keys = Vec::new();
+    let mut rest = bytes;
+    while let Some((&first, tail)) = rest.split_first() {
+        let (key, used) = match (first, tail) {
+            // `ESC O` is the application cursor mode some terminals leave switched on.
+            (0x1b, [b'[' | b'O', code, ..]) => (
+                match code {
+                    b'A' => Key::Up,
+                    b'B' => Key::Down,
+                    b'C' => Key::Right,
+                    b'D' => Key::Left,
+                    _ => Key::Other,
+                },
+                3,
+            ),
+            (0x1b | 0x03 | b'q', _) => (Key::Cancel, 1),
+            (b'\r' | b'\n', _) => (Key::Enter, 1),
+            (b'k', _) => (Key::Up, 1),
+            (b'j', _) => (Key::Down, 1),
+            (b'h', _) => (Key::Left, 1),
+            (b'l', _) => (Key::Right, 1),
+            _ => (Key::Other, 1),
+        };
+        keys.push(key);
+        rest = &rest[used.min(rest.len())..];
+    }
+    keys
+}
+
+const PINK: &str = "\x1b[38;5;212m";
+const DIM: &str = "\x1b[38;5;240m";
+const RESET: &str = "\x1b[0m";
+
+fn render_model_rows(rows: &[ModelRow], state: &ModelMenuState, cols: u16) -> Vec<String> {
+    let label_width = rows
+        .iter()
+        .map(|row| display_width(&row.label))
+        .max()
+        .unwrap_or(0);
+    let level_width = rows
+        .iter()
+        .flat_map(|row| &row.efforts)
+        .map(|level| display_width(level))
+        .max();
+    // Two columns of gap, then `‹ ` + level + ` ›`.
+    let block = label_width + level_width.map_or(0, |width| 2 + width + 4);
+    let pad = " ".repeat(usize::from(cols.saturating_sub(block) / 2));
+    rows.iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let gap = " ".repeat(usize::from(label_width - display_width(&row.label)) + 2);
+            let Some(level) = row.efforts.get(state.efforts[index]) else {
+                return match index == state.row {
+                    true => format!("{pad}{PINK}{}{RESET}", row.label),
+                    false => format!("{pad}{}", row.label),
+                };
+            };
+            if index != state.row {
+                return format!("{pad}{}{gap}  {DIM}{level}{RESET}", row.label);
+            }
+            let left = if state.efforts[index] > 0 {
+                "‹ "
+            } else {
+                "  "
+            };
+            let right = if state.efforts[index] + 1 < row.efforts.len() {
+                " ›"
+            } else {
+                ""
+            };
+            format!("{pad}{PINK}{}{gap}{left}{level}{right}{RESET}", row.label)
+        })
+        .collect()
+}
+
+/// Puts the terminal into raw mode and back, even when the menu returns early.
+struct RawTerminal {
+    original: libc::termios,
+}
+
+impl RawTerminal {
+    fn enter() -> Result<Self> {
+        // SAFETY: tcgetattr and tcsetattr only read and write the termios they are given.
+        unsafe {
+            let mut original = std::mem::zeroed::<libc::termios>();
+            if libc::tcgetattr(libc::STDIN_FILENO, &mut original) != 0 {
+                return Err(io::Error::last_os_error()).context("model menu needs a terminal");
+            }
+            let mut raw = original;
+            // Output processing stays on, so `\n` still returns the carriage.
+            raw.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG | libc::IEXTEN);
+            raw.c_iflag &= !(libc::IXON | libc::ICRNL);
+            raw.c_cc[libc::VMIN] = 1;
+            raw.c_cc[libc::VTIME] = 0;
+            if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &raw) != 0 {
+                return Err(io::Error::last_os_error()).context("failed to enter raw mode");
+            }
+            print!("\x1b[?25l");
+            Ok(Self { original })
+        }
+    }
+
+    fn read_keys(&self) -> Result<Vec<Key>> {
+        let mut buffer = [0_u8; 64];
+        let mut length = read_stdin(&mut buffer)?;
+        // An arrow key's bytes arrive together; a lone escape followed by silence is the
+        // escape key. 30 ms is well past the gap between one sequence's bytes.
+        if buffer[..length] == [0x1b] && stdin_ready(30) {
+            length += read_stdin(&mut buffer[1..])?;
+        }
+        Ok(parse_keys(&buffer[..length]))
+    }
+}
+
+impl Drop for RawTerminal {
+    fn drop(&mut self) {
+        print!("\x1b[?25h");
+        let _ = io::stdout().flush();
+        // SAFETY: restores the attributes read in `enter`.
+        unsafe {
+            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &self.original);
+        }
+    }
+}
+
+fn read_stdin(buffer: &mut [u8]) -> Result<usize> {
+    // SAFETY: reads at most `buffer.len()` bytes into `buffer`.
+    let read = unsafe { libc::read(libc::STDIN_FILENO, buffer.as_mut_ptr().cast(), buffer.len()) };
+    match read {
+        0 => anyhow::bail!("model menu input closed"),
+        read if read < 0 => Err(io::Error::last_os_error()).context("failed to read a key"),
+        read => Ok(read as usize),
+    }
+}
+
+fn stdin_ready(timeout_ms: i32) -> bool {
+    let mut poll = libc::pollfd {
+        fd: libc::STDIN_FILENO,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: polls the one descriptor it is given.
+    unsafe { libc::poll(&mut poll, 1, timeout_ms) > 0 }
 }
 
 /// Where a `gum input` field starts.
@@ -285,6 +502,44 @@ impl Menu for GumMenu {
             &width.to_string(),
         ])
     }
+
+    // Drawn here rather than by gum: `gum choose` takes no key bindings of its own and
+    // spends left and right on paging.
+    fn choose_model(
+        &mut self,
+        title: &str,
+        subtitle: &str,
+        rows: &[ModelRow],
+    ) -> Result<Option<(usize, Option<String>)>> {
+        // No scrolling: every row is drawn, which fits any model list a popup can show.
+        let height = u16::try_from(rows.len()).unwrap_or(u16::MAX);
+        self.render_banner(title, subtitle, height)?;
+        let terminal = RawTerminal::enter()?;
+        let mut state = ModelMenuState::new(rows);
+        let mut stdout = io::stdout();
+        let mut drawn = false;
+        loop {
+            if drawn && rows.len() > 1 {
+                write!(stdout, "\x1b[{}A", rows.len() - 1)?;
+            }
+            for (index, line) in render_model_rows(rows, &state, self.cols)
+                .iter()
+                .enumerate()
+            {
+                let newline = if index + 1 < rows.len() { "\n" } else { "" };
+                write!(stdout, "\r\x1b[2K{line}{newline}")?;
+            }
+            stdout.flush().context("failed to draw the model menu")?;
+            drawn = true;
+            for key in terminal.read_keys()? {
+                match state.press(rows, key) {
+                    Step::Continue => {}
+                    Step::Pick => return Ok(Some(state.picked(rows))),
+                    Step::Cancel => return Ok(None),
+                }
+            }
+        }
+    }
 }
 
 /// Run `gum` and capture its selection.
@@ -411,6 +666,125 @@ mod tests {
             args[..terminator].iter().all(|arg| arg != "--help"),
             "no option may sit among the flags: {args:?}"
         );
+    }
+
+    fn model_rows() -> Vec<ModelRow> {
+        let levels = ["low", "medium", "high"].map(str::to_owned).to_vec();
+        vec![
+            ModelRow {
+                label: "Opus".to_owned(),
+                efforts: levels.clone(),
+                effort: 2,
+            },
+            ModelRow {
+                label: "Sonnet".to_owned(),
+                efforts: levels,
+                effort: 1,
+            },
+            ModelRow {
+                label: "CCR".to_owned(),
+                efforts: Vec::new(),
+                effort: 0,
+            },
+        ]
+    }
+
+    #[test]
+    fn arrow_keys_parse_in_both_cursor_modes_and_in_one_read() {
+        assert_eq!(
+            parse_keys(b"\x1b[A\x1bOB\x1b[C\x1b[D"),
+            [Key::Up, Key::Down, Key::Right, Key::Left]
+        );
+        // A held arrow key repeats faster than the loop reads, so one read carries several.
+        assert_eq!(parse_keys(b"\x1b[C\x1b[C"), [Key::Right, Key::Right]);
+        assert_eq!(
+            parse_keys(b"kjhl\r\n"),
+            [
+                Key::Up,
+                Key::Down,
+                Key::Left,
+                Key::Right,
+                Key::Enter,
+                Key::Enter
+            ]
+        );
+        // A bare escape is the escape key itself, the way gum treats it.
+        assert_eq!(parse_keys(b"\x1b"), [Key::Cancel]);
+        assert_eq!(parse_keys(b"\x03q"), [Key::Cancel, Key::Cancel]);
+        assert_eq!(parse_keys(b"x\x1b[H"), [Key::Other, Key::Other]);
+    }
+
+    #[test]
+    fn left_and_right_move_only_the_highlighted_rows_effort() {
+        let rows = model_rows();
+        let mut state = ModelMenuState::new(&rows);
+
+        assert_eq!(state.press(&rows, Key::Right), Step::Continue);
+        // Clamped at the top level rather than wrapping to the lowest.
+        assert_eq!(state.efforts, [2, 1, 0]);
+        state.press(&rows, Key::Down);
+        state.press(&rows, Key::Left);
+        state.press(&rows, Key::Left);
+        assert_eq!(state.efforts, [2, 0, 0]);
+        // A row without efforts ignores both.
+        state.press(&rows, Key::Down);
+        state.press(&rows, Key::Right);
+        assert_eq!(state.efforts, [2, 0, 0]);
+        // Up and down wrap, as gum choose does.
+        state.press(&rows, Key::Down);
+        assert_eq!(state.row, 0);
+        state.press(&rows, Key::Up);
+        assert_eq!(state.row, 2);
+
+        assert_eq!(state.press(&rows, Key::Enter), Step::Pick);
+        assert_eq!(state.press(&rows, Key::Cancel), Step::Cancel);
+        assert_eq!(state.picked(&rows), (2, None));
+        state.row = 1;
+        assert_eq!(state.picked(&rows), (1, Some("low".to_owned())));
+    }
+
+    #[test]
+    fn model_rows_line_up_their_effort_column() {
+        let rows = model_rows();
+        let state = ModelMenuState::new(&rows);
+        let lines = render_model_rows(&rows, &state, 40)
+            .iter()
+            .map(|line| strip_ansi(line))
+            .collect::<Vec<_>>();
+
+        // Six columns of label, two of gap, `‹ medium ›` is ten: an 18-column block.
+        // `high` is the last level, so the right arrow is gone.
+        assert_eq!(lines[0], format!("{}Opus    ‹ high", " ".repeat(11)));
+        assert_eq!(lines[1], format!("{}Sonnet    medium", " ".repeat(11)));
+        assert_eq!(lines[2], format!("{}CCR", " ".repeat(11)));
+    }
+
+    #[test]
+    fn the_arrows_show_only_where_the_effort_can_still_move() {
+        let rows = model_rows();
+        let mut state = ModelMenuState::new(&rows);
+        state.row = 1;
+        state.efforts[1] = 0;
+
+        let lines = render_model_rows(&rows, &state, 18)
+            .iter()
+            .map(|line| strip_ansi(line))
+            .collect::<Vec<_>>();
+
+        assert_eq!(lines[1], "Sonnet    low ›");
+    }
+
+    fn strip_ansi(line: &str) -> String {
+        let mut plain = String::new();
+        let mut chars = line.chars();
+        while let Some(character) = chars.next() {
+            if character == '\x1b' {
+                chars.by_ref().find(|next| next.is_ascii_alphabetic());
+            } else {
+                plain.push(character);
+            }
+        }
+        plain.trim_end().to_owned()
     }
 
     #[test]

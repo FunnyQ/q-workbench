@@ -435,6 +435,7 @@ mod tests {
             &state::LastAgentRecord {
                 agent: "claude code".to_owned(),
                 option: None,
+                effort: None,
                 layout: "agentic-coding".to_owned(),
                 pane: "agent".to_owned(),
                 session: None,

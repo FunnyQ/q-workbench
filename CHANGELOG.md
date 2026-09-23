@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-09-23
+
+_tracks tag `v0.10.1`_
+
+### Fixed
+- Opening a project into a new workspace could start its agent launcher
+  before the workspace's terminal had resized to its on-screen tab
+  dimensions, so the launcher's banner centered for the wrong width and
+  never redrew. The new workspace is now focused before the launcher is
+  injected, so it measures the real terminal size.
+
 ## [0.10.0] - 2026-09-23
 
 _tracks tag `v0.10.0`_

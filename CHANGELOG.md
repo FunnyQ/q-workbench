@@ -5,6 +5,27 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-09-23
+
+_tracks tag `v0.10.0`_
+
+### Added
+- The model menu now takes an effort level per model: left/right arrows step
+  the highlighted row through its levels while up/down still moves between
+  models, and each row remembers its own choice. Configure it with an agent's
+  `efforts` list and `effort_args` template (using an `{effort}`
+  placeholder), then opt an option in with a default `effort`; an option can
+  override the level list for models that support a different set via its
+  own `efforts`. An option with no `effort` shows none, so existing configs
+  are unaffected until you opt in.
+
+### Changed
+- The built-in OpusPlan option now sets `effort = "medium"` instead of
+  passing `--effort medium` in `args`; the resulting command line is
+  unchanged. If your own config already lists `efforts` for an option whose
+  `args` still hard-codes an effort flag, move that flag into `effort` too —
+  otherwise it is passed twice.
+
 ## [0.9.3] - 2026-09-23
 
 _tracks tag `v0.9.3`_

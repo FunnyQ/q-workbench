@@ -268,44 +268,46 @@ fn focus_or_create_project(
     // creating an agent tab. This asymmetry is intentional: the enter key shows
     // the agent menu and injects a launcher, while picking an existing project
     // reuses it as-is. Only new workspaces get the agent tab.
-    let workspace_id = if let Some(workspace_id) = workspace_id {
-        workspace_id
-    } else {
-        let label = project_label(registry_path, path)?;
-        let created = client
-            .workspace_create(json!({
-                "cwd": path_text,
-                "env": {"Q_NO_BANNER": "1"},
-                "focus": false,
-                "label": label,
-            }))
-            .context("project pick: workspace.create")?;
-        let workspace_id = created.workspace.workspace_id;
-        if key != "alt-enter" {
-            client
-                .tab_rename(json!({
-                    "tab_id": created.tab.tab_id,
-                    "label": PROJECT_MAIN_LABEL,
-                }))
-                .context("project pick: tab.rename")?;
-            agent::inject_with_config(
-                client,
-                config,
-                &InjectOptions {
-                    pane_id: created.root_pane.pane_id,
-                    tab_id: None,
-                    usage: Some(PROJECT_MAIN_LABEL.to_owned()),
-                    worktree: false,
-                    layout: None,
-                },
-            )
-            .context("project pick: inject agent")?;
-        }
-        workspace_id
-    };
+    if let Some(workspace_id) = workspace_id {
+        client
+            .workspace_focus(json!({"workspace_id": workspace_id}))
+            .context("project pick: workspace.focus")?;
+        return Ok(());
+    }
+    let label = project_label(registry_path, path)?;
+    let created = client
+        .workspace_create(json!({
+            "cwd": path_text,
+            "env": {"Q_NO_BANNER": "1"},
+            "focus": false,
+            "label": label,
+        }))
+        .context("project pick: workspace.create")?;
+    // Focus before injecting: a hidden workspace's pty has not taken its on-screen size,
+    // so a launcher started there centers its menu for the wrong width.
     client
-        .workspace_focus(json!({"workspace_id": workspace_id}))
+        .workspace_focus(json!({"workspace_id": created.workspace.workspace_id}))
         .context("project pick: workspace.focus")?;
+    if key != "alt-enter" {
+        client
+            .tab_rename(json!({
+                "tab_id": created.tab.tab_id,
+                "label": PROJECT_MAIN_LABEL,
+            }))
+            .context("project pick: tab.rename")?;
+        agent::inject_with_config(
+            client,
+            config,
+            &InjectOptions {
+                pane_id: created.root_pane.pane_id,
+                tab_id: None,
+                usage: Some(PROJECT_MAIN_LABEL.to_owned()),
+                worktree: false,
+                layout: None,
+            },
+        )
+        .context("project pick: inject agent")?;
+    }
     Ok(())
 }
 
@@ -930,7 +932,7 @@ mod tests {
     }
 
     #[test]
-    fn new_project_enter_creates_injects_then_focuses() {
+    fn new_project_enter_creates_focuses_then_injects() {
         let directory = TestDirectory::new();
         let project = directory.0.join("project");
         fs::create_dir(&project).expect("create project");
@@ -959,17 +961,17 @@ mod tests {
             [
                 "session.snapshot",
                 "workspace.create",
+                "workspace.focus",
                 "tab.rename",
                 "pane.rename",
                 "pane.send_input",
-                "workspace.focus",
             ]
         );
         assert_eq!(
-            calls[2].1,
+            calls[3].1,
             json!({"tab_id": "t-new", "label": PROJECT_MAIN_LABEL})
         );
-        assert!(calls[4].1["text"]
+        assert!(calls[5].1["text"]
             .as_str()
             .expect("launcher command")
             .contains("'--usage' '\u{f09d1}  main'"));

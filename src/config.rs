@@ -117,6 +117,12 @@ pub struct Agent {
     pub command: Vec<String>,
     #[serde(default)]
     pub extra_args: Vec<String>,
+    /// Effort levels the model menu cycles through with left and right, in order.
+    #[serde(default)]
+    pub efforts: Vec<String>,
+    /// How a chosen effort reaches the harness; every `{effort}` is replaced by the level.
+    #[serde(default)]
+    pub effort_args: Vec<String>,
     #[serde(default)]
     pub options: Vec<AgentOption>,
 }
@@ -128,6 +134,10 @@ pub struct AgentOption {
     #[serde(default)]
     pub args: Vec<String>,
     pub command: Option<Vec<String>>,
+    /// The effort the model menu starts on. An option without one takes no effort.
+    pub effort: Option<String>,
+    /// Replaces the agent's `efforts` for this option alone, for a model whose levels differ.
+    pub efforts: Option<Vec<String>>,
 }
 
 /// File names that mark a directory as a project even without a `.git` in it.
@@ -152,31 +162,39 @@ fn default_agents() -> Vec<Agent> {
             icon: Some("\u{f15ce}".to_owned()),
             command: vec!["claude".to_owned()],
             extra_args: Vec::new(),
+            efforts: ["low", "medium", "high", "xhigh", "max"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            effort_args: vec!["--effort".to_owned(), "{effort}".to_owned()],
             options: vec![
                 AgentOption {
                     name: "Opus".to_owned(),
                     args: vec!["--model".to_owned(), "claude-opus-4-8".to_owned()],
                     command: None,
+                    effort: None,
+                    efforts: None,
                 },
                 AgentOption {
                     name: "OpusPlan (Sonnet)".to_owned(),
-                    args: vec![
-                        "--model".to_owned(),
-                        "opusplan".to_owned(),
-                        "--effort".to_owned(),
-                        "medium".to_owned(),
-                    ],
+                    args: vec!["--model".to_owned(), "opusplan".to_owned()],
                     command: None,
+                    effort: Some("medium".to_owned()),
+                    efforts: None,
                 },
                 AgentOption {
                     name: "CCR".to_owned(),
                     args: Vec::new(),
                     command: Some(vec!["ccr".to_owned(), "code".to_owned()]),
+                    effort: None,
+                    efforts: None,
                 },
                 AgentOption {
                     name: "Fable 5".to_owned(),
                     args: vec!["--model".to_owned(), "claude-fable-5".to_owned()],
                     command: None,
+                    effort: None,
+                    efforts: None,
                 },
             ],
         },
@@ -187,6 +205,8 @@ fn default_agents() -> Vec<Agent> {
             icon: Some("\u{ee0d}".to_owned()),
             command: vec!["codex".to_owned()],
             extra_args: Vec::new(),
+            efforts: Vec::new(),
+            effort_args: Vec::new(),
             options: Vec::new(),
         },
         Agent {
@@ -196,6 +216,8 @@ fn default_agents() -> Vec<Agent> {
             icon: Some("\u{f169f}".to_owned()),
             command: vec!["opencode".to_owned()],
             extra_args: Vec::new(),
+            efforts: Vec::new(),
+            effort_args: Vec::new(),
             options: Vec::new(),
         },
     ]
@@ -650,7 +672,39 @@ impl Config {
             {
                 bail!("agent '{}': command is empty", agent.name);
             }
+            // Without the placeholder every level would launch the same argv, so the menu
+            // would offer a choice that changes nothing.
+            let takes_effort = !agent.efforts.is_empty()
+                || agent.options.iter().any(|option| option.effort.is_some());
+            if takes_effort
+                && !agent
+                    .effort_args
+                    .iter()
+                    .any(|arg| arg.contains(EFFORT_PLACEHOLDER))
+            {
+                bail!(
+                    "agent '{}': efforts needs effort_args containing {EFFORT_PLACEHOLDER}",
+                    agent.name
+                );
+            }
             for option in &agent.options {
+                if let Some(effort) = &option.effort {
+                    if !agent.efforts_for(option).contains(effort) {
+                        bail!(
+                            "agent '{}' option '{}': effort '{}' is not one of its efforts",
+                            agent.name,
+                            option.name,
+                            effort
+                        );
+                    }
+                } else if option.efforts.is_some() {
+                    // The row only offers efforts once it has one to start on.
+                    bail!(
+                        "agent '{}' option '{}': efforts needs a default effort",
+                        agent.name,
+                        option.name
+                    );
+                }
                 if option.command.as_ref().is_some_and(|command| {
                     command
                         .first()
@@ -686,7 +740,30 @@ impl Agent {
     pub fn option(&self, name: &str) -> Option<&AgentOption> {
         self.options.iter().find(|option| option.name == name)
     }
+
+    /// The effort a launch of `option` runs at: `requested` when this agent still lists it,
+    /// else the option's default. An option without a default takes none.
+    pub fn resolve_effort(&self, option: &AgentOption, requested: Option<&str>) -> Option<String> {
+        option.effort.as_ref()?;
+        requested
+            .filter(|effort| self.efforts_for(option).iter().any(|level| level == effort))
+            .map(str::to_owned)
+            .or_else(|| option.effort.clone())
+    }
+
+    pub fn efforts_for<'a>(&'a self, option: &'a AgentOption) -> &'a [String] {
+        option.efforts.as_deref().unwrap_or(&self.efforts)
+    }
+
+    pub fn effort_args_for(&self, effort: &str) -> Vec<String> {
+        self.effort_args
+            .iter()
+            .map(|arg| arg.replace(EFFORT_PLACEHOLDER, effort))
+            .collect()
+    }
 }
+
+const EFFORT_PLACEHOLDER: &str = "{effort}";
 
 impl LayoutPane {
     /// How this pane names itself in a menu title. See [`menu_label`].
@@ -927,10 +1004,10 @@ mod tests {
             ["Opus", "OpusPlan (Sonnet)", "CCR", "Fable 5"]
         );
         assert_eq!(claude.options[0].args, ["--model", "claude-opus-4-8"]);
-        assert_eq!(
-            claude.options[1].args,
-            ["--model", "opusplan", "--effort", "medium"]
-        );
+        assert_eq!(claude.options[1].args, ["--model", "opusplan"]);
+        assert_eq!(claude.options[1].effort.as_deref(), Some("medium"));
+        assert_eq!(claude.effort_args, ["--effort", "{effort}"]);
+        assert_eq!(claude.effort_args_for("medium"), ["--effort", "medium"]);
         assert!(claude.options[2].args.is_empty());
         assert_eq!(
             claude.options[2].command.as_deref(),
@@ -1120,6 +1197,8 @@ dashboard_workspace = "from-file"
         assert_eq!(agents.len(), 3);
         assert_eq!(agents[0].name, "claude code");
         assert_eq!(agents[0].options.len(), 4);
+        assert_eq!(agents[0].efforts, default_agents()[0].efforts);
+        assert_eq!(agents[0].options[1].effort.as_deref(), Some("medium"));
         assert_eq!(agents[0].options[2].name, "CCR");
         assert_eq!(
             agents[0].options[2].command.as_deref(),
@@ -1654,6 +1733,139 @@ type = "agent"
 
         assert!(error.contains("claude code"), "{error}");
         assert!(error.contains("Opus"), "{error}");
+    }
+
+    #[test]
+    fn an_option_effort_the_agent_does_not_list_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.agents[0].options[0].effort = Some("extreme".to_owned());
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("Opus"), "{error}");
+        assert!(error.contains("extreme"), "{error}");
+    }
+
+    #[test]
+    fn an_option_effort_on_an_agent_without_efforts_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.agents[0].efforts.clear();
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("OpusPlan (Sonnet)"), "{error}");
+    }
+
+    #[test]
+    fn efforts_without_an_effort_placeholder_is_a_named_error() {
+        let mut config = Config::test_default();
+        config.agents[0].effort_args = vec!["--effort".to_owned()];
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("claude code"), "{error}");
+        assert!(error.contains("{effort}"), "{error}");
+    }
+
+    /// codex's models disagree on their top level: `ultra` exists for gpt-6-sol and not
+    /// for gpt-6-luna, so one list per agent would offer a level a model rejects.
+    fn codex_with_efforts() -> Config {
+        let mut config = Config::test_default();
+        let codex = &mut config.agents[1];
+        codex.efforts = ["low", "medium", "high", "xhigh", "max"]
+            .map(str::to_owned)
+            .to_vec();
+        codex.effort_args = vec![
+            "-c".to_owned(),
+            "model_reasoning_effort={effort}".to_owned(),
+        ];
+        codex.options = vec![
+            AgentOption {
+                name: "sol".to_owned(),
+                args: Vec::new(),
+                command: None,
+                effort: Some("ultra".to_owned()),
+                efforts: Some(["medium", "ultra"].map(str::to_owned).to_vec()),
+            },
+            AgentOption {
+                name: "luna".to_owned(),
+                args: Vec::new(),
+                command: None,
+                effort: Some("medium".to_owned()),
+                efforts: None,
+            },
+        ];
+        config
+    }
+
+    #[test]
+    fn an_option_efforts_list_replaces_the_agents_for_that_option() {
+        let config = codex_with_efforts();
+        config.validate().unwrap();
+        let codex = &config.agents[1];
+
+        assert_eq!(codex.efforts_for(&codex.options[0]), ["medium", "ultra"]);
+        assert_eq!(codex.efforts_for(&codex.options[1]).len(), 5);
+        // `ultra` is sol's alone, so luna falls back to its own default.
+        assert_eq!(
+            codex
+                .resolve_effort(&codex.options[1], Some("ultra"))
+                .as_deref(),
+            Some("medium")
+        );
+        assert_eq!(
+            codex
+                .resolve_effort(&codex.options[0], Some("ultra"))
+                .as_deref(),
+            Some("ultra")
+        );
+    }
+
+    #[test]
+    fn an_option_effort_outside_its_own_efforts_is_a_named_error() {
+        let mut config = codex_with_efforts();
+        config.agents[1].options[0].effort = Some("low".to_owned());
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("sol"), "{error}");
+        assert!(error.contains("low"), "{error}");
+    }
+
+    #[test]
+    fn option_efforts_without_a_default_effort_is_a_named_error() {
+        let mut config = codex_with_efforts();
+        config.agents[1].options[0].effort = None;
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("sol"), "{error}");
+    }
+
+    #[test]
+    fn option_efforts_need_the_agents_effort_args_too() {
+        let mut config = codex_with_efforts();
+        config.agents[1].efforts.clear();
+        config.agents[1].options.truncate(1);
+        config.agents[1].effort_args.clear();
+
+        let error = validation_error(&config);
+
+        assert!(error.contains("{effort}"), "{error}");
+    }
+
+    #[test]
+    fn the_effort_placeholder_is_replaced_inside_an_argument() {
+        let mut config = Config::test_default();
+        config.agents[1].effort_args = vec![
+            "-c".to_owned(),
+            "model_reasoning_effort={effort}".to_owned(),
+        ];
+
+        assert_eq!(
+            config.agents[1].effort_args_for("high"),
+            ["-c", "model_reasoning_effort=high"]
+        );
     }
 
     #[test]

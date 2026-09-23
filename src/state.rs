@@ -23,6 +23,10 @@ pub struct LastAgentRecord {
     pub agent: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub option: Option<String>,
+    /// Absent in a record written before efforts existed, which is why adding it did not
+    /// bump the version: a missing effort replays as the option's default, the right answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     pub layout: String,
     /// The layout pane this agent was launched as. Restart replays that pane's pin, which
     /// is not the first agent pane's once a layout declares several.
@@ -174,6 +178,7 @@ mod tests {
         let record = LastAgentRecord {
             agent: "codex".to_owned(),
             option: None,
+            effort: None,
             layout: "agentic-coding".to_owned(),
             pane: "agent".to_owned(),
             session: None,
@@ -233,6 +238,23 @@ mod tests {
         env::remove_var("Q_WORKBENCH_STATE_FILE");
     }
 
+    #[test]
+    fn a_record_written_before_efforts_existed_still_replays() {
+        let _guard = env_lock();
+        let path = fixture("pre-effort");
+        env::set_var("Q_WORKBENCH_STATE_FILE", &path);
+        fs::write(
+            &path,
+            r#"{"version":4,"panes":{"p1":{"agent":"claude code","option":"Opus","layout":"agentic-coding","pane":"agent","recorded_at":1}}}"#,
+        )
+        .unwrap();
+
+        let record = get_for_pane("p1", &Config::test_default()).expect("still valid");
+        assert_eq!(record.effort, None);
+        fs::remove_file(path).unwrap();
+        env::remove_var("Q_WORKBENCH_STATE_FILE");
+    }
+
     fn assert_stale_record_is_removed(name: &str, record: LastAgentRecord) {
         let path = fixture(name);
         env::set_var("Q_WORKBENCH_STATE_FILE", &path);
@@ -256,6 +278,7 @@ mod tests {
             LastAgentRecord {
                 agent: "removed".to_owned(),
                 option: None,
+                effort: None,
                 layout: "agentic-coding".to_owned(),
                 pane: "agent".to_owned(),
                 session: None,
@@ -272,6 +295,7 @@ mod tests {
             LastAgentRecord {
                 agent: "claude code".to_owned(),
                 option: Some("Removed".to_owned()),
+                effort: None,
                 layout: "agentic-coding".to_owned(),
                 pane: "agent".to_owned(),
                 session: None,
@@ -288,6 +312,7 @@ mod tests {
             LastAgentRecord {
                 agent: "claude code".to_owned(),
                 option: None,
+                effort: None,
                 layout: "agentic-coding".to_owned(),
                 pane: "agent".to_owned(),
                 session: None,
@@ -304,6 +329,7 @@ mod tests {
             LastAgentRecord {
                 agent: "codex".to_owned(),
                 option: Some("Removed".to_owned()),
+                effort: None,
                 layout: "agentic-coding".to_owned(),
                 pane: "agent".to_owned(),
                 session: None,
@@ -320,6 +346,7 @@ mod tests {
             LastAgentRecord {
                 agent: "codex".to_owned(),
                 option: None,
+                effort: None,
                 layout: "removed-layout".to_owned(),
                 pane: "agent".to_owned(),
                 session: None,
@@ -338,6 +365,7 @@ mod tests {
             LastAgentRecord {
                 agent: "codex".to_owned(),
                 option: None,
+                effort: None,
                 layout: "agentic-coding".to_owned(),
                 pane: "term".to_owned(),
                 session: None,

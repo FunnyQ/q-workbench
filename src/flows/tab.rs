@@ -80,7 +80,7 @@ mod tests {
 
     use super::*;
     use crate::config::{LayoutPane, PaneType};
-    use crate::flows::menu::InputIndent;
+    use crate::flows::menu::{InputIndent, ModelRow};
     use crate::herdr::FakeClient;
 
     struct FakeMenu {
@@ -124,6 +124,15 @@ mod tests {
             _: u16,
             _: InputIndent,
         ) -> Result<Option<String>> {
+            Ok(None)
+        }
+
+        fn choose_model(
+            &mut self,
+            _: &str,
+            _: &str,
+            _: &[ModelRow],
+        ) -> Result<Option<(usize, Option<String>)>> {
             Ok(None)
         }
     }

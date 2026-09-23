@@ -8,8 +8,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Map, Value};
 
-use crate::config::{render_label, Agent, Config, LayoutPane, PaneType, TabLayout};
-use crate::flows::menu::{popup_viewport, strip_pad, GumMenu, InputIndent, Menu};
+use crate::config::{render_label, Agent, AgentOption, Config, LayoutPane, PaneType, TabLayout};
+use crate::flows::menu::{popup_viewport, strip_pad, GumMenu, InputIndent, Menu, ModelRow};
 use crate::flows::{
     invoking_pane_cwd, nonempty_env, session, FlowError, FlowResult, Outcome, PaneCwd,
 };
@@ -142,6 +142,7 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
             config,
             &launch.agent_name,
             launch.option_name.as_deref(),
+            launch.effort.as_deref(),
             Some(session),
         )?;
     }
@@ -814,6 +815,7 @@ fn last_agent_record(agent: &PaneAgent, layout: &TabLayout) -> Result<state::Las
     Ok(state::LastAgentRecord {
         agent: agent.agent_name.clone(),
         option: agent.option_name.clone(),
+        effort: agent.effort.clone(),
         layout: layout.name.clone(),
         pane: agent.pane.clone(),
         session: None,
@@ -858,6 +860,8 @@ pub struct PaneAgent {
     pub agent_name: String,
     /// The chosen [[agents.options]] entry's `name`; None for an agent with no options.
     pub option_name: Option<String>,
+    /// The effort that option launches at, already resolved; None when it takes none.
+    pub effort: Option<String>,
 }
 
 /// What `agent.start` needs to run a harness in a pane sitting at its shell prompt.
@@ -1027,18 +1031,20 @@ fn choose_pane_agent(
     };
 
     // A pane that pins its agent runs no harness menu, so nothing here is built for it.
-    let (agent_name, stored_option) = if let Some(agent_name) = &pane.agent {
-        (agent_name.clone(), None)
+    let (agent_name, stored_option, stored_effort) = if let Some(agent_name) = &pane.agent {
+        (agent_name.clone(), None, None)
     } else {
         let use_last = last.as_ref().map(|record| {
             let label = config
                 .agent(&record.agent)
                 .expect("validated by last_choice_is_valid")
                 .menu_label();
-            match &record.option {
-                Some(option) => format!("{USE_LAST_PREFIX}{label} · {option}"),
-                None => format!("{USE_LAST_PREFIX}{label}"),
-            }
+            [record.option.as_deref(), record.effort.as_deref()]
+                .into_iter()
+                .flatten()
+                .fold(format!("{USE_LAST_PREFIX}{label}"), |row, part| {
+                    format!("{row} · {part}")
+                })
         });
         let mut harness_options = config
             .agents
@@ -1064,7 +1070,7 @@ fn choose_pane_agent(
         let selected_last = use_last.as_deref() == Some(harness.as_str());
         if selected_last {
             let record = last.expect("use-last entry requires a stored choice");
-            (record.agent, record.option)
+            (record.agent, record.option, record.effort)
         } else {
             // Rendered labels are unique across agents, enforced at config load.
             let agent_name = config
@@ -1073,40 +1079,71 @@ fn choose_pane_agent(
                 .find(|agent| agent.menu_label() == harness)
                 .map(|agent| agent.name.clone())
                 .expect("validated at load");
-            (agent_name, None)
+            (agent_name, None, None)
         }
     };
 
     let agent = config.agent(&agent_name).expect("validated at load");
-    let option_name = if let Some(option_name) = pane.option_name.clone().or(stored_option) {
-        Some(option_name)
-    } else if agent.options.is_empty() {
-        None
-    } else {
-        let options = agent
-            .options
-            .iter()
-            .map(|option| option.name.clone())
-            .collect::<Vec<_>>();
-        let Some(option_name) =
-            menu.choose(&title(&agent.menu_label()), "Choose a model.", &options, 6)?
-        else {
-            return Ok(None);
+    let (option_name, requested_effort) =
+        if let Some(option_name) = pane.option_name.clone().or(stored_option) {
+            (Some(option_name), stored_effort)
+        } else if agent.options.is_empty() {
+            (None, None)
+        } else {
+            let rows = agent
+                .options
+                .iter()
+                .map(|option| {
+                    let efforts = match &option.effort {
+                        Some(_) => agent.efforts_for(option).to_vec(),
+                        None => Vec::new(),
+                    };
+                    let effort = efforts
+                        .iter()
+                        .position(|level| Some(level) == option.effort.as_ref())
+                        .unwrap_or(0);
+                    ModelRow {
+                        label: option.name.clone(),
+                        efforts,
+                        effort,
+                    }
+                })
+                .collect::<Vec<_>>();
+            let subtitle = match rows.iter().any(|row| !row.efforts.is_empty()) {
+                true => "Choose a model. ←/→ sets effort.",
+                false => "Choose a model.",
+            };
+            let Some((index, effort)) =
+                menu.choose_model(&title(&agent.menu_label()), subtitle, &rows)?
+            else {
+                return Ok(None);
+            };
+            (Some(agent.options[index].name.clone()), effort)
         };
-        let option_name = strip_pad(&option_name);
-        if option_name.is_empty() {
-            return Ok(None);
-        }
-        Some(option_name)
-    };
 
+    let effort = option_name
+        .as_deref()
+        .and_then(|name| agent.option(name))
+        .and_then(|option| agent.resolve_effort(option, requested_effort.as_deref()));
     Ok(Some(PaneAgent {
         pane: pane.name.clone(),
-        launch: build_launch(config, &agent_name, option_name.as_deref(), None)?,
-        start: build_start(config, &agent_name, option_name.as_deref()),
+        launch: build_launch(
+            config,
+            &agent_name,
+            option_name.as_deref(),
+            effort.as_deref(),
+            None,
+        )?,
+        start: build_start(
+            config,
+            &agent_name,
+            option_name.as_deref(),
+            effort.as_deref(),
+        ),
         kind: agent.kind.clone(),
         agent_name,
         option_name,
+        effort,
     }))
 }
 
@@ -1170,10 +1207,13 @@ fn select_usage(menu: &mut impl Menu) -> Result<Option<String>> {
     Ok(if label.is_empty() { None } else { Some(label) })
 }
 
+/// `effort` is a request, resolved by [`Agent::resolve_effort`]; None asks for the option's
+/// own default.
 fn build_launch(
     config: &Config,
     agent_name: &str,
     option_name: Option<&str>,
+    effort: Option<&str>,
     resume: Option<&str>,
 ) -> Result<Vec<String>> {
     let agent = config
@@ -1199,10 +1239,22 @@ fn build_launch(
         launch.extend(resume_args(agent.kind.as_deref(), resume));
     }
     launch.extend(option.into_iter().flat_map(|option| option.args.clone()));
+    launch.extend(option_effort_args(agent, option, effort));
     // A command override changes only the executable; extra args apply to every
     // launch of the agent, including overridden commands.
     launch.extend(agent.extra_args.clone());
     Ok(launch)
+}
+
+fn option_effort_args(
+    agent: &Agent,
+    option: Option<&AgentOption>,
+    effort: Option<&str>,
+) -> Vec<String> {
+    option
+        .and_then(|option| agent.resolve_effort(option, effort))
+        .map(|effort| agent.effort_args_for(&effort))
+        .unwrap_or_default()
 }
 
 fn resume_args(kind: Option<&str>, session: &str) -> Vec<String> {
@@ -1223,7 +1275,12 @@ pub(crate) fn kind_can_resume(kind: Option<&str>) -> bool {
 /// appends its args to an executable derived from the kind, so an option that overrides
 /// the command has nowhere to put that override. Unknown names are [`build_launch`]'s to
 /// report, and every caller runs it first.
-fn build_start(config: &Config, agent_name: &str, option_name: Option<&str>) -> Option<AgentStart> {
+fn build_start(
+    config: &Config,
+    agent_name: &str,
+    option_name: Option<&str>,
+    effort: Option<&str>,
+) -> Option<AgentStart> {
     let agent = config.agent(agent_name)?;
     let kind = agent.kind.as_deref()?;
     // The same reason covers the agent's own command: an executable the kind does not name,
@@ -1236,6 +1293,7 @@ fn build_start(config: &Config, agent_name: &str, option_name: Option<&str>) -> 
         return None;
     }
     let mut args = option.map(|option| option.args.clone()).unwrap_or_default();
+    args.extend(option_effort_args(agent, option, effort));
     args.extend(agent.extra_args.clone());
     Some(AgentStart {
         kind: kind.to_owned(),
@@ -1471,6 +1529,7 @@ mod popup {
             kind: None,
             agent_name: agent.to_owned(),
             option_name: None,
+            effort: None,
         }
     }
 
@@ -1726,6 +1785,7 @@ mod popup {
             kind: None,
             agent_name: "claude code".to_owned(),
             option_name: Some("Opus".to_owned()),
+            effort: None,
         });
         queue_popup_splits(&client);
 
@@ -1758,6 +1818,7 @@ mod popup {
             kind: None,
             agent_name: "claude code".to_owned(),
             option_name: Some("Opus".to_owned()),
+            effort: None,
         });
         queue_popup_splits(&client);
 
@@ -2203,7 +2264,7 @@ mod popup {
     #[test]
     fn a_command_override_keeps_the_typed_argv_path() {
         // `ccr code` replaces the executable a kind implies, so `agent.start` cannot run it.
-        assert!(build_start(&Config::test_default(), "claude code", Some("CCR")).is_none());
+        assert!(build_start(&Config::test_default(), "claude code", Some("CCR"), None).is_none());
 
         let client = FakeClient::default();
         queue_popup_apply(&client);
@@ -2215,6 +2276,7 @@ mod popup {
             kind: None,
             agent_name: "claude code".to_owned(),
             option_name: Some("CCR".to_owned()),
+            effort: None,
         };
 
         create_popup_tab(&client, &default_layout(), &choice, None).unwrap();
@@ -2369,13 +2431,13 @@ mod popup {
         let mut config = Config::test_default();
         config.agents[0].extra_args = vec!["--search".to_owned()];
 
-        let start = build_start(&config, "claude code", Some("Opus")).unwrap();
+        let start = build_start(&config, "claude code", Some("Opus"), None).unwrap();
 
         assert_eq!(start.kind, "claude");
         assert_eq!(start.args, ["--model", "claude-opus-4-8", "--search"]);
         // An agent whose entry names no kind has no executable Herdr can derive.
         config.agents[1].kind = None;
-        assert!(build_start(&config, "codex", None).is_none());
+        assert!(build_start(&config, "codex", None, None).is_none());
     }
 
     /// `agent.start` derives the executable from the kind and appends only the args, so an
@@ -2389,7 +2451,7 @@ mod popup {
             let mut config = Config::test_default();
             config.agents[0].command = command.clone();
             assert!(
-                build_start(&config, "claude code", Some("Opus")).is_none(),
+                build_start(&config, "claude code", Some("Opus"), None).is_none(),
                 "{command:?}"
             );
         }
@@ -2566,24 +2628,24 @@ mod popup {
         let mut config = config();
         config.agents[1].extra_args = Vec::new();
         assert_eq!(
-            build_launch(&config, "codex", None, None).unwrap(),
+            build_launch(&config, "codex", None, None, None).unwrap(),
             ["codex"]
         );
         config.agents[1].extra_args = vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()];
         assert_eq!(
-            build_launch(&config, "codex", None, None).unwrap(),
+            build_launch(&config, "codex", None, None, None).unwrap(),
             ["codex", "--dangerously-bypass-approvals-and-sandbox"]
         );
         config.agents[1].extra_args = ["--search", "--profile", "work"]
             .map(str::to_owned)
             .to_vec();
         assert_eq!(
-            build_launch(&config, "codex", None, None).unwrap(),
+            build_launch(&config, "codex", None, None, None).unwrap(),
             ["codex", "--search", "--profile", "work"]
         );
         config.agents[1].extra_args = vec!["--profile work".to_owned()];
         assert_eq!(
-            build_launch(&config, "codex", None, None).unwrap(),
+            build_launch(&config, "codex", None, None, None).unwrap(),
             ["codex", "--profile work"]
         );
     }
@@ -2627,6 +2689,7 @@ mod popup {
         answers: VecDeque<Option<String>>,
         options: Vec<Vec<String>>,
         titles: Vec<String>,
+        model_rows: Vec<Vec<ModelRow>>,
     }
 
     impl FakeMenu {
@@ -2638,6 +2701,7 @@ mod popup {
                     .collect(),
                 options: Vec::new(),
                 titles: Vec::new(),
+                model_rows: Vec::new(),
             }
         }
 
@@ -2670,6 +2734,31 @@ mod popup {
             _: InputIndent,
         ) -> Result<Option<String>> {
             Ok(self.answers.pop_front().flatten())
+        }
+        /// An answer names a row, optionally `row|effort`; a bare row is picked where it
+        /// started, which is what enter without an arrow does.
+        fn choose_model(
+            &mut self,
+            title: &str,
+            _: &str,
+            rows: &[ModelRow],
+        ) -> Result<Option<(usize, Option<String>)>> {
+            self.titles.push(title.to_owned());
+            self.options
+                .push(rows.iter().map(|row| row.label.clone()).collect());
+            self.model_rows.push(rows.to_vec());
+            let Some(answer) = self.answers.pop_front().flatten() else {
+                return Ok(None);
+            };
+            let (label, effort) = match answer.split_once('|') {
+                Some((label, effort)) => (label.to_owned(), Some(effort.to_owned())),
+                None => (answer, None),
+            };
+            Ok(rows.iter().position(|row| row.label == label).map(|index| {
+                let effort =
+                    effort.or_else(|| rows[index].efforts.get(rows[index].effort).cloned());
+                (index, effort)
+            }))
         }
     }
 
@@ -2946,6 +3035,7 @@ mod popup {
             Some(state::LastAgentRecord {
                 agent: "claude code".to_owned(),
                 option: Some("Opus".to_owned()),
+                effort: None,
                 layout: "agentic-coding".to_owned(),
                 pane: "agent".to_owned(),
                 session: None,
@@ -3078,6 +3168,86 @@ mod popup {
     }
 
     #[test]
+    fn each_model_row_starts_on_its_default_effort_and_the_pick_reaches_the_argv() {
+        let config = config();
+        let layout = bare_layout("ask");
+        let mut menu = FakeMenu::new([
+            Some(TEST_CLAUDE_LABEL),
+            Some("OpusPlan (Sonnet)|xhigh"),
+            Some(USAGE_DISCUSS),
+        ]);
+
+        let choice = choose_agent_with(
+            &config,
+            &layout,
+            Path::new("/project"),
+            false,
+            None,
+            &mut menu,
+            &FakeGit::nowhere(),
+        )
+        .unwrap()
+        .unwrap();
+
+        let rows = &menu.model_rows[0];
+        assert_eq!(rows[1].efforts[rows[1].effort], "medium");
+        // An option without a default effort offers none to step through.
+        assert!(rows[0].efforts.is_empty());
+        let agent = &choice.agents[0];
+        assert_eq!(agent.effort.as_deref(), Some("xhigh"));
+        assert_eq!(
+            agent.launch,
+            [
+                "claude",
+                "--model",
+                "opusplan",
+                "--effort",
+                "xhigh",
+                "argument with space"
+            ]
+        );
+    }
+
+    #[test]
+    fn use_last_replays_the_stored_effort() {
+        let mut config = config();
+        config.tab_layouts.push(default_layout());
+        let entry = format!("{USE_LAST_PREFIX}{TEST_CLAUDE_LABEL} · OpusPlan (Sonnet) · max");
+        let mut menu = FakeMenu::new([Some(entry.as_str())]);
+
+        let layout = default_layout();
+        let panes = layout
+            .agent_panes()
+            .map(|(_, pane)| pane)
+            .collect::<Vec<_>>();
+        let choice = choose_agent_with_last(
+            &config,
+            &layout,
+            &panes,
+            Path::new("/project"),
+            false,
+            Some("review"),
+            Some(state::LastAgentRecord {
+                agent: "claude code".to_owned(),
+                option: Some("OpusPlan (Sonnet)".to_owned()),
+                effort: Some("max".to_owned()),
+                layout: "agentic-coding".to_owned(),
+                pane: "agent".to_owned(),
+                session: None,
+                recorded_at: 1,
+            }),
+            &mut menu,
+            &FakeGit::nowhere(),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(menu.options[0][0], entry);
+        assert_eq!(choice.agents[0].effort.as_deref(), Some("max"));
+        assert_eq!(choice.agents[0].launch[3..5], ["--effort", "max"]);
+    }
+
+    #[test]
     fn use_last_is_first_and_skips_model_and_usage_menus() {
         let mut config = config();
         config.tab_layouts.push(default_layout());
@@ -3099,6 +3269,7 @@ mod popup {
             Some(state::LastAgentRecord {
                 agent: "claude code".to_owned(),
                 option: Some("Opus".to_owned()),
+                effort: None,
                 layout: "agentic-coding".to_owned(),
                 pane: "agent".to_owned(),
                 session: None,
@@ -3136,6 +3307,7 @@ mod popup {
             Some(state::LastAgentRecord {
                 agent: "claude code".to_owned(),
                 option: Some("Removed".to_owned()),
+                effort: None,
                 layout: "agentic-coding".to_owned(),
                 pane: "agent".to_owned(),
                 session: None,
@@ -3256,23 +3428,23 @@ mod popup {
         // codex's `resume` is a subcommand, so it has to follow the executable directly
         // and precede the model args; claude's flag form lands in the same slot.
         assert_eq!(
-            build_launch(&config, "codex", None, Some("019-abc")).unwrap(),
+            build_launch(&config, "codex", None, None, Some("019-abc")).unwrap(),
             ["codex", "resume", "019-abc", "--search"]
         );
         assert_eq!(
-            build_launch(&config, "claude code", Some("Opus"), Some("uuid-1")).unwrap(),
+            build_launch(&config, "claude code", Some("Opus"), None, Some("uuid-1")).unwrap(),
             ["claude", "--resume", "uuid-1", "--model", "claude-opus-4-8"]
         );
         // A command override still resumes: `ccr code` writes a claude transcript.
         assert_eq!(
-            build_launch(&config, "claude code", Some("CCR"), Some("uuid-1")).unwrap(),
+            build_launch(&config, "claude code", Some("CCR"), None, Some("uuid-1")).unwrap(),
             ["ccr", "code", "--resume", "uuid-1"]
         );
 
         // An agent Herdr has no kind for gets no resume arguments at all.
         config.agents[1].kind = None;
         assert_eq!(
-            build_launch(&config, "codex", None, Some("019-abc")).unwrap(),
+            build_launch(&config, "codex", None, None, Some("019-abc")).unwrap(),
             ["codex", "--search"]
         );
     }
@@ -3281,28 +3453,64 @@ mod popup {
     fn launch_commands_match_every_harness_and_model_rule() {
         let config = Config::test_default();
         assert_eq!(
-            build_launch(&config, "codex", None, None).unwrap(),
+            build_launch(&config, "codex", None, None, None).unwrap(),
             ["codex"]
         );
         assert_eq!(
-            build_launch(&config, "opencode", None, None).unwrap(),
+            build_launch(&config, "opencode", None, None, None).unwrap(),
             ["opencode"]
         );
         assert_eq!(
-            build_launch(&config, "claude code", Some("CCR"), None).unwrap(),
+            build_launch(&config, "claude code", Some("CCR"), None, None).unwrap(),
             ["ccr", "code"]
         );
         assert_eq!(
-            build_launch(&config, "claude code", Some("Opus"), None).unwrap(),
+            build_launch(&config, "claude code", Some("Opus"), None, None).unwrap(),
             ["claude", "--model", "claude-opus-4-8"]
         );
         assert_eq!(
-            build_launch(&config, "claude code", Some("OpusPlan (Sonnet)"), None).unwrap(),
+            build_launch(
+                &config,
+                "claude code",
+                Some("OpusPlan (Sonnet)"),
+                None,
+                None
+            )
+            .unwrap(),
             ["claude", "--model", "opusplan", "--effort", "medium"]
         );
         assert_eq!(
-            build_launch(&config, "claude code", Some("Fable 5"), None).unwrap(),
+            build_launch(&config, "claude code", Some("Fable 5"), None, None).unwrap(),
             ["claude", "--model", "claude-fable-5"]
+        );
+    }
+
+    #[test]
+    fn a_chosen_effort_replaces_the_option_default_before_the_extra_args() {
+        let mut config = Config::test_default();
+        config.agents[0].extra_args = vec!["--search".to_owned()];
+        let plan = Some("OpusPlan (Sonnet)");
+
+        assert_eq!(
+            build_launch(&config, "claude code", plan, Some("xhigh"), None).unwrap(),
+            ["claude", "--model", "opusplan", "--effort", "xhigh", "--search"]
+        );
+        assert_eq!(
+            build_start(&config, "claude code", plan, Some("xhigh"))
+                .unwrap()
+                .args,
+            ["--model", "opusplan", "--effort", "xhigh", "--search"]
+        );
+        // A level the config no longer lists falls back to the option's own default, so a
+        // stored choice outlives an edited efforts list.
+        assert_eq!(
+            build_launch(&config, "claude code", plan, Some("gone"), None).unwrap(),
+            ["claude", "--model", "opusplan", "--effort", "medium", "--search"]
+        );
+        // An option without a default takes no effort, whatever is asked for.
+        assert_eq!(
+            build_launch(&config, "claude code", Some("Opus"), Some("high"), None).unwrap(),
+            ["claude", "--model", "claude-opus-4-8", "--search"]
         );
     }
 
@@ -3314,7 +3522,7 @@ mod popup {
             .to_vec();
 
         assert_eq!(
-            build_launch(&config, "claude code", Some("Opus"), None).unwrap(),
+            build_launch(&config, "claude code", Some("Opus"), None, None).unwrap(),
             [
                 "claude",
                 "--model",
@@ -3325,7 +3533,7 @@ mod popup {
             ]
         );
         assert_eq!(
-            build_launch(&config, "claude code", Some("CCR"), None).unwrap(),
+            build_launch(&config, "claude code", Some("CCR"), None, None).unwrap(),
             ["ccr", "code", "--search", "--profile", "work"]
         );
     }
@@ -3337,7 +3545,7 @@ mod popup {
         config.agents[0].options[2].args = vec!["--flag".to_owned()];
 
         assert_eq!(
-            build_launch(&config, "claude code", Some("CCR"), None).unwrap(),
+            build_launch(&config, "claude code", Some("CCR"), None, None).unwrap(),
             ["ccr", "code", "--flag"]
         );
     }
@@ -3351,7 +3559,7 @@ mod popup {
             ["--cd", "/Users/q/My Projects"].map(str::to_owned).to_vec();
 
         assert_eq!(
-            build_launch(&config, "claude code", Some("Opus"), None).unwrap(),
+            build_launch(&config, "claude code", Some("Opus"), None, None).unwrap(),
             ["claude", "code", "--cd", "/Users/q/My Projects"]
         );
     }
@@ -3360,12 +3568,13 @@ mod popup {
     fn missing_launch_names_are_named_errors() {
         let config = config();
 
-        let error = build_launch(&config, "missing agent", None, None).unwrap_err();
+        let error = build_launch(&config, "missing agent", None, None, None).unwrap_err();
         assert!(error.to_string().contains("missing agent"));
-        let error = build_launch(&config, "claude code", Some("missing option"), None).unwrap_err();
+        let error =
+            build_launch(&config, "claude code", Some("missing option"), None, None).unwrap_err();
         assert!(error.to_string().contains("missing option"));
         let agent_name = "claude code";
-        let error = build_launch(&config, agent_name, None, None).unwrap_err();
+        let error = build_launch(&config, agent_name, None, None, None).unwrap_err();
         assert!(error.to_string().contains(agent_name));
     }
 
@@ -3375,18 +3584,18 @@ mod popup {
         config.agents[0].extra_args = Vec::new();
         config.agents[1].extra_args = Vec::new();
         assert_eq!(
-            build_launch(&config, "claude code", Some("Opus"), None).unwrap(),
+            build_launch(&config, "claude code", Some("Opus"), None, None).unwrap(),
             ["claude", "--model", "claude-opus-4-8"]
         );
         assert_eq!(
-            build_launch(&config, "codex", None, None).unwrap(),
+            build_launch(&config, "codex", None, None, None).unwrap(),
             ["codex"]
         );
 
         config.agents[0].extra_args = vec!["--dangerously-skip-permissions".to_owned()];
         config.agents[1].extra_args = vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()];
         assert_eq!(
-            build_launch(&config, "claude code", Some("Opus"), None).unwrap(),
+            build_launch(&config, "claude code", Some("Opus"), None, None).unwrap(),
             [
                 "claude",
                 "--model",
@@ -3395,7 +3604,7 @@ mod popup {
             ]
         );
         assert_eq!(
-            build_launch(&config, "codex", None, None).unwrap(),
+            build_launch(&config, "codex", None, None, None).unwrap(),
             ["codex", "--dangerously-bypass-approvals-and-sandbox"]
         );
     }
@@ -3594,6 +3803,7 @@ mod popup {
                     .collect(),
                 options: Vec::new(),
                 titles: Vec::new(),
+                model_rows: Vec::new(),
             };
             let choice = choose_agent_with(
                 &config,
@@ -3661,6 +3871,7 @@ mod popup {
                     .collect(),
                 options: Vec::new(),
                 titles: Vec::new(),
+                model_rows: Vec::new(),
             };
             let choice = choose_agent_with(
                 &config,

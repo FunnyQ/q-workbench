@@ -479,7 +479,7 @@ mod tests {
 
     use super::*;
     use crate::config::TabLayout;
-    use crate::flows::menu::InputIndent;
+    use crate::flows::menu::{InputIndent, ModelRow};
     use crate::herdr::FakeClient;
 
     /// Only `choose` is exercised; the restart flow draws no other menu step.
@@ -524,6 +524,15 @@ mod tests {
             _: u16,
             _: InputIndent,
         ) -> Result<Option<String>> {
+            Ok(None)
+        }
+
+        fn choose_model(
+            &mut self,
+            _: &str,
+            _: &str,
+            _: &[ModelRow],
+        ) -> Result<Option<(usize, Option<String>)>> {
             Ok(None)
         }
     }
@@ -624,6 +633,7 @@ mod tests {
         let stored = state::LastAgentRecord {
             agent: "codex".to_owned(),
             option: None,
+            effort: None,
             layout: "agentic-coding".to_owned(),
             pane: "agent".to_owned(),
             session: Some("stored-id".to_owned()),
@@ -671,6 +681,7 @@ mod tests {
         let stored = state::LastAgentRecord {
             agent: "codex".to_owned(),
             option: None,
+            effort: None,
             layout: "agentic-coding".to_owned(),
             pane: "agent".to_owned(),
             session: Some("stored-id".to_owned()),
@@ -718,6 +729,7 @@ mod tests {
         let stamped = |seconds| state::LastAgentRecord {
             agent: "claude code".to_owned(),
             option: None,
+            effort: None,
             layout: "agentic-coding".to_owned(),
             pane: "agent".to_owned(),
             session: None,
@@ -758,6 +770,7 @@ mod tests {
         let record = |agent: &str| state::LastAgentRecord {
             agent: agent.to_owned(),
             option: None,
+            effort: None,
             layout: "agentic-coding".to_owned(),
             pane: "agent".to_owned(),
             session: Some("stored-id".to_owned()),

@@ -169,6 +169,23 @@ command = ["claude"]
   args = ["--model", "claude-opus-4-8"]
 ```
 
+To pick an effort level in the model menu, list the agent's levels in `efforts`, say how
+they reach the harness in `effort_args`, and give each option that takes one a default
+`effort`. Left and right then step the highlighted row's effort:
+
+```toml
+[[agents]]
+name = "claude code"
+command = ["claude"]
+efforts = ["low", "medium", "high", "xhigh", "max"]
+effort_args = ["--effort", "{effort}"]
+
+  [[agents.options]]
+  name = "Opus"
+  args = ["--model", "claude-opus-4-8"]
+  effort = "high"
+```
+
 See [`config.example.toml`](config.example.toml) for the full schema and built-in
 defaults.
 

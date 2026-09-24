@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.2] - 2026-09-24
+
+_tracks tag `v0.10.2`_
+
+### Fixed
+- The quoted launcher command flashed on screen and lingered in shell
+  history while an agent pane's menus were drawing underneath it. Restart
+  and pane injection now clear the pane and prefix the typed command with a
+  leading space before it runs, so the command stays out of view and out of
+  history.
+
 ## [0.10.1] - 2026-09-23
 
 _tracks tag `v0.10.1`_

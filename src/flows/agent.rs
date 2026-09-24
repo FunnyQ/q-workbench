@@ -15,7 +15,7 @@ use crate::flows::{
 };
 use crate::herdr::types::{ErrorResponse, LayoutNode};
 use crate::herdr::HerdrClient;
-use crate::shell::build_command;
+use crate::shell::{build_command, CLEAR_SCREEN};
 use crate::state;
 
 /// Herdr's refusal when a pane is not yet sitting at an interactive shell prompt.
@@ -224,7 +224,7 @@ pub(crate) fn inject_with_config(
     client
         .pane_send_input(json!({
             "pane_id": options.pane_id,
-            "text": build_command(&argv),
+            "text": format!("{CLEAR_SCREEN}{}", build_command(&argv)),
             "keys": ["enter"],
         }))
         .context("failed to inject the agent launcher")?;
@@ -458,7 +458,10 @@ fn start_pane(
                 )
                 .with_context(|| format!("failed to start the agent in pane {}", pane.name))?;
             }
-            None => send_pane_input(client, pane_id, &build_command(&agent.launch), &pane.name)?,
+            None => {
+                let command = format!("{CLEAR_SCREEN}{}", build_command(&agent.launch));
+                send_pane_input(client, pane_id, &command, &pane.name)?
+            }
         }
         let record = last_agent_record(agent, layout)?;
         let _ = state::write_state(client, pane_id, &record);
@@ -1798,7 +1801,13 @@ mod popup {
             .map(|(_, params)| (params["pane_id"].clone(), params["text"].clone()))
             .collect::<Vec<_>>();
         // Quoted argument by argument, exactly as the root agent pane is launched.
-        assert_eq!(inputs, [(json!("p2"), json!("'claude' '--model' 'opus'"))]);
+        assert_eq!(
+            inputs,
+            [(
+                json!("p2"),
+                json!(format!("{CLEAR_SCREEN}'claude' '--model' 'opus'"))
+            )]
+        );
     }
 
     #[test]
@@ -2144,7 +2153,11 @@ mod popup {
         );
         assert_eq!(calls[1].0, "pane.send_input");
         assert_eq!(calls[1].1["keys"], json!(["enter"]));
-        let command = calls[1].1["text"].as_str().unwrap();
+        let command = calls[1].1["text"]
+            .as_str()
+            .unwrap()
+            .strip_prefix(CLEAR_SCREEN)
+            .unwrap();
         let output = Command::new("zsh")
             .args(["-c", "eval \"set -- $COMMAND\"; printf '%s\\n' \"$@\""])
             .env("COMMAND", command)
@@ -2215,7 +2228,9 @@ mod popup {
                 (
                     "pane.send_input".to_owned(),
                     json!({
-                        "pane_id": "p1", "text": "'codex' '--profile work'", "keys": ["enter"],
+                        "pane_id": "p1",
+                        "text": format!("{CLEAR_SCREEN}'codex' '--profile work'"),
+                        "keys": ["enter"],
                     })
                 ),
                 (
@@ -2288,7 +2303,8 @@ mod popup {
         );
         assert!(
             calls.iter().any(|(method, params)| {
-                method == "pane.send_input" && params["text"] == "'ccr' 'code'"
+                method == "pane.send_input"
+                    && params["text"] == format!("{CLEAR_SCREEN}'ccr' 'code'")
             }),
             "{calls:?}"
         );
@@ -2511,7 +2527,10 @@ mod popup {
         assert_eq!(
             inputs,
             [
-                (json!("p1"), json!("'codex' '--profile work'")),
+                (
+                    json!("p1"),
+                    json!(format!("{CLEAR_SCREEN}'codex' '--profile work'"))
+                ),
                 (json!("p3"), json!("yazi .")),
             ]
         );

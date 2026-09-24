@@ -7,6 +7,10 @@ pub fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+/// Prefix for a command typed into a pane's shell. The clear wipes the echoed line before
+/// the program draws, and the leading space keeps it out of history under HIST_IGNORE_SPACE.
+pub const CLEAR_SCREEN: &str = " printf '\\033[H\\033[2J'; ";
+
 /// Builds a shell command from literal arguments.
 ///
 /// Shell syntax, such as the restart flow's `stty sane; printf '…';` prefix,

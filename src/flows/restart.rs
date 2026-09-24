@@ -33,7 +33,8 @@ const CANCEL_OPTION: &str = "\u{ea76}  cancel";
 // Codex leaves raw mode and Kitty CSI-u enabled, breaking line wrapping and menu arrow keys.
 // The detached worker cannot access the pane TTY, so this prefix must run inside the pane.
 // Keep the prefix unquoted for shell interpretation; quote only the launcher path and arguments.
-const TTY_RESET: &str = "stty sane; printf '\\033[<u\\033[?7h\\033[?25h\\033[0m'; ";
+// Clear first so the menus never draw under the typed command; the leading space skips history.
+const TTY_RESET: &str = " stty sane; printf '\\033[<u\\033[?7h\\033[?25h\\033[0m\\033[H\\033[2J'; ";
 
 /// What the restart menu decided. Cancelling is `None`, never a variant here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1104,7 +1105,7 @@ mod tests {
             injected_command(Path::new("/tmp/work bench"), "p 1", "review's", None, None).unwrap();
         assert!(command.starts_with(TTY_RESET));
         assert!(!command.contains("'--layout'"));
-        assert_eq!(command, "stty sane; printf '\\033[<u\\033[?7h\\033[?25h\\033[0m'; '/tmp/work bench' 'agent' 'launch' 'p 1' '--usage' 'review'\\''s' '--no-layout' '--restart'");
+        assert_eq!(command, " stty sane; printf '\\033[<u\\033[?7h\\033[?25h\\033[0m\\033[H\\033[2J'; '/tmp/work bench' 'agent' 'launch' 'p 1' '--usage' 'review'\\''s' '--no-layout' '--restart'");
     }
 
     #[test]

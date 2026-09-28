@@ -220,7 +220,7 @@ icon = "󰓩"                    # nf-md-tab
 [[agents]]
 name = "claude code"
 kind = "claude"
-icon = "󱗎"                    # nf-md-alpha_c_box
+icon = ""                    # claude code brand
 command = ["claude"]
 extra_args = []
 efforts = ["low", "medium", "high", "xhigh", "max"]
@@ -247,7 +247,7 @@ effort_args = ["--effort", "{effort}"]
 [[agents]]
 name = "codex"
 kind = "codex"
-icon = ""                    # nf-seti-config
+icon = ""                    # codex brand
 command = ["codex"]
 extra_args = []
 

@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod dashboard;
+pub mod fork;
 pub mod layout;
 pub(crate) mod menu;
 pub mod picker;

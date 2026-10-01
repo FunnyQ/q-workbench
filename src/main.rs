@@ -66,6 +66,8 @@ enum AgentCommand {
     Launch(LaunchArgs),
     Inject(InjectArgs),
     Restart,
+    /// Open a new tab whose agent continues a copy of this pane's session.
+    Fork,
     #[command(hide = true)]
     RestartWorker {
         #[arg(long)]
@@ -188,6 +190,9 @@ impl Cli {
             Command::Agent {
                 command: AgentCommand::Restart | AgentCommand::RestartWorker { .. },
             } => Channel::Notification("Agent restart failed"),
+            Command::Agent {
+                command: AgentCommand::Fork,
+            } => Channel::Notification("Agent fork failed"),
             // The reporter is detached with null stdio: a notification would be the only
             // thing it could say, and a heuristic miss is not worth interrupting for.
             Command::Agent {
@@ -245,6 +250,7 @@ impl Cli {
                 AgentCommand::Launch(_) => "agent launch",
                 AgentCommand::Inject(_) => "agent inject",
                 AgentCommand::Restart => "agent restart",
+                AgentCommand::Fork => "agent fork",
                 AgentCommand::RestartWorker { .. } => "agent restart-worker",
                 AgentCommand::SessionReport(_) => "agent session-report",
             },
@@ -322,6 +328,10 @@ impl Cli {
                 AgentCommand::Restart => {
                     let client = client.context("Herdr client is required for agent restart")?;
                     return flows::restart::confirm_restart(client);
+                }
+                AgentCommand::Fork => {
+                    let client = client.context("Herdr client is required for agent fork")?;
+                    return flows::fork::fork(client);
                 }
                 AgentCommand::RestartWorker { pane, resume } => {
                     let client =
@@ -752,6 +762,7 @@ mod tests {
                 "--worktree",
             ],
             vec!["workbench", "agent", "restart"],
+            vec!["workbench", "agent", "fork"],
             vec![
                 "workbench",
                 "agent",

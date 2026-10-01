@@ -5,6 +5,15 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-10-01
+
+_tracks tag `v0.11.0`_
+
+### Added
+- Fork the focused agent's session into a new tab of the same layout with the new "Fork agent" action, which you can bind to a key such as alt+f; it works with claude and codex.
+- A fork keeps the running model so the prompt cache stays warm and lets you adjust only the effort, with no menu at all for a model that has no efforts.
+- Fork shows a notification instead of silently starting a fresh session when the agent has no session yet, the pane was not launched by workbench, or the harness cannot fork.
+
 ## [0.10.2] - 2026-09-24
 
 _tracks tag `v0.10.2`_

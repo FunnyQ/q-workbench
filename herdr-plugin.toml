@@ -60,6 +60,12 @@ contexts = ["workspace"]
 command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench", "--entrypoint", "restart-agent", "--placement", "popup", "--width", "72", "--height", "16"]
 
 [[actions]]
+id = "fork-agent"
+title = "Fork agent"
+contexts = ["workspace"]
+command = ["herdr", "plugin", "pane", "open", "--plugin", "q.workbench", "--entrypoint", "fork-agent", "--placement", "popup", "--width", "60%", "--height", "70%"]
+
+[[actions]]
 id = "even-out-panes"
 title = "Even out panes"
 contexts = ["workspace"]
@@ -112,3 +118,9 @@ id = "restart-agent"
 title = "󰜉  Restart Agent"
 placement = "popup"
 command = ["./bin/workbench", "agent", "restart"]
+
+[[panes]]
+id = "fork-agent"
+title = "  Fork Agent"
+placement = "popup"
+command = ["./bin/workbench", "agent", "fork"]

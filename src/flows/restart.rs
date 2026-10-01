@@ -123,7 +123,10 @@ pub fn restart_worker(
     })
 }
 
-fn resolve_target(client: &dyn HerdrClient, invocation_pane_id: &str) -> Result<Option<Pane>> {
+pub(crate) fn resolve_target(
+    client: &dyn HerdrClient,
+    invocation_pane_id: &str,
+) -> Result<Option<Pane>> {
     let invocation = client
         .pane_get(json!({ "pane_id": invocation_pane_id }))
         .context("failed to read the invocation pane")?
@@ -141,7 +144,7 @@ fn resolve_target(client: &dyn HerdrClient, invocation_pane_id: &str) -> Result<
         .find(|pane| pane.tab_id == invocation.tab_id && pane.agent.is_some()))
 }
 
-fn invocation_pane_id() -> Result<String> {
+pub(crate) fn invocation_pane_id() -> Result<String> {
     let context_id = env::var("HERDR_PLUGIN_CONTEXT_JSON")
         .ok()
         .and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok())
@@ -284,7 +287,7 @@ fn resolve_resume(
 
 /// Herdr's own report is tried first so installing its integration later improves accuracy
 /// without touching either fallback.
-fn resume_session(
+pub(crate) fn resume_session(
     client: &dyn HerdrClient,
     pane_id: &str,
     record: Option<&state::LastAgentRecord>,
@@ -761,7 +764,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
-    /// `resume_args` has nothing to append for these kinds, so promising the resume would
+    /// `continuation_args` has nothing to append for these kinds, so promising the resume would
     /// start a brand-new session without a word.
     #[test]
     fn a_kind_that_cannot_resume_reports_the_fallback() {

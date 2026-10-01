@@ -143,7 +143,7 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
             &launch.agent_name,
             launch.option_name.as_deref(),
             launch.effort.as_deref(),
-            Some(session),
+            Some(Continuation::Resume(session)),
         )?;
     }
     apply_launch_layout(client, layout, options, &choice)?;
@@ -722,7 +722,7 @@ fn adopt_invoking_pane_cwd(client: &dyn HerdrClient) -> Result<()> {
 ///
 /// Only apply is atomic, so only its failure leaves nothing to close; a harness that never
 /// becomes ready would otherwise strand a built tab with no agent in it.
-fn create_popup_tab(
+pub(crate) fn create_popup_tab(
     client: &dyn HerdrClient,
     layout: &TabLayout,
     choice: &AgentChoice,
@@ -1021,7 +1021,7 @@ fn choose_agent_with_last(
 ///
 /// `qualify` appends the pane to both menu titles. A single-agent layout leaves them
 /// exactly as they were, so the common flow is unchanged.
-fn choose_pane_agent(
+pub(crate) fn choose_pane_agent(
     config: &Config,
     pane: &LayoutPane,
     qualify: bool,
@@ -1096,21 +1096,7 @@ fn choose_pane_agent(
             let rows = agent
                 .options
                 .iter()
-                .map(|option| {
-                    let efforts = match &option.effort {
-                        Some(_) => agent.efforts_for(option).to_vec(),
-                        None => Vec::new(),
-                    };
-                    let effort = efforts
-                        .iter()
-                        .position(|level| Some(level) == option.effort.as_ref())
-                        .unwrap_or(0);
-                    ModelRow {
-                        label: option.name.clone(),
-                        efforts,
-                        effort,
-                    }
-                })
+                .map(|option| model_row(agent, option, None))
                 .collect::<Vec<_>>();
             let subtitle = match rows.iter().any(|row| !row.efforts.is_empty()) {
                 true => "Choose a model. ←/→ sets effort.",
@@ -1142,12 +1128,36 @@ fn choose_pane_agent(
             &agent_name,
             option_name.as_deref(),
             effort.as_deref(),
+            None,
         ),
         kind: agent.kind.clone(),
         agent_name,
         option_name,
         effort,
     }))
+}
+
+/// One model menu row, starting on `effort` when the row offers it, else on the option's
+/// own default.
+pub(crate) fn model_row(agent: &Agent, option: &AgentOption, effort: Option<&str>) -> ModelRow {
+    let efforts = match &option.effort {
+        Some(_) => agent.efforts_for(option).to_vec(),
+        None => Vec::new(),
+    };
+    let start = efforts
+        .iter()
+        .position(|level| Some(level.as_str()) == effort)
+        .or_else(|| {
+            efforts
+                .iter()
+                .position(|level| Some(level) == option.effort.as_ref())
+        })
+        .unwrap_or(0);
+    ModelRow {
+        label: option.name.clone(),
+        efforts,
+        effort: start,
+    }
 }
 
 /// Ask what to call a tab that runs no harness.
@@ -1212,12 +1222,12 @@ fn select_usage(menu: &mut impl Menu) -> Result<Option<String>> {
 
 /// `effort` is a request, resolved by [`Agent::resolve_effort`]; None asks for the option's
 /// own default.
-fn build_launch(
+pub(crate) fn build_launch(
     config: &Config,
     agent_name: &str,
     option_name: Option<&str>,
     effort: Option<&str>,
-    resume: Option<&str>,
+    continuation: Option<Continuation>,
 ) -> Result<Vec<String>> {
     let agent = config
         .agent(agent_name)
@@ -1238,8 +1248,8 @@ fn build_launch(
         .clone();
     // Before the option args because codex takes a subcommand, which has to sit directly
     // after the executable; claude's flag form is indifferent to the position.
-    if let Some(resume) = resume {
-        launch.extend(resume_args(agent.kind.as_deref(), resume));
+    if let Some(continuation) = continuation {
+        launch.extend(continuation_args(agent.kind.as_deref(), continuation));
     }
     launch.extend(option.into_iter().flat_map(|option| option.args.clone()));
     launch.extend(option_effort_args(agent, option, effort));
@@ -1260,29 +1270,41 @@ fn option_effort_args(
         .unwrap_or_default()
 }
 
-fn resume_args(kind: Option<&str>, session: &str) -> Vec<String> {
-    match kind {
-        Some("claude") => vec!["--resume".to_owned(), session.to_owned()],
-        Some("codex") => vec!["resume".to_owned(), session.to_owned()],
-        _ => Vec::new(),
-    }
+/// How a launch picks up an earlier session: continue it in place, or branch a copy of it
+/// under a new id so the original stays open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Continuation<'a> {
+    Resume(&'a str),
+    Fork(&'a str),
+}
+
+fn continuation_args(kind: Option<&str>, continuation: Continuation) -> Vec<String> {
+    let args: &[&str] = match (kind, continuation) {
+        (Some("claude"), Continuation::Resume(id)) => &["--resume", id],
+        (Some("claude"), Continuation::Fork(id)) => &["--resume", id, "--fork-session"],
+        (Some("codex"), Continuation::Resume(id)) => &["resume", id],
+        (Some("codex"), Continuation::Fork(id)) => &["fork", id],
+        _ => &[],
+    };
+    args.iter().map(|arg| (*arg).to_owned()).collect()
 }
 
 /// Herdr's own integration reports sessions for kinds this plugin cannot resolve, so the
-/// restart worker asks here before promising a resume it would drop.
+/// restart worker and the fork ask here before promising a session they would drop.
 pub(crate) fn kind_can_resume(kind: Option<&str>) -> bool {
-    !resume_args(kind, "session").is_empty()
+    !continuation_args(kind, Continuation::Resume("session")).is_empty()
 }
 
 /// How Herdr would start this harness, or None when only typed argv can: `agent.start`
 /// appends its args to an executable derived from the kind, so an option that overrides
 /// the command has nowhere to put that override. Unknown names are [`build_launch`]'s to
 /// report, and every caller runs it first.
-fn build_start(
+pub(crate) fn build_start(
     config: &Config,
     agent_name: &str,
     option_name: Option<&str>,
     effort: Option<&str>,
+    continuation: Option<Continuation>,
 ) -> Option<AgentStart> {
     let agent = config.agent(agent_name)?;
     let kind = agent.kind.as_deref()?;
@@ -1295,7 +1317,11 @@ fn build_start(
     if option.is_some_and(|option| option.command.is_some()) {
         return None;
     }
-    let mut args = option.map(|option| option.args.clone()).unwrap_or_default();
+    // First, for the same reason as in `build_launch`: codex's `fork` is a subcommand.
+    let mut args = continuation
+        .map(|continuation| continuation_args(Some(kind), continuation))
+        .unwrap_or_default();
+    args.extend(option.into_iter().flat_map(|option| option.args.clone()));
     args.extend(option_effort_args(agent, option, effort));
     args.extend(agent.extra_args.clone());
     Some(AgentStart {
@@ -2279,7 +2305,14 @@ mod popup {
     #[test]
     fn a_command_override_keeps_the_typed_argv_path() {
         // `ccr code` replaces the executable a kind implies, so `agent.start` cannot run it.
-        assert!(build_start(&Config::test_default(), "claude code", Some("CCR"), None).is_none());
+        assert!(build_start(
+            &Config::test_default(),
+            "claude code",
+            Some("CCR"),
+            None,
+            None
+        )
+        .is_none());
 
         let client = FakeClient::default();
         queue_popup_apply(&client);
@@ -2447,13 +2480,13 @@ mod popup {
         let mut config = Config::test_default();
         config.agents[0].extra_args = vec!["--search".to_owned()];
 
-        let start = build_start(&config, "claude code", Some("Opus"), None).unwrap();
+        let start = build_start(&config, "claude code", Some("Opus"), None, None).unwrap();
 
         assert_eq!(start.kind, "claude");
         assert_eq!(start.args, ["--model", "claude-opus-4-8", "--search"]);
         // An agent whose entry names no kind has no executable Herdr can derive.
         config.agents[1].kind = None;
-        assert!(build_start(&config, "codex", None, None).is_none());
+        assert!(build_start(&config, "codex", None, None, None).is_none());
     }
 
     /// `agent.start` derives the executable from the kind and appends only the args, so an
@@ -2467,7 +2500,7 @@ mod popup {
             let mut config = Config::test_default();
             config.agents[0].command = command.clone();
             assert!(
-                build_start(&config, "claude code", Some("Opus"), None).is_none(),
+                build_start(&config, "claude code", Some("Opus"), None, None).is_none(),
                 "{command:?}"
             );
         }
@@ -3447,24 +3480,96 @@ mod popup {
         // codex's `resume` is a subcommand, so it has to follow the executable directly
         // and precede the model args; claude's flag form lands in the same slot.
         assert_eq!(
-            build_launch(&config, "codex", None, None, Some("019-abc")).unwrap(),
+            build_launch(
+                &config,
+                "codex",
+                None,
+                None,
+                Some(Continuation::Resume("019-abc"))
+            )
+            .unwrap(),
             ["codex", "resume", "019-abc", "--search"]
         );
         assert_eq!(
-            build_launch(&config, "claude code", Some("Opus"), None, Some("uuid-1")).unwrap(),
+            build_launch(
+                &config,
+                "claude code",
+                Some("Opus"),
+                None,
+                Some(Continuation::Resume("uuid-1"))
+            )
+            .unwrap(),
             ["claude", "--resume", "uuid-1", "--model", "claude-opus-4-8"]
         );
         // A command override still resumes: `ccr code` writes a claude transcript.
         assert_eq!(
-            build_launch(&config, "claude code", Some("CCR"), None, Some("uuid-1")).unwrap(),
+            build_launch(
+                &config,
+                "claude code",
+                Some("CCR"),
+                None,
+                Some(Continuation::Resume("uuid-1"))
+            )
+            .unwrap(),
             ["ccr", "code", "--resume", "uuid-1"]
         );
 
         // An agent Herdr has no kind for gets no resume arguments at all.
         config.agents[1].kind = None;
         assert_eq!(
-            build_launch(&config, "codex", None, None, Some("019-abc")).unwrap(),
+            build_launch(
+                &config,
+                "codex",
+                None,
+                None,
+                Some(Continuation::Resume("019-abc"))
+            )
+            .unwrap(),
             ["codex", "--search"]
+        );
+    }
+
+    /// A fork takes the resume slot: codex's `fork` is a subcommand too, and claude forks by
+    /// resuming under a fresh id.
+    #[test]
+    fn fork_arguments_take_the_resume_slot_on_both_launch_paths() {
+        let mut config = Config::test_default();
+        config.agents[1].extra_args = vec!["--search".to_owned()];
+        let fork = Some(Continuation::Fork("019-abc"));
+
+        assert_eq!(
+            build_launch(&config, "codex", None, None, fork).unwrap(),
+            ["codex", "fork", "019-abc", "--search"]
+        );
+        assert_eq!(
+            build_start(&config, "codex", None, None, fork)
+                .unwrap()
+                .args,
+            ["fork", "019-abc", "--search"]
+        );
+        let fork = Some(Continuation::Fork("uuid-1"));
+        assert_eq!(
+            build_launch(&config, "claude code", Some("Opus"), None, fork).unwrap(),
+            [
+                "claude",
+                "--resume",
+                "uuid-1",
+                "--fork-session",
+                "--model",
+                "claude-opus-4-8"
+            ]
+        );
+        assert_eq!(
+            build_start(&config, "claude code", Some("Opus"), None, fork)
+                .unwrap()
+                .args,
+            [
+                "--resume",
+                "uuid-1",
+                "--fork-session",
+                "--model",
+                "claude-opus-4-8"
+            ]
         );
     }
 
@@ -3515,7 +3620,7 @@ mod popup {
             ["claude", "--model", "opusplan", "--effort", "xhigh", "--search"]
         );
         assert_eq!(
-            build_start(&config, "claude code", plan, Some("xhigh"))
+            build_start(&config, "claude code", plan, Some("xhigh"), None)
                 .unwrap()
                 .args,
             ["--model", "opusplan", "--effort", "xhigh", "--search"]

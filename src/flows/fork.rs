@@ -21,7 +21,6 @@ const CANNOT_FORK: &str = "This agent cannot fork a session.";
 const NO_SESSION: &str = "No session to fork yet. Send the agent a prompt first.";
 const FORK_SUFFIX: &str = " (fork)";
 
-/// Opens a new tab of the source pane's layout whose agent continues a copy of its session.
 pub fn fork(client: &dyn HerdrClient) -> FlowResult {
     // Config first: a broken config must be reported before the first socket call.
     let config = Config::load().context("failed to load config")?;
@@ -39,7 +38,6 @@ fn fork_from(
     let Some(source) = resolve_target(client, invocation_pane_id)? else {
         return Ok(notice(NO_AGENT));
     };
-    // Only the record names the harness, and with it the arguments that fork its session.
     let Some(record) = state::get_for_pane(&source.pane_id, config) else {
         return Ok(notice(NO_RECORD));
     };
@@ -70,8 +68,6 @@ fn notice(body: &str) -> Outcome {
     }
 }
 
-/// The fork keeps its harness, because a session belongs to one; model and effort stay
-/// open. Every other agent pane of the layout is decided as a fresh launch would be.
 fn choose_fork(
     config: &Config,
     record: &state::LastAgentRecord,
@@ -153,7 +149,6 @@ fn choose_fork(
     }))
 }
 
-/// A fork of a fork keeps one suffix rather than growing a chain of them.
 fn fork_label(label: &str) -> String {
     match label.ends_with(FORK_SUFFIX) {
         true => label.to_owned(),
@@ -174,7 +169,6 @@ mod tests {
     use crate::flows::menu::{InputIndent, ModelRow};
     use crate::herdr::FakeClient;
 
-    /// Answers the harness menu with its first row and the model menu from a queue.
     #[derive(Default)]
     struct FakeMenu {
         models: VecDeque<Option<(usize, Option<String>)>>,
@@ -293,7 +287,6 @@ mod tests {
         );
     }
 
-    /// With the model locked, a row with no effort leaves nothing to choose.
     #[test]
     fn a_model_without_efforts_forks_without_a_menu() {
         let config = Config::test_default();
@@ -334,8 +327,6 @@ mod tests {
         assert_eq!(choice, None);
     }
 
-    /// Only the forked pane continues a session; the layout's other agent pane is asked
-    /// about and launched fresh.
     #[test]
     fn a_side_agent_pane_forks_while_the_root_starts_fresh() {
         let mut config = Config::test_default();
@@ -350,7 +341,6 @@ mod tests {
         stored.layout = "pair".to_owned();
         stored.pane = side.clone();
         let mut menu = FakeMenu::default();
-        // The root's harness menu lands on claude, which then asks for its model.
         menu.models.push_back(Some((0, None)));
 
         let choice = choose_fork(&config, &stored, &source(), "019-abc", &mut menu)
@@ -367,7 +357,6 @@ mod tests {
             "{:?}",
             root.launch
         );
-        // The root runs its own harness menu; the forked pane runs none.
         assert_eq!(menu.harness_titles.len(), 1);
     }
 

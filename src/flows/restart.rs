@@ -36,18 +36,13 @@ const CANCEL_OPTION: &str = "\u{ea76}  cancel";
 // Clear first so the menus never draw under the typed command; the leading space skips history.
 const TTY_RESET: &str = " stty sane; printf '\\033[<u\\033[?7h\\033[?25h\\033[0m\\033[H\\033[2J'; ";
 
-/// What the restart menu decided. Cancelling is `None`, never a variant here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RestartMode {
     Resume,
     Fresh,
 }
 
-/// Confirms the restart inside the popup, then hands the work to a detached worker.
-///
-/// The popup pane disappears the moment this returns, so nothing here may resolve the
-/// target or touch the agent: the worker must do all of it. What the worker receives is
-/// the **invocation** pane — the pane the action fired from, which is frequently the
+/// What the worker receives is the **invocation** pane — the pane the action fired from, which is frequently the
 /// yazi or term pane. Handing it the agent pane instead would make the worker believe
 /// focus is already correct and skip the focus walk entirely.
 pub fn confirm_restart(_client: &dyn HerdrClient) -> FlowResult {
@@ -66,10 +61,6 @@ pub fn confirm_restart(_client: &dyn HerdrClient) -> FlowResult {
     })
 }
 
-/// The decision half of `confirm_restart`, with the two side effects injected.
-///
-/// It deliberately holds no Herdr client: proving that this phase talks to nobody is
-/// what guarantees the worker — not the popup — resolves the target.
 fn confirm_and_spawn(
     invocation_pane_id: &str,
     confirm: &dyn Fn() -> Result<Option<RestartMode>>,
@@ -82,10 +73,6 @@ fn confirm_and_spawn(
     Ok(Some(mode))
 }
 
-/// Restarts the agent pane reachable from `invocation_pane_id`.
-///
-/// Runs in the detached worker, so `invocation_pane_id` is the pane the popup was
-/// opened from and may well hold yazi or a shell rather than the agent.
 pub fn restart_worker(
     client: &dyn HerdrClient,
     invocation_pane_id: &str,
@@ -184,16 +171,12 @@ fn focus_target(
     Ok(false)
 }
 
-/// Kills the harness and reinjects the launcher. Returns the reason a requested resume
-/// fell back to a fresh start, so the caller can say so instead of quietly starting over.
 fn restart_resolved(
     client: &dyn HerdrClient,
     target: &Pane,
     mode: RestartMode,
 ) -> Result<Option<&'static str>> {
-    // The worker reads the state file directly rather than asking Herdr for the layout. The
-    // config is only needed to validate a record that exists, so a pane with no record still
-    // restarts when the config file is broken.
+    // The worker reads the state file directly rather than asking Herdr for the layout.
     let (record, config) = match state::read_state().panes.contains_key(&target.pane_id) {
         true => {
             let config = Config::load().context("failed to load config for agent restart")?;
@@ -257,7 +240,6 @@ fn restart_resolved(
     Ok(fallback)
 }
 
-/// The session a Resume should hand the harness, and the reason it will start fresh anyway.
 fn resolve_resume(
     client: &dyn HerdrClient,
     target: &Pane,
@@ -273,8 +255,6 @@ fn resolve_resume(
     let Some(session) = resume_session(client, &target.pane_id, record, kind)? else {
         return Ok((None, Some(NO_SESSION)));
     };
-    // A harness whose kind takes no resume argument would swallow the id and start over
-    // without a word. Only a record names the agent, so an unpinned pane is trusted.
     let resumable = match (record, config) {
         (Some(_), Some(_)) => crate::flows::agent::kind_can_resume(kind),
         _ => true,
@@ -322,15 +302,12 @@ fn sweep_session(
     kind: Option<&str>,
 ) -> Option<String> {
     let cwd = pane.cwd.as_deref()?;
-    // The record's stamp is this pane's launch, so the sweep cannot pick up a session that
-    // predates the agent now running in it.
     let since_ms = record?.recorded_at.saturating_mul(1_000);
     session::resolve_session(kind?, home, Path::new(cwd), since_ms).map(|session| session.id)
 }
 
 fn should_kill(group: i32, shell: i32) -> bool {
-    // The caller requires both pgid and shell pid to be present. The pgid must also be non-zero,
-    // because kill on pgid 0 is unsafe here, and differ from the shell pid, which means no
+    // The pgid must be non-zero, because kill on pgid 0 is unsafe here, and differ from the shell pid, which means no
     // foreground process has started yet.
     group != 0 && group != shell
 }
@@ -344,8 +321,6 @@ fn signal_group(group: i32, signal: i32) -> std::io::Result<()> {
     }
 }
 
-/// Reports whether any process in the group is still running.
-///
 /// The zsh original polls the group **leader** (`kill -0 $pgid`). Polling the whole
 /// group is the stricter reading of the same intent: a harness that outlives its leader
 /// still owns the TTY, and injecting on top of it would corrupt the pane.
@@ -363,8 +338,7 @@ fn injected_command(
     let executable = executable
         .to_str()
         .context("workbench executable path is not valid UTF-8")?;
-    // No tab id (the tab keeps its name), the current label as the fixed usage (so the usage
-    // menu is skipped), no worktree step, and no layout. `--restart` is the restart signal;
+    // `--restart` is the restart signal;
     // `--no-layout` cannot be, because a manual launch may set it too.
     let mut argv = vec![
         executable.to_owned(),
@@ -375,8 +349,6 @@ fn injected_command(
         label.to_owned(),
     ];
     if let Some(record) = record {
-        // The pane travels with the layout: without it the relaunch would replay the
-        // layout's first agent pane, which is the wrong pin for any other agent pane.
         argv.extend([
             "--layout".to_owned(),
             record.layout.clone(),
@@ -392,11 +364,6 @@ fn injected_command(
     Ok(format!("{TTY_RESET}{launcher}"))
 }
 
-/// The three-way restart menu.
-///
-/// All three rows draw every time. Deciding whether a session id exists would mean a
-/// socket call, and the popup pane dies the moment this returns — so the resolution is
-/// the worker's, and a Resume with nothing to resume falls back there.
 fn run_confirm() -> Result<Option<RestartMode>> {
     let (cols, lines) = popup_viewport();
     let mut menu = GumMenu::new(cols, lines);
@@ -404,8 +371,6 @@ fn run_confirm() -> Result<Option<RestartMode>> {
 }
 
 fn choose_mode(menu: &mut impl Menu) -> Result<Option<RestartMode>> {
-    // Fresh leads because it is the one row that always does what it says; resume depends on
-    // a session id the menu cannot check for.
     let options = [
         FRESH_OPTION.to_owned(),
         RESUME_OPTION.to_owned(),
@@ -416,8 +381,6 @@ fn choose_mode(menu: &mut impl Menu) -> Result<Option<RestartMode>> {
     };
     let selection = strip_pad(&selection);
 
-    // Resolved by position, like the tab layout menu. Cancel and anything matching no row
-    // land in the same arm, so an unexpected answer is a cancel rather than a panic.
     Ok(
         match options.iter().position(|option| *option == selection) {
             Some(0) => Some(RestartMode::Fresh),
@@ -442,7 +405,6 @@ fn worker_argv(pane_id: &str, mode: RestartMode) -> Vec<String> {
     argv
 }
 
-/// Builds a command that outlives both the popup and the process group it will kill.
 pub(crate) fn detached_command(program: &Path, args: &[String]) -> Command {
     let mut command = Command::new(program);
     // Null stdio prevents a surviving worker from holding or corrupting the popup TTY.
@@ -486,7 +448,6 @@ mod tests {
     use crate::flows::menu::{InputIndent, ModelRow};
     use crate::herdr::FakeClient;
 
-    /// Only `choose` is exercised; the restart flow draws no other menu step.
     struct FakeMenu {
         answers: std::collections::VecDeque<Option<String>>,
         options: Vec<Vec<String>>,
@@ -581,7 +542,6 @@ mod tests {
             })
             .unwrap();
 
-            // The yazi pane the action fired from, not the agent pane it will restart.
             assert_eq!(spawned.into_inner(), [("w1:p3".to_owned(), mode)]);
             assert!(client.calls.borrow().is_empty());
         }
@@ -607,13 +567,11 @@ mod tests {
     fn the_menu_always_draws_fresh_resume_and_cancel() {
         let mut menu = FakeMenu::new([Some(FRESH_OPTION)]);
         assert_eq!(choose_mode(&mut menu).unwrap(), Some(RestartMode::Fresh));
-        // Three rows whatever the pane holds: the popup cannot look a session id up.
         assert_eq!(menu.options, [[FRESH_OPTION, RESUME_OPTION, CANCEL_OPTION]]);
 
         let mut menu = FakeMenu::new([Some(RESUME_OPTION)]);
         assert_eq!(choose_mode(&mut menu).unwrap(), Some(RestartMode::Resume));
 
-        // Cancel, escape, and anything gum returned that matches no row all read as cancel.
         let mut menu = FakeMenu::new([Some(CANCEL_OPTION), None, Some("")]);
         for _ in 0..3 {
             assert_eq!(choose_mode(&mut menu).unwrap(), None);
@@ -644,8 +602,6 @@ mod tests {
             recorded_at: 1,
         };
 
-        // Herdr's own report wins, so installing the official integration later silently
-        // improves accuracy without touching the fallback.
         let reported = FakeClient::default();
         let mut pane = labelled_pane("p2", "t1", true, "review");
         pane["agent_session"] = json!({
@@ -678,8 +634,6 @@ mod tests {
         assert_eq!(resume_session(&neither, "p2", None, None).unwrap(), None);
     }
 
-    /// `kind` is what says whether `value` is an id or a transcript path, and a path is
-    /// not something a harness can be told to resume.
     #[test]
     fn a_session_reported_as_a_path_falls_back_to_the_stored_id() {
         let stored = state::LastAgentRecord {
@@ -709,10 +663,8 @@ mod tests {
         }
     }
 
-    /// The reporter polls for a minute after launch, but claude writes no transcript until
-    /// its first turn — so a pane prompted later has nothing stored and only this finds it.
     #[test]
-    fn a_session_written_after_the_reporter_gave_up_is_swept_at_restart() {
+    fn a_session_written_after_the_reporter_gave_up_is_swept_unless_it_predates_the_launch() {
         let home = env::temp_dir().join(format!("workbench-sweep-{}", std::process::id()));
         let directory = home.join(".claude/projects/-Users-q-Projects-demo");
         std::fs::create_dir_all(&directory).unwrap();
@@ -746,15 +698,12 @@ mod tests {
             Some("late-session".to_owned())
         );
 
-        // A stamp later than the transcript belongs to a launch that has written nothing yet.
         let launched_after = stamped(20);
         assert_eq!(
             sweep_session(&home, &pane, Some(&launched_after), Some("claude")),
             None
         );
 
-        // No record means no launch stamp to bound the sweep, and no kind means no harness
-        // whose files could be swept.
         assert_eq!(sweep_session(&home, &pane, None, Some("claude")), None);
         assert_eq!(
             sweep_session(&home, &pane, Some(&launched_before), None),
@@ -764,8 +713,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
-    /// `continuation_args` has nothing to append for these kinds, so promising the resume would
-    /// start a brand-new session without a word.
     #[test]
     fn a_kind_that_cannot_resume_reports_the_fallback() {
         let config = Config::test_default();
@@ -798,8 +745,6 @@ mod tests {
         }
     }
 
-    /// Herdr binds a reported session to the agent it detected, so reading it after the
-    /// harness has been killed would find nothing.
     #[test]
     fn the_session_is_read_before_the_harness_is_killed() {
         let _guard = crate::state::env_lock();
@@ -824,7 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn a_resolved_session_reaches_the_injected_launcher() {
+    fn an_unpinned_pane_trusts_its_resolved_session_into_the_injected_launcher() {
         let _guard = crate::state::env_lock();
         env::remove_var("Q_WORKBENCH_STATE_FILE");
         let client = FakeClient::default();
@@ -874,6 +819,33 @@ mod tests {
     }
 
     #[test]
+    fn a_pane_with_no_record_restarts_even_when_the_config_is_broken() {
+        let _guard = crate::state::env_lock();
+        let directory = env::temp_dir().join(format!("workbench-broken-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let config = directory.join("config.toml");
+        fs::write(&config, "not = [valid toml").unwrap();
+        let saved_config = env::var_os("Q_WORKBENCH_LOCAL_CONFIG");
+        env::set_var("Q_WORKBENCH_LOCAL_CONFIG", &config);
+        env::set_var("Q_WORKBENCH_STATE_FILE", directory.join("state.json"));
+        let client = FakeClient::default();
+        client.queue_response("pane.process_info", json!({"process_info": null}));
+        let target: Pane =
+            serde_json::from_value(labelled_pane("p2", "t1", true, "review")).unwrap();
+
+        let result = restart_resolved(&client, &target, RestartMode::Fresh);
+
+        match saved_config {
+            Some(value) => env::set_var("Q_WORKBENCH_LOCAL_CONFIG", value),
+            None => env::remove_var("Q_WORKBENCH_LOCAL_CONFIG"),
+        }
+        env::remove_var("Q_WORKBENCH_STATE_FILE");
+        fs::remove_dir_all(&directory).unwrap();
+        assert_eq!(result.unwrap(), None);
+        assert_eq!(client.calls.borrow().last().unwrap().0, "pane.send_input");
+    }
+
+    #[test]
     fn a_fresh_restart_never_reads_the_pane_snapshot() {
         let client = FakeClient::default();
         client.queue_response("pane.process_info", json!({"process_info": null}));
@@ -890,7 +862,6 @@ mod tests {
     #[test]
     fn worker_invoked_from_a_side_pane_focuses_the_agent_before_injecting() {
         let client = FakeClient::default();
-        // p3 is the term pane the action fired from; p2 is the agent pane in the same tab.
         client.queue_response("pane.get", json!({"pane": pane("p3", "t1", false)}));
         client.queue_response(
             "pane.list",
@@ -974,8 +945,6 @@ mod tests {
             .any(|call| call.0 == "notification.show"));
     }
 
-    /// The worker is the only half that can resolve a session, so it is also the only half
-    /// that can tell the user its Resume turned into a fresh start.
     #[test]
     fn a_resume_the_worker_cannot_satisfy_reaches_the_user_as_a_notice() {
         let _guard = crate::state::env_lock();
@@ -1045,8 +1014,6 @@ mod tests {
     #[test]
     fn focus_walk_tries_every_direction_until_one_matches() {
         let client = FakeClient::default();
-        // No neighbour left, a different pane right, none up, the target below. A
-        // non-matching neighbour must not end the walk.
         client.queue_response("pane.neighbor", json!({}));
         client.queue_response(
             "pane.neighbor",
@@ -1112,7 +1079,7 @@ mod tests {
     }
 
     #[test]
-    fn restart_injects_the_stored_layout_after_the_tty_reset() {
+    fn restart_injects_the_stored_layout_and_pane_after_the_tty_reset() {
         let _guard = crate::state::env_lock();
         let mut config = Config::test_default();
         let template = config.tab_layouts[0].clone();
@@ -1122,7 +1089,6 @@ mod tests {
                 ..template.clone()
             });
         }
-        // A second agent pane, so the stored pane name has something to distinguish.
         let reviewer = &mut config.tab_layouts[2].panes[1];
         reviewer.pane_type = crate::config::PaneType::Agent;
         reviewer.command = None;
@@ -1149,8 +1115,6 @@ mod tests {
             )
             .unwrap();
 
-            // Resolve through the state file exactly as `restart_resolved` does, so the
-            // stored record still has to survive validation before it reaches the argv.
             let record = crate::state::get_for_pane("p1", &config).expect("stored record");
             let command = injected_command(
                 Path::new("/tmp/workbench"),
@@ -1171,8 +1135,6 @@ mod tests {
         env::remove_var("Q_WORKBENCH_STATE_FILE");
     }
 
-    /// Reports whether a child process is still running, without reaping it.
-    ///
     /// `kill(pid, 0)` cannot answer this: an unreaped child that already exited is a
     /// zombie, and signalling a zombie still succeeds.
     fn still_running(pid: i32) -> bool {
@@ -1182,8 +1144,6 @@ mod tests {
 
     #[test]
     fn the_detached_worker_survives_a_sigterm_to_its_spawner_group() {
-        // Stand in for the popup: a process in a process group of its own, so the test
-        // can signal that group without signalling the test runner.
         let mut spawner = Command::new("sleep");
         spawner.arg("30").stdin(Stdio::null());
         // SAFETY: setpgid is async-signal-safe and runs between fork and exec.
@@ -1199,7 +1159,6 @@ mod tests {
         let mut spawner = spawner.spawn().unwrap();
         let spawner_group = spawner.id() as i32;
 
-        // A child that stays in the spawner's group, proving the SIGTERM really lands.
         let mut attached = Command::new("sleep");
         attached.arg("30").stdin(Stdio::null());
         // SAFETY: setpgid is async-signal-safe and runs between fork and exec.
@@ -1214,7 +1173,6 @@ mod tests {
         };
         let mut attached = attached.spawn().unwrap();
 
-        // The worker itself, built by the production helper with a long-running body.
         let mut worker = detached_command(Path::new("/bin/sleep"), &["30".to_owned()])
             .spawn()
             .unwrap();

@@ -75,11 +75,9 @@ pub struct LayoutPane {
     pub name: String,
     pub label: Option<String>,
     pub icon: Option<String>,
-    // Rename: type is a Rust keyword.
     #[serde(rename = "type")]
     pub pane_type: PaneType,
     pub agent: Option<String>,
-    // Rename: Option is a standard-library type; reads ambiguously at every use site.
     #[serde(rename = "option")]
     pub option_name: Option<String>,
     pub command: Option<String>,
@@ -117,10 +115,8 @@ pub struct Agent {
     pub command: Vec<String>,
     #[serde(default)]
     pub extra_args: Vec<String>,
-    /// Effort levels the model menu cycles through with left and right, in order.
     #[serde(default)]
     pub efforts: Vec<String>,
-    /// How a chosen effort reaches the harness; every `{effort}` is replaced by the level.
     #[serde(default)]
     pub effort_args: Vec<String>,
     #[serde(default)]
@@ -134,9 +130,7 @@ pub struct AgentOption {
     #[serde(default)]
     pub args: Vec<String>,
     pub command: Option<Vec<String>>,
-    /// The effort the model menu starts on. An option without one takes no effort.
     pub effort: Option<String>,
-    /// Replaces the agent's `efforts` for this option alone, for a model whose levels differ.
     pub efforts: Option<Vec<String>>,
 }
 
@@ -230,13 +224,9 @@ fn default_agents() -> Vec<Agent> {
 /// entry appears, and it always sorts last.
 pub const BLANK_LAYOUT_NAME: &str = "blank-tab";
 
-/// A tab of one plain shell, offered by the new-tab menu whether or not the config
-/// declares any layout at all. It runs no harness, so it asks for nothing but a name.
 pub fn blank_tab_layout() -> TabLayout {
     TabLayout {
         name: BLANK_LAYOUT_NAME.to_owned(),
-        // U+2026, one character - not three full stops. The ellipsis marks the row as
-        // opening a prompt, matching the usage menu's "let me write…".
         label: Some("Blank Tab\u{2026}".to_owned()),
         icon: Some("\u{f04e9}".to_owned()), // nf-md-tab
         tab_label: None,
@@ -306,8 +296,6 @@ fn default_tab_layouts() -> Vec<TabLayout> {
     }]
 }
 
-/// Icon and label joined by exactly two spaces, matching every existing menu label.
-/// A missing icon renders the label alone, with no leading whitespace.
 pub fn render_label(icon: Option<&str>, label: &str) -> String {
     match icon {
         Some(icon) => format!("{icon}  {label}"),
@@ -323,13 +311,6 @@ fn menu_label(icon: Option<&str>, label: Option<&str>, name: &str) -> String {
     render_label(icon, label.unwrap_or(name))
 }
 
-/// Validate the menu rows one config section renders.
-///
-/// `kind` names one entry ("layout"). The menu trims the centering pad off the selection
-/// and `gum` trims its trailing whitespace, so a row with outer whitespace never survives
-/// the round trip and is rejected here rather than mismatching — or resolving to the wrong
-/// entry — at selection time. Two entries on the same row would both be listed while only
-/// the first could ever be selected.
 fn check_menu_rows<'a>(
     kind: &str,
     entries: impl IntoIterator<Item = (&'a str, Option<&'a str>, Option<&'a str>)>,
@@ -431,9 +412,6 @@ impl Config {
                 &home,
             ),
             project_markers: file.project_markers.unwrap_or_else(default_project_markers),
-            // User-written sections replace the built-in defaults entirely.
-            // This is deliberate: "I only want codex" must be expressible.
-            // Do not merge by name.
             tab_layouts: file.tab_layouts.unwrap_or_else(default_tab_layouts),
             agents: file.agents.unwrap_or_else(default_agents),
         };
@@ -443,8 +421,6 @@ impl Config {
 
     fn validate(&self) -> Result<()> {
         for marker in &self.project_markers {
-            // The sweep compares a marker against one directory entry's file name, so
-            // anything holding a separator can only ever fail to match, silently.
             if marker.is_empty() {
                 bail!("project_markers: entry is empty");
             }
@@ -609,8 +585,6 @@ impl Config {
             }
 
             for pane in &layout.panes {
-                // Only the agent pane launches a harness, so a pin on any other pane would
-                // be accepted here and then silently dropped by the launch flow.
                 if pane.pane_type != PaneType::Agent {
                     if pane.agent.is_some() {
                         bail!(
@@ -672,8 +646,6 @@ impl Config {
             {
                 bail!("agent '{}': command is empty", agent.name);
             }
-            // Without the placeholder every level would launch the same argv, so the menu
-            // would offer a choice that changes nothing.
             let takes_effort = !agent.efforts.is_empty()
                 || agent.options.iter().any(|option| option.effort.is_some());
             if takes_effort
@@ -698,7 +670,6 @@ impl Config {
                         );
                     }
                 } else if option.efforts.is_some() {
-                    // The row only offers efforts once it has one to start on.
                     bail!(
                         "agent '{}' option '{}': efforts needs a default effort",
                         agent.name,
@@ -732,7 +703,6 @@ impl Config {
 }
 
 impl Agent {
-    /// The harness menu row for this agent. See [`menu_label`].
     pub fn menu_label(&self) -> String {
         menu_label(self.icon.as_deref(), self.label.as_deref(), &self.name)
     }
@@ -741,8 +711,6 @@ impl Agent {
         self.options.iter().find(|option| option.name == name)
     }
 
-    /// The effort a launch of `option` runs at: `requested` when this agent still lists it,
-    /// else the option's default. An option without a default takes none.
     pub fn resolve_effort(&self, option: &AgentOption, requested: Option<&str>) -> Option<String> {
         option.effort.as_ref()?;
         requested
@@ -766,17 +734,12 @@ impl Agent {
 const EFFORT_PLACEHOLDER: &str = "{effort}";
 
 impl LayoutPane {
-    /// How this pane names itself in a menu title. See [`menu_label`].
-    ///
-    /// Only a layout with more than one agent pane needs it: the harness and model menus
-    /// then run once per pane and have to say which pane they are asking about.
     pub fn menu_label(&self) -> String {
         menu_label(self.icon.as_deref(), self.label.as_deref(), &self.name)
     }
 }
 
 impl TabLayout {
-    /// The layout menu row for this layout. See [`menu_label`].
     pub fn menu_label(&self) -> String {
         menu_label(self.icon.as_deref(), self.label.as_deref(), &self.name)
     }
@@ -792,8 +755,6 @@ impl TabLayout {
             .filter(|(_, pane)| pane.pane_type == PaneType::Agent)
     }
 
-    /// The pane an agent flow acts on when the caller named one, else the first agent
-    /// pane. `None` when the layout declares no agent pane, or names one that is not.
     pub fn agent_pane(&self, name: Option<&str>) -> Option<(usize, &LayoutPane)> {
         match name {
             Some(name) => self.agent_panes().find(|(_, pane)| pane.name == name),
@@ -905,9 +866,6 @@ mod tests {
         }
     }
 
-    /// A shell started before the cutover still exports the zsh-era override. The
-    /// binary must name the stale override instead of reporting a TOML syntax
-    /// error on `typeset -gA`, which is what every action showed on the first run.
     #[test]
     fn a_zsh_override_names_the_real_problem_instead_of_failing_to_parse_toml() {
         let environment = TestEnvironment::new();
@@ -957,8 +915,6 @@ mod tests {
         let config = Config::load().expect("load markers");
         assert_eq!(config.project_markers, ["go.mod", "flake.nix"]);
 
-        // An empty list is a real answer: it turns the marker sweep off and leaves
-        // `.git` as the only thing that makes a directory a project.
         environment.write("project_markers = []\n");
         assert!(Config::load()
             .expect("load empty markers")
@@ -1189,7 +1145,6 @@ dashboard_workspace = "from-file"
         assert_eq!(layouts[1].label.as_deref(), Some("Personal Assistant"));
         assert!(layouts[1].icon.is_none());
         assert!(layouts[1].tab_label.is_none());
-        // The two shapes this file documents beyond one agent pane at the root.
         assert_eq!(layouts[2].agent_panes().count(), 2);
         assert_eq!(layouts[3].agent_panes().count(), 0);
 
@@ -1342,9 +1297,6 @@ type = "agent"
         assert!(error.contains("layout 'a': icon is empty"), "{error}");
     }
 
-    // A padded row never survives the menu round trip: the flow trims the centering pad off
-    // the selection, so " Work" would come back as "Work" and match another layout — or no
-    // layout at all. Rejecting it at load keeps the reverse lookup total.
     #[test]
     fn layout_label_with_outer_whitespace_is_a_named_load_error() {
         for (key, value) in [("label", " Work"), ("label", "Work "), ("icon", " W")] {
@@ -1520,8 +1472,6 @@ type = "agent"
     #[test]
     fn several_agent_panes_validate() {
         let mut config = Config::test_default();
-        // `files` is a command pane in the default layout, so its command has to go with
-        // the type: command is rejected on an agent pane.
         let files = &mut config.tab_layouts[0].panes[1];
         files.pane_type = PaneType::Agent;
         files.command = None;
@@ -1538,7 +1488,6 @@ type = "agent"
     fn a_non_agent_root_keeps_its_agent_panes_in_config_order() {
         let mut config = Config::test_default();
         config.tab_layouts[0].panes.swap(0, 1);
-        // The root takes no geometry, and the pane that moved off the root needs some.
         let root = &mut config.tab_layouts[0].panes[0];
         root.direction = None;
         root.ratio = None;
@@ -1806,7 +1755,6 @@ type = "agent"
 
         assert_eq!(codex.efforts_for(&codex.options[0]), ["medium", "ultra"]);
         assert_eq!(codex.efforts_for(&codex.options[1]).len(), 5);
-        // `ultra` is sol's alone, so luna falls back to its own default.
         assert_eq!(
             codex
                 .resolve_effort(&codex.options[1], Some("ultra"))

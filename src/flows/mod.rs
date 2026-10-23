@@ -21,8 +21,6 @@ pub fn nonempty_env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
-/// Ask the terminal itself how large it is.
-///
 /// The two obvious sources are both wrong inside a plugin popup. `COLUMNS` and `LINES`
 /// are shell variables that zsh does not export, so this process never sees them. `tput`
 /// answers from terminfo when it holds no terminal of its own, and `Command::output()`
@@ -40,23 +38,12 @@ pub fn terminal_size() -> Option<(u16, u16)> {
     None
 }
 
-/// Which cwd of the invoking pane a flow adopts.
-///
-/// The two entry points genuinely differ and always have. The agent popup wants the
-/// pane's own directory, because that is the repository the launcher runs git against;
-/// the project picker prefers the foreground process's directory, so a shell the user
-/// has `cd`-ed inside still seeds the right query. Naming the difference here is the
-/// point: written as two helpers it read as drift, and either one could be "corrected"
-/// into the other by mistake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaneCwd {
     PaneOnly,
     PreferForeground,
 }
 
-/// The cwd of the pane that invoked this plugin action, or `None` when nothing usable
-/// is reachable. `HERDR_PLUGIN_CONTEXT_JSON` answers without a round trip; the
-/// `HERDR_ACTIVE_PANE_ID` lookup is the fallback for a caller that has no context.
 pub fn invoking_pane_cwd(
     client: &dyn HerdrClient,
     context_json: Option<&str>,
@@ -119,14 +106,6 @@ impl FlowError {
         }
     }
 
-    /// A failure whose sentence is already the complete notification body.
-    ///
-    /// This adds no field: the sentence is stored as both the preserved prefix and the
-    /// error itself, so the chained cause the reporting path would append is that same
-    /// sentence and it prints once. Use it when the message already names its concrete
-    /// cause — `Workspace 'x' was not found.`, `project picker: registry not found: …`
-    /// — and `prefixed` when the sentence describes something else, such as the agent
-    /// popup's `The incomplete tab was closed.`, which needs the cause after it.
     pub fn complete(title: impl Into<String>, body: impl Into<String>) -> Self {
         let body = body.into();
         Self::prefixed(title, body.clone(), anyhow::anyhow!(body))
@@ -154,5 +133,45 @@ impl fmt::Display for FlowError {
 impl Error for FlowError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         Some(self.error.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::herdr::FakeClient;
+
+    #[test]
+    fn the_popup_takes_the_pane_cwd_while_the_picker_prefers_the_cd_ed_foreground() {
+        let pane_dir = std::env::temp_dir();
+        let foreground_dir = PathBuf::from("/");
+        let client = FakeClient::default();
+        for _ in 0..2 {
+            client.queue_response(
+                "pane.get",
+                json!({"pane": {
+                    "pane_id": "p1",
+                    "workspace_id": "w1",
+                    "cwd": pane_dir,
+                    "foreground_cwd": foreground_dir,
+                }}),
+            );
+        }
+
+        assert_eq!(
+            invoking_pane_cwd(&client, None, Some("p1"), PaneCwd::PaneOnly),
+            Some(pane_dir)
+        );
+        assert_eq!(
+            invoking_pane_cwd(&client, None, Some("p1"), PaneCwd::PreferForeground),
+            Some(foreground_dir)
+        );
+    }
+
+    #[test]
+    fn a_complete_failure_prints_its_sentence_once_since_prefix_and_cause_are_the_same() {
+        let error = FlowError::complete("Picker", "Workspace 'x' was not found.");
+        assert_eq!(error.prefix(), Some("Workspace 'x' was not found."));
+        assert_eq!(error.chain(), "Workspace 'x' was not found.");
     }
 }

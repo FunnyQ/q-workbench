@@ -148,8 +148,6 @@ fn seed_targets(history: Vec<String>) -> BTreeMap<String, SshTarget> {
         .collect()
 }
 
-// Collapse a unique user@hostname manual match into its config record. Otherwise,
-// adding a host to SSH config would leave duplicate records after the next use.
 fn apply_use(targets: &mut BTreeMap<String, SshTarget>, requested: &str, now: u64) {
     let target = resolve_alias(targets, requested);
     let (user, hostname) = target
@@ -371,7 +369,6 @@ pub fn history_targets(history: &Path) -> Result<Vec<String>> {
         .enumerate()
         .filter_map(parse_history_line)
         .collect::<Vec<_>>();
-    // Deduplication must happen after sorting or an older shell entry can hide the latest one.
     occurrences.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
 
     let mut seen = HashSet::new();

@@ -22,10 +22,6 @@ const WAIT_INTERVAL: Duration = Duration::from_millis(100);
 static CAUGHT_SIGNAL: AtomicU32 = AtomicU32::new(0);
 static SIGNAL_PIPE_WRITE: AtomicI32 = AtomicI32::new(-1);
 
-/// The four fields of one `Host` block, exactly as the prompts collect them.
-///
-/// The port stays a `String` because the zsh original validated the *text* the user
-/// typed, not a parsed number: `+22` and ` 22` were refused before any arithmetic ran.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SshEditFields {
     pub alias: String,
@@ -34,7 +30,6 @@ pub struct SshEditFields {
     pub port: String,
 }
 
-/// Validate the four fields as one pure step, so the tests never drive a prompt.
 pub fn validate_edit_fields(fields: &SshEditFields) -> std::result::Result<(), String> {
     if !valid_name(&fields.alias) {
         return Err(format!("Invalid SSH alias: {}", fields.alias));
@@ -51,8 +46,6 @@ pub fn validate_edit_fields(fields: &SshEditFields) -> std::result::Result<(), S
     Ok(())
 }
 
-/// Refuse an alias the config already declares.
-///
 /// `ssh` resolves the *first* matching `Host` block, so a second block with the same
 /// alias is silently dead config. The keyword is matched case-insensitively and the
 /// alias exactly, which is what the zsh `awk` guard did.
@@ -80,7 +73,6 @@ fn valid_port(value: &str) -> bool {
             .is_ok_and(|port| (1..=65535).contains(&port))
 }
 
-/// Collect one SSH host block from prompts, or open the config for an existing one.
 pub fn edit(
     target: Option<&str>,
     config: &Path,
@@ -112,8 +104,6 @@ fn edit_with(
         .with_context(|| format!("SSH target not found: {target}"))
         .context("ssh edit")?;
 
-    // A host that came from the config file already has a block; editing its fields
-    // belongs to the user's editor, not to this program.
     if entry.source == SshSource::Config {
         return exec_editor(config);
     }
@@ -145,7 +135,6 @@ fn edit_with(
         user,
         port,
     };
-    // Show the exact block that will be appended, framed by blank lines, then confirm.
     print!("\n{}\n", render_block(&fields, false));
     io::stdout().flush().context("ssh edit: flush preview")?;
     if !prompt.confirm("Add this host to SSH config?")? {
@@ -163,10 +152,6 @@ fn edit_with(
     Ok(())
 }
 
-/// Every question the editor asks, so the tests can answer them without a terminal.
-///
-/// `None` from `input`, or `false` from `confirm`, is a cancellation: the flow returns
-/// success and writes nothing, exactly as the zsh `|| exit 0` chain did.
 trait EditPrompt {
     fn input(
         &mut self,
@@ -197,11 +182,7 @@ impl EditPrompt for GumPrompt {
     }
 }
 
-/// Pre-fill the prompts from the target itself: `user@hostname` fills both fields,
-/// anything else is a bare hostname. The alias gets a placeholder instead of a value,
-/// because it names the shortcut the user wants to type, not the host they already have.
 fn target_defaults(target: &str) -> (String, String) {
-    // zsh split on the first `@` only (`${target%%@*}` / `${target#*@}`).
     match target.split_once('@') {
         Some((user, hostname)) => (hostname.to_owned(), user.to_owned()),
         None => (target.to_owned(), String::new()),
@@ -287,8 +268,6 @@ fn gum_confirm(prompt: &str) -> Result<bool> {
         .success())
 }
 
-/// Render one `Host` block. `User` is omitted entirely when no user was given, and the
-/// leading blank line separates the block from a non-empty file.
 fn render_block(fields: &SshEditFields, leading_blank_line: bool) -> String {
     let mut block = String::new();
     if leading_blank_line {
@@ -305,8 +284,6 @@ fn render_block(fields: &SshEditFields, leading_blank_line: bool) -> String {
     block
 }
 
-/// Append the block by replacing the whole file, never by writing it in place.
-///
 /// This is the reason the copy-append-rename dance exists: `~/.ssh/config` is the only
 /// record of how the user reaches every one of their machines, and an in-place append
 /// that dies part-way through — a full disk, a killed popup, a `^C` — leaves a
@@ -322,8 +299,6 @@ fn write_config_atomically(config: &Path, existing: &str, fields: &SshEditFields
     })
 }
 
-/// The same write, with `replace` injected so a test can fail the rename and check that
-/// the original config survived and no temporary file was left behind.
 fn write_config_atomically_with<F>(
     config: &Path,
     existing: &str,
@@ -466,15 +441,6 @@ impl Drop for SignalHandlers {
     }
 }
 
-/// Own one SSH connection, close its dedicated tab, then exit with ssh's own status.
-///
-/// On success this never returns: it ends the process with the status the connection
-/// ended on, mirroring `exit "$ssh_status"` in the zsh original, and `128 + signum`
-/// when a signal ended it instead. The status is the only thing this wrapper adds over
-/// bare `ssh`, so discarding it and returning `Outcome::Done` would make every session
-/// look successful. It still returns `FlowResult` so a failure *before* that point —
-/// the signal handlers, or the spawn — routes through the single reporting path in
-/// `main` and reaches the user as a notification.
 pub fn session(
     target: &str,
     tab_id: &str,
@@ -494,13 +460,9 @@ pub fn session(
         client,
         &mut command,
     )?;
-    // Nothing is buffered at this point: the child owned the terminal directly and the
-    // tab is already closed, so there is nothing left for a destructor to flush.
     std::process::exit(exit_code)
 }
 
-/// The same session with the child command injected, returning the status instead of
-/// exiting so a test can assert both the status and the reporting metadata.
 fn session_with_command(
     target: &str,
     tab_id: &str,
@@ -543,13 +505,6 @@ fn run_session(
             .spawn()
             .context("ssh session: spawning ssh")?;
 
-        // Stamped at launch rather than at a clean exit: the picker orders by last use,
-        // and a session that dropped, was interrupted, or ended on the remote command's
-        // status is still one the user opened. Best-effort by design — neither failure
-        // may change the status ssh exits with. The real config file has to reach
-        // `use_target`: its `sync` drops every `source: "config"` entry the given file no
-        // longer names, so passing a stub here would wipe the whole configured half of
-        // the registry on each session.
         let _ = registry::ssh::use_target(registry_file, config_file, history_file, target);
         if let Ok(now) = unix_epoch() {
             let _ = append_history(history_file, target, now);
@@ -558,10 +513,6 @@ fn run_session(
         wait_for_child(child, handlers.read_fd)
     })();
 
-    // The tab exists only to hold this connection, so it must close whether ssh exited,
-    // was signalled, or never started — a tab left open after a failed connection is a
-    // worse outcome than a missing notification. A close failure is deliberately
-    // swallowed so it cannot displace the real cause on its way to `main`.
     let _ = client.tab_close(json!({"tab_id": tab_id}));
     let (status, caught_signal) = result?;
 
@@ -602,14 +553,15 @@ fn wait_for_child(
     }
 }
 
+const CHILD_EXIT_POLL_INTERVAL_MS: libc::c_int = 50;
+
 fn wait_for_signal_pipe(fd: libc::c_int) -> io::Result<()> {
     let mut descriptor = libc::pollfd {
         fd,
         events: libc::POLLIN,
         revents: 0,
     };
-    // A timeout also observes a child that exits without writing to the pipe.
-    let result = unsafe { libc::poll(&mut descriptor, 1, 50) };
+    let result = unsafe { libc::poll(&mut descriptor, 1, CHILD_EXIT_POLL_INTERVAL_MS) };
     if result == -1 {
         let error = io::Error::last_os_error();
         if error.raw_os_error() != Some(libc::EINTR) {
@@ -711,8 +663,6 @@ mod tests {
 
     #[test]
     fn missing_and_empty_targets_fail_before_ui() {
-        // Every path points at a file that does not exist, and the prompt panics if it
-        // is asked anything: reaching either would mean the guard came too late.
         let path = temp_path("unused-config");
         let _ = fs::remove_file(&path);
         for target in [None, Some("")] {
@@ -736,7 +686,6 @@ mod tests {
             target_defaults("example.com"),
             ("example.com".to_owned(), String::new())
         );
-        // zsh split on the first `@`, so the rest stays in the hostname.
         assert_eq!(target_defaults("a@b@c"), ("b@c".to_owned(), "a".to_owned()));
     }
 
@@ -777,7 +726,6 @@ mod tests {
             ("port", "65536", "Invalid SSH port: 65536"),
             ("port", "abc", "Invalid SSH port: abc"),
             ("port", "", "Invalid SSH port: "),
-            // `grep -qxE '[0-9]+'` refused a sign, and so must the port parser.
             ("port", "+22", "Invalid SSH port: +22"),
             ("port", " 22", "Invalid SSH port:  22"),
         ];
@@ -799,8 +747,6 @@ mod tests {
         assert_eq!(validate_alias_available("Host MyHost\n", "myhost"), Ok(()));
     }
 
-    /// Answers the four inputs and the confirm from a script, and records what it was
-    /// asked, so the prompt flow can be tested without gum or a terminal.
     #[derive(Default)]
     struct ScriptedPrompt {
         answers: std::collections::VecDeque<Option<String>>,
@@ -840,8 +786,6 @@ mod tests {
     }
 
     impl Sandbox {
-        /// An empty SSH config keeps `sync` from shelling out to `ssh -G`, and the
-        /// registry entry is `manual` so the flow takes the prompt path.
         fn new(name: &str, config_contents: &str) -> Self {
             let dir = std::env::temp_dir()
                 .join(format!("workbench-ssh-edit-{}-{name}", std::process::id()));
@@ -901,7 +845,6 @@ mod tests {
             for answer in answers.iter().take(cancel_at) {
                 prompt.answers.push_back(Some((*answer).to_owned()));
             }
-            // The last case answers every input and then declines the confirm.
             if cancel_at < answers.len() {
                 prompt.answers.push_back(None);
             } else {
@@ -1027,8 +970,6 @@ mod tests {
     fn run_shell(script: &str, client: &FakeClient) -> (i32, std::path::PathBuf) {
         let registry = temp_path("registry.json");
         let history = temp_path("history");
-        // A real config naming the target, so the stamp exercises the same
-        // config-reconciling `sync` a live session runs rather than an empty stub.
         let config = temp_path("ssh-config");
         let _ = fs::remove_file(&registry);
         let _ = fs::remove_file(&history);
@@ -1039,9 +980,6 @@ mod tests {
         .unwrap();
         let mut command = Command::new("/bin/sh");
         command.args(["-c", script]);
-        // `session_with_command` is the same flow `session` runs, minus the final
-        // `std::process::exit` — so the status these tests assert is the status the
-        // process leaves with.
         let code = session_with_command(
             "test-host",
             "tab-id",
@@ -1076,9 +1014,6 @@ mod tests {
         );
         let stamped = fs::read_to_string(registry).unwrap();
         assert!(stamped.contains("\"last_used_at\":"));
-        // The stamp must not cost the configured half of the registry: `use_target`
-        // syncs first, so a session handed the wrong config file would drop every
-        // `source: "config"` entry it wrote a moment earlier.
         assert!(stamped.contains("\"source\": \"config\""));
         assert!(stamped.contains("example.invalid"));
         assert!(fs::read_to_string(temp_path("history"))
@@ -1094,8 +1029,6 @@ mod tests {
 
         assert_eq!(code, 23);
         assert_eq!(client.calls.borrow()[0].0, "tab.close");
-        // A dropped connection or a remote command's failing status is still a session
-        // the user opened, and the picker orders by last use.
         assert!(fs::read_to_string(registry)
             .unwrap()
             .contains("\"last_used_at\":"));
@@ -1127,6 +1060,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn failed_stamp_leaves_the_exit_status_unchanged() {
+        let _guard = SIGNAL_TEST.lock().unwrap();
+        let client = FakeClient::default();
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exit 7"]);
+
+        let code = session_with_command(
+            "test-host",
+            "tab-id",
+            Path::new("/dev/null/registry"),
+            Path::new("/dev/null/config"),
+            Path::new("/dev/null/history"),
+            &client,
+            &mut command,
+        )
+        .unwrap();
+
+        assert_eq!(code, 7);
+    }
+
+    #[test]
+    fn failed_tab_close_does_not_displace_the_spawn_error() {
+        let client = FakeClient::default();
+        client.queue_error("tab.close", "not_found", "missing tab");
+        let mut command = Command::new("/definitely/missing/ssh");
+
+        let error = session_with_command(
+            "test-host",
+            "tab-id",
+            Path::new("/unused/registry"),
+            Path::new("/unused/config"),
+            Path::new("/unused/history"),
+            &client,
+            &mut command,
+        )
+        .expect_err("reject spawn failure");
+
+        let flow_error = error.downcast_ref::<FlowError>().unwrap();
+        assert!(flow_error.chain().starts_with("ssh session: spawning ssh:"));
+    }
+
     fn assert_signal(signal: i32, script: &str) {
         let _guard = SIGNAL_TEST.lock().unwrap();
         let client = FakeClient::default();
@@ -1141,8 +1116,6 @@ mod tests {
 
         assert_eq!(code, 128 + signal);
         assert_eq!(client.calls.borrow()[0].0, "tab.close");
-        // The child never exited on its own, so a stamp here can only have been written
-        // before the wait — which is what keeps an interrupted session in the picker.
         assert!(fs::read_to_string(registry)
             .unwrap()
             .contains("\"last_used_at\":"));

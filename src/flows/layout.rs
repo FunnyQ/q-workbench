@@ -6,11 +6,6 @@ use crate::herdr::HerdrClient;
 
 use super::{nonempty_env, FlowResult, Outcome};
 
-/// Set every split ratio in the target pane's row (or column) so its siblings end up
-/// the same size. Only splits that share the immediate parent's direction are touched.
-/// A pane split in a different direction nested inside one slot — a Files/term stack
-/// inside one column of a row, say — is left alone: evening it out would resize a
-/// dimension the caller never asked about.
 pub fn even_out(client: &dyn HerdrClient, pane: Option<&str>) -> FlowResult {
     let pane_id = pane
         .map(str::to_owned)
@@ -60,8 +55,7 @@ pub fn even_out(client: &dyn HerdrClient, pane: Option<&str>) -> FlowResult {
     Ok(Outcome::Done)
 }
 
-/// The branch choices (`false` = first, `true` = second) from `root` down to the pane,
-/// or `None` when the pane is not in this tree.
+/// The branch choices (`false` = first, `true` = second) from `root` down to the pane.
 fn find_path(node: &LayoutNode, pane_id: &str) -> Option<Vec<bool>> {
     match node {
         LayoutNode::Pane { pane_id: id, .. } => (id.as_deref() == Some(pane_id)).then(Vec::new),
@@ -93,9 +87,6 @@ fn direction_at<'a>(root: &'a LayoutNode, path: &[bool]) -> Option<&'a str> {
     }
 }
 
-/// Even out `node`'s split ratios in-place over the socket, returning how many leaf
-/// panes it holds. A split in a different direction — an orthogonal sub-layout nested
-/// inside one slot — counts as a single opaque unit and is left untouched.
 fn apply_even_ratios(
     client: &dyn HerdrClient,
     tab_id: &str,

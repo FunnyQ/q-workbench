@@ -31,8 +31,6 @@ pub struct LastAgentRecord {
     /// The layout pane this agent was launched as. Restart replays that pane's pin, which
     /// is not the first agent pane's once a layout declares several.
     pub pane: String,
-    /// Fallback for restart's resume when Herdr's own snapshot carries no session; absent
-    /// simply means none was captured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
     pub recorded_at: u64,
@@ -78,22 +76,16 @@ pub fn last_choice_is_valid(record: &LastAgentRecord, config: &Config) -> bool {
     let Some(agent) = config.agent(&record.agent) else {
         return false;
     };
-    // The option rule binds in both directions: an option stored for an agent that no longer
-    // offers any is stale, and an agent that does offer options cannot be replayed without one.
     let option_ok = match &record.option {
         Some(name) => agent.option(name).is_some(),
         None => agent.options.is_empty(),
     };
-    // The pane has to still be an agent pane of that layout: renaming or retyping it in
-    // config would otherwise replay a pin that no longer belongs to anything.
     let pane_ok = config
         .layout(&record.layout)
         .is_some_and(|layout| layout.agent_pane(Some(&record.pane)).is_some());
     option_ok && pane_ok
 }
 
-/// The caller already holds a loaded config, so this borrows it rather than reading and
-/// parsing the file a second time on every restart.
 pub fn get_for_pane(pane_id: &str, config: &Config) -> Option<LastAgentRecord> {
     let mut state = read_state();
     let record = state.panes.get(pane_id)?.clone();
@@ -108,8 +100,6 @@ pub fn get_for_pane(pane_id: &str, config: &Config) -> Option<LastAgentRecord> {
     Some(record)
 }
 
-/// The session reporter runs long after the launch, so it patches one field rather than
-/// rewriting a record whose other fields it never learned.
 pub fn set_session(pane_id: &str, session: &str) -> Result<()> {
     let Some(path) = state_path() else {
         return Ok(());
@@ -211,9 +201,6 @@ mod tests {
     #[test]
     fn older_state_versions_are_discarded() {
         let _guard = env_lock();
-        // v1 keyed the harness by rendered label; v2 carried no pane name; v3 no session.
-        // The filter is by version, not by shape, so each goes whole rather than leaving
-        // the reader to guess which of those a partial record is.
         for (name, contents) in [
             (
                 "v1",
@@ -358,8 +345,6 @@ mod tests {
     #[test]
     fn a_pane_that_is_no_longer_an_agent_pane_is_removed() {
         let _guard = env_lock();
-        // `term` is a shell pane of the default layout: a record naming it would replay a
-        // harness into a pane the layout no longer runs one in.
         assert_stale_record_is_removed(
             "stale-pane",
             LastAgentRecord {

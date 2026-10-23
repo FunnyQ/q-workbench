@@ -24,8 +24,6 @@ fn run_with(client: &dyn HerdrClient, workspace_label: &str) -> FlowResult {
         .into_iter()
         .find(|workspace| workspace.label.as_deref() == Some(workspace_label));
     let Some(workspace) = workspace else {
-        // The message already names the concrete cause, so it is the whole body and the
-        // reporting path appends nothing to it.
         let body = format!("Workspace '{workspace_label}' was not found.");
         return Err(FlowError::complete(TITLE, body).into());
     };

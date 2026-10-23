@@ -28,7 +28,6 @@ fn temporary_directory() -> PathBuf {
     directory
 }
 
-/// A `gum` that behaves like the real one: the frame on stderr, the answer on stdout.
 fn stub_gum(directory: &Path) -> PathBuf {
     let bin = directory.join("bin");
     fs::create_dir_all(&bin).expect("create stub bin");

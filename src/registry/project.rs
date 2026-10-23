@@ -1,5 +1,3 @@
-//! Project registry discovery, storage, and non-interactive operations.
-//!
 //! This layer reproduces the discovery half of `scripts/project-registry.zsh` and
 //! owns registry reads, atomic writes, source merges, `update`, and `use`.
 //!
@@ -56,38 +54,24 @@ impl Source {
     }
 }
 
-/// Resolve a candidate path to the project it belongs to, or nothing.
-///
-/// Yielding nothing is the normal case, not a fault: sessions outlive the
-/// directories they ran in, so a stale path pointing at a deleted or temporary
-/// directory is expected and must simply be dropped.
 pub fn canonical_project(path: &Path, projects_root: &Path) -> Option<PathBuf> {
     if !path.is_dir() || path == Path::new("/") {
         return None;
     }
 
-    // A session can be recorded in a directory that is not a git checkout at all
-    // (`~/.claude/projects/-Users-funnyq--config` is a real example). The zsh source
-    // falls back to the path itself on a failed `rev-parse`; dropping those entries
-    // would silently lose every non-git project.
     let root = git_toplevel(path).unwrap_or_else(|| path.to_owned());
     if root == Path::new("/") {
         return None;
     }
 
-    // Resolve symlinks so two paths to the same project cannot register twice.
     let root = fs::canonicalize(&root).ok()?;
     if root == Path::new("/") {
         return None;
     }
 
     if is_temporary_path(&root) {
-        // The exception exists for a projects root that is itself a symlink into a
-        // temp-like path. Without it, such a developer would have every project
-        // silently dropped by the temp filter.
         let projects_root =
             fs::canonicalize(projects_root).unwrap_or_else(|_| projects_root.to_owned());
-        // A strict descendant, matching the zsh glob `"$physical_projects_root"/*`.
         if !root.starts_with(&projects_root) || root == projects_root {
             return None;
         }
@@ -182,31 +166,20 @@ pub fn discover_codex_projects(home: &Path) -> Vec<(PathBuf, Source)> {
     results
 }
 
-/// How far a `.git` sweep walks once it has found a checkout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Descent {
-    /// Keep walking, so a repository nested inside another one is found too.
     IntoCheckouts,
-    /// Stop at the checkout.
     ToCheckouts,
 }
 
-/// Candidate paths from the filesystem: a `.git` sweep of the projects root.
 pub fn discover_filesystem_projects(projects_root: &Path) -> Vec<(PathBuf, Source)> {
     sweep(projects_root, Descent::IntoCheckouts, &[])
 }
 
-/// The same sweep for the project picker: it also admits a directory holding one of
-/// `markers`, and it stops at every project instead of walking its contents.
-///
 /// Stopping is what makes it affordable. The picker reloads its source on every
 /// keystroke, and against a real projects root of 133 checkouts the full walk costs
 /// ~1.3 s against ~11 ms. What it gives up is a project nested inside another one —
 /// two of those 133 — which is the cheaper half of the trade.
-///
-/// The markers are the picker's alone. A directory earns a registry entry by being
-/// picked, so widening what the sweep offers must not widen what `project update`
-/// writes.
 pub fn discover_project_checkouts(
     projects_root: &Path,
     markers: &[String],
@@ -292,7 +265,6 @@ fn sweep_for_projects(
 fn collect_files(directory: &Path, matches: &impl Fn(&Path) -> bool) -> Vec<PathBuf> {
     let mut files = Vec::new();
     collect_files_into(directory, matches, &mut files);
-    // Sorted so discovery output does not depend on directory iteration order.
     files.sort();
     files
 }
@@ -340,10 +312,6 @@ fn first_transcript_cwd(path: &Path) -> Option<String> {
     None
 }
 
-/// Read the value of the first `"cwd":"…"` in a line, honouring JSON escapes.
-///
-/// This mirrors the `rg -o '"cwd":"([^"\\]|\\.)*"'` match, which found the key at any
-/// depth, so a `cwd` nested inside an envelope is still picked up.
 fn extract_cwd(line: &str) -> Option<String> {
     const KEY: &str = "\"cwd\":";
     let start = line.find("\"cwd\":\"")? + KEY.len();
@@ -427,8 +395,6 @@ pub trait Clock {
     fn unix_seconds(&self) -> u64;
 }
 
-// The clock is injectable because unit tests pin exact timestamps, while parity
-// comparisons must normalise `generated_at` produced by two separate processes.
 pub struct SystemClock;
 
 impl Clock for SystemClock {
@@ -517,11 +483,6 @@ pub fn write_registry(path: &Path, registry: &ProjectRegistry) -> Result<()> {
     write_json_atomically(path, registry)
 }
 
-/// Split the comma-separated alias field: trim each, drop empties, deduplicate.
-///
-/// Order is preserved deliberately. The aliases are typed by hand and the picker shows
-/// them in the order given, so sorting them would reorder the user's own list under
-/// them. The `BTreeSet` is a membership test only, never the output order.
 pub fn normalize_aliases(input: &str) -> Vec<String> {
     let mut seen = BTreeSet::new();
     input
@@ -533,16 +494,10 @@ pub fn normalize_aliases(input: &str) -> Vec<String> {
         .collect()
 }
 
-/// The path of a selected menu row: the **last** tab-separated field.
-///
-/// Read from the end, never the start. The display column is free text and a project
-/// name may contain a tab; taking field two would then yield a fragment of the name and
-/// silently drop that project from the write.
 pub fn parse_selection_path(line: &str) -> String {
     line.rsplit('\t').next().unwrap_or_default().to_owned()
 }
 
-/// One review row: `<marker> <name>\t<path>`, or `<name>\t<path>` when unmarked.
 pub fn format_candidate_row(name: &str, path: &str, marker: &str) -> String {
     if marker.is_empty() {
         format!("{name}\t{path}")
@@ -557,18 +512,6 @@ struct Candidate {
     row: String,
 }
 
-/// Build the review menu: one row per path, from discovery unioned with the registry.
-///
-/// The display column is always the path's **basename**, never the entry's stored
-/// display name. `scripts/project-registry.zsh:278` computes it as
-/// `$path | split("/") | last` for every row, including registered ones, so a project
-/// renamed through `edit` still reviews under its basename. The stored name survives
-/// the write regardless — `scan_with` clones the existing entry rather than rebuilding
-/// it — so showing the basename here costs nothing and keeps the menu aligned with the
-/// paths it is really about.
-///
-/// Row order is by path. `BTreeMap` iterates its `String` keys in byte order, which is
-/// the same order jq's `keys[]` produces, so the two versions list identically.
 fn candidate_rows(
     existing: &ProjectRegistry,
     discovered: &BTreeMap<String, Vec<String>>,
@@ -576,8 +519,6 @@ fn candidate_rows(
 ) -> Vec<Candidate> {
     let mut markers = BTreeMap::<&String, &str>::new();
     for path in discovered.keys() {
-        // `scan` never marks: it starts from no registry, so every row is new and a
-        // marker on all of them would carry no information.
         let marker = if rescan && !existing.projects.contains_key(path) {
             "[new]"
         } else {
@@ -586,9 +527,6 @@ fn candidate_rows(
         markers.insert(path, marker);
     }
     if rescan {
-        // A registered path that discovery no longer finds. It stays on the menu so the
-        // user can decide, because discovery misses are routine — a project on an
-        // unmounted volume is missing, not deleted.
         for path in existing.projects.keys() {
             markers.entry(path).or_insert("[missing]");
         }
@@ -603,10 +541,6 @@ fn candidate_rows(
         .collect()
 }
 
-/// The review menu was dismissed, or it came back with nothing selected.
-///
-/// Typed rather than a bare message so `project review` can end as a clean outcome
-/// while `scan` and `rescan` keep printing the contract's stderr line.
 #[derive(Debug)]
 pub struct ReviewCancelled(&'static str);
 
@@ -618,12 +552,7 @@ impl fmt::Display for ReviewCancelled {
 
 impl std::error::Error for ReviewCancelled {}
 
-/// The interactive surface of `scan`, `rescan` and `edit`, behind one trait so the
-/// review logic can be tested without a TTY.
-///
 /// `Ok(None)` means the user cancelled — `gum` exits non-zero on escape. Terminal
-/// cancellation reports that nothing was written because the edit remains visible.
-/// Popup cancellation stays silent because dismissing a temporary menu is normal.
 trait PromptRunner {
     fn choose_projects(&mut self, rows: &[String]) -> Result<Option<String>>;
     fn input(&mut self, header: &str, value: &str) -> Result<Option<String>>;
@@ -631,8 +560,6 @@ trait PromptRunner {
     fn clear(&mut self) -> Result<()>;
 }
 
-/// The review menu's `gum` arguments, kept in one place so a parity test can compare
-/// them with the ones `scripts/project-registry.zsh:286-288` passes.
 fn review_menu_args() -> Vec<String> {
     [
         "choose",
@@ -824,18 +751,6 @@ pub fn rescan(registry_path: &Path) -> Result<()> {
     )
 }
 
-/// Review discovered projects and write the ones that survive the menu.
-///
-/// `scan` and `rescan` differ only in where they start: `scan` refuses to run once a
-/// registry exists, `rescan` requires one and marks the difference between it and
-/// discovery.
-///
-/// **The write is all-or-nothing, and cancelling must never reach it.** The registry is
-/// replaced by exactly the selected paths, so writing an empty selection would erase
-/// the user's whole project list — every alias, every hidden flag, every
-/// `last_used_at`. A cancelled menu and an empty selection therefore both bail before
-/// `write_registry`, which is why the selection is checked twice: once for cancellation
-/// and once for emptiness.
 fn scan_with(
     registry_path: &Path,
     home: &Path,
@@ -872,11 +787,6 @@ fn scan_with(
         }
     };
     let discovered = discovered_projects(home, projects_root);
-    // Discovery, not the menu, is what has to be non-empty. `scripts/project-registry.zsh:268`
-    // bails here whenever the three sources return nothing, and it does so on `rescan`
-    // too — even with a populated registry. An empty discovery means the sources are
-    // unreadable or the projects root is wrong, and reviewing an all-`[missing]` menu in
-    // that state invites the user to confirm the deletion of everything.
     if discovered.is_empty() {
         anyhow::bail!("project-registry: no projects found");
     }
@@ -891,9 +801,6 @@ fn scan_with(
         ))
     })?;
 
-    // Drop rows with no tab, matching the zsh `awk -F '\t' 'NF >= 2 { print $NF }'`.
-    // Only the last field is the path: a display name may itself contain a tab, and
-    // parsing from the end is the only reading that survives one.
     let selected = selection
         .lines()
         .filter(|line| line.contains('\t'))
@@ -909,10 +816,6 @@ fn scan_with(
         if !selected.contains(&candidate.path) {
             continue;
         }
-        // Clone the registered entry so `aliases`, `hidden`, `last_used_at` and the
-        // edited display name survive a `rescan`. Only `sources` is recomputed, and
-        // only when discovery actually saw the path — a `[missing]` row that the user
-        // keeps holds on to the sources it last had.
         let mut entry = existing
             .projects
             .get(&candidate.path)
@@ -952,11 +855,6 @@ pub fn edit(registry_path: &Path, project_path: &Path) -> Result<()> {
     )
 }
 
-/// Edit one registered project: display name, aliases, picker visibility.
-///
-/// The three prompts run in that fixed order and each is seeded with the current value,
-/// so pressing enter through all three is a no-op. Cancelling any one of them leaves
-/// the registry untouched — the write happens once, after the last prompt returns.
 fn edit_with(
     registry_path: &Path,
     project_path: &Path,
@@ -1009,8 +907,6 @@ fn edit_with(
     );
 
     let edited = registry.projects.get_mut(&key).expect("entry was checked");
-    // An emptied name falls back to the basename rather than being stored blank: the
-    // picker renders this field, and a blank row cannot be selected by name.
     edited.name = if name.trim().is_empty() {
         file_name(project_path).to_owned()
     } else {
@@ -1062,8 +958,6 @@ pub fn write_json_atomically(path: &Path, value: &impl Serialize) -> Result<()> 
     let result = (|| {
         let mut writer = BufWriter::new(temporary_file);
         serde_json::to_writer_pretty(&mut writer, value).context("failed to serialize registry")?;
-        // serde_json omits the final newline, but jq writes one. Add it explicitly
-        // so Rust and zsh registry files remain byte-identical.
         writer
             .write_all(b"\n")
             .context("failed to finish registry")?;
@@ -1196,8 +1090,6 @@ mod tests {
             Self::new_in(&std::env::temp_dir(), label)
         }
 
-        /// A fixture under an explicit base, so a test can pin a real `/tmp` path
-        /// instead of relying on whatever `TMPDIR` happens to be.
         fn new_in(base: &Path, label: &str) -> Self {
             let id = FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
             let directory = base.join(format!(
@@ -1332,8 +1224,6 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(scan, ["kept\t/projects/kept", "new\t/projects/new"]);
 
-        // The display column is the basename even for registered entries carrying an
-        // edited name, and rows come out in path order — both as jq produces them.
         let rescan = candidate_rows(&existing, &discovered, true)
             .into_iter()
             .map(|candidate| candidate.row)
@@ -1395,9 +1285,6 @@ mod tests {
         }
     }
 
-    /// The guards that decide whether the review may run at all. `scan` is the
-    /// destructive direction — it would replace a registry wholesale — so it refuses an
-    /// existing file; `rescan` and `edit` refuse a missing one.
     #[test]
     fn review_guards_refuse_the_wrong_registry_state() {
         let fixture = Fixture::new("guards");
@@ -1454,8 +1341,6 @@ mod tests {
         );
     }
 
-    /// `review` reads the registry state to pick its direction, so neither guard can
-    /// fire: a missing registry scans, an existing one rescans.
     #[test]
     fn review_scans_a_missing_registry_and_rescans_an_existing_one() {
         let fixture = Fixture::new("review-direction");
@@ -1489,8 +1374,6 @@ mod tests {
         );
     }
 
-    /// Empty discovery aborts even when the registry is full, so a broken projects root
-    /// can never present an all-`[missing]` menu.
     #[test]
     fn empty_discovery_aborts_rescan_before_prompting() {
         let fixture = Fixture::new("no-projects");
@@ -1545,7 +1428,6 @@ mod tests {
         )
         .unwrap();
 
-        // Keep alpha, drop the `[new]` beta row.
         let mut prompt = FakePrompt {
             choices: VecDeque::from([Some(format!("alpha\t{}", alpha.display()))]),
             ..FakePrompt::default()
@@ -1573,7 +1455,6 @@ mod tests {
         assert_eq!(entry.aliases.as_ref().unwrap(), &["a"]);
         assert_eq!(entry.hidden, Some(true));
         assert_eq!(entry.last_used_at, Some(42));
-        // `sources` is the one field the review recomputes; `manual` is not carried.
         assert_eq!(entry.sources, ["filesystem"]);
         assert_eq!(
             registry.generated_at,
@@ -2023,8 +1904,6 @@ mod tests {
 
     #[test]
     fn test_canonical_project_keeps_a_temp_path_inside_the_projects_root() {
-        // The fixture root is itself temp-like (`TMPDIR` on macOS, `/tmp` elsewhere),
-        // so this is exactly the case the projects-root exception exists for.
         let fixture = Fixture::new("inside-root");
         let projects_root = fixture.mkdir("projects");
         let repo = fixture.git_repo("projects/tmp-project");
@@ -2070,7 +1949,6 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let fixture = Fixture::new("claude-bad");
-        // One unreadable file must not empty the whole source.
         let unreadable = fixture.write(".claude/projects/a/session.jsonl", "{\"cwd\":\"/gone\"}\n");
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
         fixture.write(".claude/projects/b/broken.jsonl", "not json at all\n");
@@ -2146,8 +2024,6 @@ mod tests {
         fixture.mkdir("one/embedded/.git");
         fixture.mkdir("group/two/.git");
 
-        // The registry walks through a checkout to reach the one nested inside it; the
-        // picker's sweep stops, which is what makes it cheap enough to run per keystroke.
         assert_eq!(
             discover_filesystem_projects(&fixture.directory),
             vec![

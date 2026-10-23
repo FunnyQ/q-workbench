@@ -1,10 +1,3 @@
-//! The project and SSH pickers, including the project picker's fzf source.
-//!
-//! fzf binds `change:reload(<self> project source {q})`, so this module runs once per
-//! keystroke. It makes no Herdr call, and both the `zoxide` lookup and the sweep of
-//! the projects root wait for a query of `DISCOVERY_MINIMUM_QUERY` characters, so an
-//! empty query still costs nothing but the registry read. `source_with_zoxide` is pure
-//! apart from that read and that sweep, so the record bytes are tested directly.
 //! Measured cost is in `docs/rust-rewrite/tasks/picker/01-project-picker-source.md`;
 //! `scripts/bench-project-source.zsh` reproduces it. The sweep is what dominates a
 //! query-bearing reload — 11 ms of a 14 ms median — so keep it shallow.
@@ -26,12 +19,6 @@ use crate::registry::project::{discover_project_checkouts, ProjectEntry, Project
 use crate::registry::ssh;
 use crate::shell::shell_quote;
 
-/// The query length that unlocks the two sources outside the registry.
-///
-/// The zoxide lookup and the projects-root sweep are the only work in this module that
-/// leaves the registry file, and neither can narrow anything for a query too short to
-/// mean something. Holding both to one threshold keeps the opening draw at the
-/// registry's cost alone.
 const DISCOVERY_MINIMUM_QUERY: usize = 2;
 
 const PROJECT_ICON: &str = "\u{f024b}";
@@ -47,8 +34,6 @@ struct ProjectSelection {
     path: String,
 }
 
-/// Pick a project and open it, reporting every failure as a notification.
-///
 /// The two `project picker: …` messages below are the zsh script's wording, but they
 /// used to go to stderr and now travel as a notification body. That is a fix, not a
 /// drift: this flow runs inside a Herdr popup pane, which fzf owns for its whole life
@@ -264,10 +249,6 @@ fn focus_or_create_project(
             })
         });
 
-    // When a workspace already exists for this path, we only focus it without
-    // creating an agent tab. This asymmetry is intentional: the enter key shows
-    // the agent menu and injects a launcher, while picking an existing project
-    // reuses it as-is. Only new workspaces get the agent tab.
     if let Some(workspace_id) = workspace_id {
         client
             .workspace_focus(json!({"workspace_id": workspace_id}))
@@ -446,8 +427,6 @@ fn ssh_fzf_args<'a>(edit_binding: &'a str, remove_binding: &'a str) -> Vec<&'a s
 }
 
 fn session_command(executable: &Path, target: &str, tab_id: &str) -> String {
-    // The pane's interactive shell interprets the text sent via pane.send_input, so every
-    // embedded value must be shell-quoted to prevent field splitting and injection attacks.
     crate::shell::build_command(&[
         executable.to_string_lossy().into_owned(),
         "ssh".to_owned(),
@@ -584,7 +563,6 @@ fn source_with_zoxide(
     Ok(output)
 }
 
-/// The one `zoxide` row a query can earn, or nothing.
 fn zoxide_fallback(
     registry: &ProjectRegistry,
     query: &str,
@@ -646,7 +624,6 @@ fn push_swept_records(
     }
 }
 
-/// A row for a path the registry has no entry for, named after its directory.
 fn push_discovered(output: &mut Vec<u8>, path: &Path, source: &str, home: &Path) {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
         return;
@@ -1185,8 +1162,6 @@ mod tests {
         path
     }
 
-    /// A projects root that does not resolve, so the sweep contributes no rows and a
-    /// test can assert on the registry and zoxide rows alone.
     fn unswept() -> PathBuf {
         PathBuf::from("/nonexistent/projects-root")
     }
@@ -1357,8 +1332,6 @@ mod tests {
         checkout(&projects_root.join("Container/Nested"));
         checkout(&projects_root.join("Zoxided"));
         fs::create_dir_all(projects_root.join("NoGit")).expect("create plain directory");
-        // A marked directory is a project without a checkout, and marks a leaf: the
-        // sweep must not walk past it into `Marked/inner`.
         fs::create_dir_all(projects_root.join("Marked/inner")).expect("create marked project");
         fs::write(projects_root.join("Marked/Gemfile"), "").expect("write marker");
         fs::write(projects_root.join("Marked/inner/Gemfile"), "").expect("write inner marker");
@@ -1391,9 +1364,6 @@ mod tests {
         })
         .expect("emit source");
 
-        // Registry row, then the zoxide row, then the sweep in path order. `NoGit` holds
-        // neither a checkout nor a marker and `Zoxided` was already spent on the zoxide
-        // row, so neither is repeated below; nor is `Marked/inner`, below a leaf.
         let expected = format!(
             "{registry_row}\
              \u{f024b}  Zoxided\n   ~/Projects/Zoxided\n   zoxide\t{root}/Zoxided\0\
@@ -1434,8 +1404,6 @@ mod tests {
         assert!(client.calls.into_inner().is_empty());
     }
 
-    /// `session.snapshot` is the project picker's first Herdr call, and the one a
-    /// failure has to name: everything before it is local.
     #[test]
     fn project_picker_snapshot_failure_has_exact_reporting_metadata() {
         let directory = TestDirectory::new();

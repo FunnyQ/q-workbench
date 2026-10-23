@@ -11,8 +11,6 @@ use workbench::flows::{FlowError, FlowResult, Outcome};
 use workbench::herdr::{check_protocol, HerdrClient, ProtocolGuardError, SocketClient};
 use workbench::{config, flows, notify, registry};
 
-/// Routes failures either to a durable terminal or to a popup notification.
-/// The route also records whether the command needs Herdr, so setup cannot drift.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Channel {
     Notification(&'static str),
@@ -106,7 +104,6 @@ struct LaunchArgs {
     no_layout: bool,
     #[arg(long, hide = true)]
     restart: bool,
-    /// Resume this session id instead of starting the harness fresh.
     #[arg(long, hide = true)]
     resume: Option<String>,
     #[arg(long)]
@@ -174,8 +171,6 @@ enum TabCommand {
 }
 
 impl Cli {
-    /// Classify parsed commands against the fixed parity-contract lists.
-    /// Command identity, rather than error text, determines the reporting surface.
     fn channel(&self) -> Channel {
         match &self.command {
             Command::Agent {
@@ -193,8 +188,6 @@ impl Cli {
             Command::Agent {
                 command: AgentCommand::Fork,
             } => Channel::Notification("Agent fork failed"),
-            // The reporter is detached with null stdio: a notification would be the only
-            // thing it could say, and a heuristic miss is not worth interrupting for.
             Command::Agent {
                 command: AgentCommand::SessionReport(_),
             } => Channel::Stderr { uses_herdr: true },
@@ -388,7 +381,6 @@ impl Cli {
                     let registered =
                         match registry::project::review(Path::new(&config.project_registry_file)) {
                             Ok(registered) => registered,
-                            // Dismissing the review menu closes the popup and nothing else.
                             Err(error)
                                 if error
                                     .downcast_ref::<registry::project::ReviewCancelled>()
@@ -654,8 +646,6 @@ fn main() -> ExitCode {
 
 fn report_stderr(subcommand_path: &str, error: &anyhow::Error, output: &mut impl std::io::Write) {
     let message = format!("{error:#}");
-    // Contract messages already name their reporting surface. Other fatal errors use
-    // the parsed clap path once, with chained causes from anyhow's `{:#}` format.
     let is_contract_message = subcommand_path == "ssh edit"
         && [
             "No SSH target selected.",
@@ -704,17 +694,6 @@ fn report_flow_error(client: &dyn HerdrClient, default_title: &str, error: &anyh
     notify::notify(client, title, &body.replace(['\r', '\n'], " "));
 }
 
-/// Build the one-line body a failed flow reports.
-///
-/// A `FlowError` prefix is a sentence the flow wants kept verbatim at the front of the
-/// body, with the chained cause after it — the agent popup's
-/// `The incomplete tab was closed.` describes the cleanup rather than the failure, so it
-/// needs the cause to say what went wrong.
-///
-/// `FlowError::complete` is the other shape, used by the dashboard's missing workspace
-/// and the project picker's two contract messages. Those sentences already name their
-/// concrete cause, so the flow stores the same sentence as both the prefix and the
-/// error; the equality below recognises that and prints it once instead of twice.
 fn notification_body(metadata: Option<&FlowError>, error: &anyhow::Error) -> String {
     let chain = metadata
         .map(FlowError::chain)
@@ -857,9 +836,6 @@ mod tests {
         assert!(!body.contains('\n'));
     }
 
-    /// The four non-agent notifying subcommands must carry the titles the parity
-    /// contract names, because `notification_title` is what a failure with no title of
-    /// its own falls back to.
     #[test]
     fn non_agent_notifying_subcommands_carry_their_contract_titles() {
         let cases = [
@@ -875,7 +851,6 @@ mod tests {
             ),
             (vec!["workbench", "dashboard"], Some("Dashboard Launcher")),
             (vec!["workbench", "tab", "new"], Some("New tab")),
-            // Terminal-facing subcommands report on stderr instead.
             (vec!["workbench", "ssh", "list"], None),
             (vec!["workbench", "project", "scan"], None),
         ];
@@ -1025,9 +1000,6 @@ mod tests {
         }
     }
 
-    /// A body built by `FlowError::complete` reaches the notification whole, with no
-    /// chained cause appended — this is the dashboard's and the project picker's
-    /// contract, driven end to end rather than asserted on the metadata.
     #[test]
     fn a_complete_body_is_reported_verbatim_with_nothing_appended() {
         let cases = [
@@ -1061,8 +1033,6 @@ mod tests {
         }
     }
 
-    /// A failure with no preserved sentence reports the chained cause under the
-    /// subcommand's own title.
     #[test]
     fn a_titled_failure_reports_its_chain_under_its_own_title() {
         let client = herdr::FakeClient::default();
@@ -1095,8 +1065,6 @@ mod tests {
         assert!(client.calls.borrow().is_empty());
     }
 
-    /// The flag is the only thing that decides between resuming and starting over, and a
-    /// Resume is the only mode that reads the pane's session back.
     #[test]
     fn the_resume_flag_is_what_makes_the_worker_resolve_a_session() {
         for (argv, reads) in [

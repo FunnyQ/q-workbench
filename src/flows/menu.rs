@@ -28,8 +28,6 @@ pub(crate) trait Menu {
         width: u16,
         indent: InputIndent,
     ) -> Result<Option<String>>;
-    /// Up and down pick a row, left and right step that row's effort. Returns the row's
-    /// index and, for a row that takes one, the effort it was left on.
     fn choose_model(
         &mut self,
         title: &str,
@@ -38,7 +36,6 @@ pub(crate) trait Menu {
     ) -> Result<Option<(usize, Option<String>)>>;
 }
 
-/// One model menu row. `effort` indexes `efforts`; an empty `efforts` takes no effort.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ModelRow {
     pub label: String,
@@ -64,7 +61,6 @@ enum Step {
     Cancel,
 }
 
-/// Every row keeps its own effort, so moving away from a row and back finds it as left.
 struct ModelMenuState {
     row: usize,
     efforts: Vec<usize>,
@@ -146,7 +142,6 @@ fn render_model_rows(rows: &[ModelRow], state: &ModelMenuState, cols: u16) -> Ve
         .flat_map(|row| &row.efforts)
         .map(|level| display_width(level))
         .max();
-    // Two columns of gap, then `‹ ` + level + ` ›`.
     let block = label_width + level_width.map_or(0, |width| 2 + width + 4);
     let pad = " ".repeat(usize::from(cols.saturating_sub(block) / 2));
     rows.iter()
@@ -177,7 +172,6 @@ fn render_model_rows(rows: &[ModelRow], state: &ModelMenuState, cols: u16) -> Ve
         .collect()
 }
 
-/// Puts the terminal into raw mode and back, even when the menu returns early.
 struct RawTerminal {
     original: libc::termios,
 }
@@ -259,16 +253,10 @@ pub(crate) enum InputIndent {
     None,
 }
 
-/// Strip the leading pad but keep the Nerd Font glyph.
-///
-/// Menu options carry leading spaces so `gum` renders them centered. The pad is removed
-/// before the selection is used, while the glyph stays: the stripped label becomes the
-/// pane and tab label, and dropping the glyph would make every tab look alike.
 pub(crate) fn strip_pad(value: &str) -> String {
     value.trim_start().to_owned()
 }
 
-/// The width of `value` in terminal columns.
 ///
 /// Centering pads have to agree with what `gum` draws, so this mirrors how `gum` measures
 /// text. Verified with `gum style --border rounded`: `中文分支` renders 8 columns and
@@ -298,8 +286,6 @@ fn display_width(value: &str) -> u16 {
     })
 }
 
-/// Rows `gum filter` occupies, as both the flag value and the number vertical centering
-/// has to reserve.
 const FILTER_HEIGHT_ARG: &str = "12";
 const FILTER_HEIGHT: u16 = 12;
 
@@ -313,13 +299,10 @@ impl GumMenu {
         Self { cols, lines }
     }
 
-    /// The banner box width: 44, narrowed on a small viewport.
     fn content_width(&self) -> u16 {
         44.min(self.cols.saturating_sub(4))
     }
 
-    /// The left margin that centers the banner box.
-    ///
     /// The box draws two columns wider than `--width`: `gum style` counts the padding
     /// inside the width and adds one border column on each side. Measured at 80 columns,
     /// `--width 44` renders 46 and leaves 17 either side.
@@ -330,18 +313,14 @@ impl GumMenu {
             / 2
     }
 
-    /// The left margin that centers a block `width` columns wide.
     fn block_margin(&self, width: u16) -> u16 {
         self.cols.saturating_sub(width) / 2
     }
 
-    /// The blank rows that center a block `height` rows tall.
     fn vertical_padding(&self, height: u16) -> u16 {
         self.lines.saturating_sub(height) / 2
     }
 
-    /// Draw the centered banner: title, blank line, dim subtitle.
-    ///
     /// The banner is printed line by line at a computed margin instead of being handed to
     /// another `gum` call. Wrapping an already-styled multiline banner in a second
     /// `gum style` offsets its border lines, because the outer call measures the ANSI
@@ -392,8 +371,6 @@ impl GumMenu {
             .collect()
     }
 
-    /// The full `gum choose` argv for these options.
-    ///
     /// The `--` is load-bearing: an option that starts with a dash is parsed as a flag
     /// otherwise. The centering pad usually hides that, but the widest option gets no pad
     /// at all, so a label like `--help` would reach `gum` as a flag — printing help,
@@ -415,7 +392,6 @@ impl GumMenu {
     }
 }
 
-/// The popup's viewport in columns and rows, for sizing a [`GumMenu`].
 pub(crate) fn popup_viewport() -> (u16, u16) {
     super::terminal_size().unwrap_or_else(|| {
         (
@@ -542,8 +518,6 @@ impl Menu for GumMenu {
     }
 }
 
-/// Run `gum` and capture its selection.
-///
 /// `gum` writes the selection to stdout but draws its UI on *stderr* whenever stdout
 /// is not a terminal — which is exactly our case, since we capture the selection. So
 /// stderr must be inherited or the menu renders nowhere and the user chooses blind.
@@ -565,7 +539,6 @@ where
     }))
 }
 
-/// Same contract as [`gum_output`], for the filter menu whose options arrive on stdin.
 fn gum_with_input(args: &[&str], input: &str) -> Result<Option<String>> {
     let mut child = Command::new("gum")
         .args(args)
@@ -597,17 +570,14 @@ mod tests {
     fn the_centering_geometry_matches_the_popup() {
         let menu = GumMenu::new(80, 40);
         assert_eq!(menu.content_width(), 44);
-        // `--width 44` draws 46 columns, so 17 either side of an 80-column viewport.
         assert_eq!(menu.content_margin(), 17);
         assert_eq!(80 - menu.content_margin() - (menu.content_width() + 2), 17);
-        // A 24-column block leaves 28 either side; the old fixed choice margin.
         assert_eq!(menu.block_margin(24), 28);
         assert_eq!(
             menu.padded(&["\u{ead8}  debug".to_owned()]),
             [format!("{}\u{ead8}  debug", " ".repeat(36))]
         );
 
-        // A viewport too narrow for the banner narrows the box and floors both margins.
         let menu = GumMenu::new(20, 8);
         assert_eq!(menu.content_width(), 16);
         assert_eq!(menu.content_margin(), 1);
@@ -616,14 +586,11 @@ mod tests {
 
     #[test]
     fn the_block_is_centered_on_the_rows_it_occupies() {
-        // The banner is 7 rows, plus the blank line, plus the menu body.
         let menu = GumMenu::new(80, 40);
         assert_eq!(menu.vertical_padding(7 + 1 + 3), 14);
         assert_eq!(40 - menu.vertical_padding(11) - 11, 15);
-        // The worktree filter reserves its whole frame, so it sits higher.
         assert_eq!(menu.vertical_padding(7 + 1 + FILTER_HEIGHT), 10);
 
-        // A viewport shorter than the block floors the padding instead of scrolling.
         assert_eq!(GumMenu::new(80, 10).vertical_padding(11), 0);
     }
 
@@ -635,7 +602,6 @@ mod tests {
             "\u{ee0d}  codex".to_owned(),
             "\u{f169f}  opencode".to_owned(),
         ];
-        // The widest option is 14 columns, so the block starts at 33 and ends at 47.
         let padded = menu.padded(&options);
         let pad = " ".repeat(33);
         assert!(
@@ -645,16 +611,12 @@ mod tests {
         assert_eq!(display_width(&padded[0]), 47);
         assert_eq!(80 - display_width(&padded[0]), 33);
 
-        // A narrower option set moves further right; the old fixed 24 could not.
         let model = menu.padded(&["Fable 5".to_owned()]);
         assert_eq!(display_width(&model[0]) - 7, 36);
     }
 
     #[test]
     fn every_option_follows_the_flag_terminator() {
-        // A viewport no wider than the widest option leaves the centering pad empty, so a
-        // dash-prefixed label reaches gum bare. Without `--` gum reads it as a flag,
-        // prints its help, exits zero, and returns a selection that matches no entry.
         let menu = GumMenu::new(6, 40);
         let args = menu.choose_args(&["--help".to_owned(), "ok".to_owned()], 8);
         let terminator = args
@@ -695,7 +657,6 @@ mod tests {
             parse_keys(b"\x1b[A\x1bOB\x1b[C\x1b[D"),
             [Key::Up, Key::Down, Key::Right, Key::Left]
         );
-        // A held arrow key repeats faster than the loop reads, so one read carries several.
         assert_eq!(parse_keys(b"\x1b[C\x1b[C"), [Key::Right, Key::Right]);
         assert_eq!(
             parse_keys(b"kjhl\r\n"),
@@ -708,7 +669,6 @@ mod tests {
                 Key::Enter
             ]
         );
-        // A bare escape is the escape key itself, the way gum treats it.
         assert_eq!(parse_keys(b"\x1b"), [Key::Cancel]);
         assert_eq!(parse_keys(b"\x03q"), [Key::Cancel, Key::Cancel]);
         assert_eq!(parse_keys(b"x\x1b[H"), [Key::Other, Key::Other]);
@@ -720,17 +680,14 @@ mod tests {
         let mut state = ModelMenuState::new(&rows);
 
         assert_eq!(state.press(&rows, Key::Right), Step::Continue);
-        // Clamped at the top level rather than wrapping to the lowest.
         assert_eq!(state.efforts, [2, 1, 0]);
         state.press(&rows, Key::Down);
         state.press(&rows, Key::Left);
         state.press(&rows, Key::Left);
         assert_eq!(state.efforts, [2, 0, 0]);
-        // A row without efforts ignores both.
         state.press(&rows, Key::Down);
         state.press(&rows, Key::Right);
         assert_eq!(state.efforts, [2, 0, 0]);
-        // Up and down wrap, as gum choose does.
         state.press(&rows, Key::Down);
         assert_eq!(state.row, 0);
         state.press(&rows, Key::Up);
@@ -752,8 +709,6 @@ mod tests {
             .map(|line| strip_ansi(line))
             .collect::<Vec<_>>();
 
-        // Six columns of label, two of gap, `‹ medium ›` is ten: an 18-column block.
-        // `high` is the last level, so the right arrow is gone.
         assert_eq!(lines[0], format!("{}Opus    ‹ high", " ".repeat(11)));
         assert_eq!(lines[1], format!("{}Sonnet    medium", " ".repeat(11)));
         assert_eq!(lines[2], format!("{}CCR", " ".repeat(11)));
@@ -785,6 +740,19 @@ mod tests {
             }
         }
         plain.trim_end().to_owned()
+    }
+
+    #[test]
+    fn strip_pad_keeps_the_glyph_so_tabs_stay_distinguishable() {
+        assert_eq!(
+            strip_pad("     \u{f15ce}  claude code"),
+            "\u{f15ce}  claude code"
+        );
+    }
+
+    #[test]
+    fn the_filter_height_flag_matches_the_rows_centering_reserves() {
+        assert_eq!(FILTER_HEIGHT_ARG, FILTER_HEIGHT.to_string());
     }
 
     #[test]

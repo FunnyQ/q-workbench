@@ -19,10 +19,6 @@ use self::types::{
     WorkspaceListResponse,
 };
 
-/// The oldest protocol whose request and response shapes this plugin was verified
-/// against. Newer protocols are accepted: Herdr adds methods and fields far more
-/// often than it removes them, so an upper bound would reject working servers.
-/// Raise it when a protocol drops something the plugin reads, or — the reason for 22 — when the plugin starts needing methods older servers never had.
 pub const MINIMUM_PROTOCOL: u64 = 22;
 
 #[derive(Debug)]
@@ -261,7 +257,6 @@ impl HerdrClient for SocketClient {
 #[derive(Default)]
 pub struct FakeClient {
     pub calls: RefCell<Vec<(String, Value)>>,
-    /// Per-method FIFO of canned responses, consumed in call order.
     pub responses: RefCell<HashMap<String, VecDeque<Value>>>,
 }
 

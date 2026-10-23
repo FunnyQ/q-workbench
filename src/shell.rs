@@ -1,4 +1,3 @@
-/// Quotes one argument so a POSIX-compatible shell reads it literally.
 pub fn shell_quote(value: &str) -> String {
     if value.is_empty() {
         return "''".to_owned();
@@ -11,8 +10,6 @@ pub fn shell_quote(value: &str) -> String {
 /// the program draws, and the leading space keeps it out of history under HIST_IGNORE_SPACE.
 pub const CLEAR_SCREEN: &str = " printf '\\033[H\\033[2J'; ";
 
-/// Builds a shell command from literal arguments.
-///
 /// Shell syntax, such as the restart flow's `stty sane; printf '…';` prefix,
 /// must remain separate. Only launcher paths and arguments belong here.
 pub fn build_command(parts: &[String]) -> String {

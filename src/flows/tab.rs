@@ -9,13 +9,6 @@ const TITLE: &str = "\u{ebeb}  Tab Layout"; // nf-cod-window
 const SUBTITLE: &str = "Choose a layout.";
 const HEIGHT: u8 = 8;
 
-/// The menu rows, in order: the config's `[[tab_layouts]]` order, then the blank layout
-/// last. `default_tab_layout` picks what a launch without `--layout` opens; it does not
-/// move the row. Write the layouts in the order you want to read them.
-///
-/// The blank entry is appended whatever the config says, so a config with no `tab_layouts`
-/// — or none the user wants right now — can still open a plain tab. A config layout named
-/// [`BLANK_LAYOUT_NAME`] replaces the built-in body but keeps the last slot.
 fn ordered_layouts(config: &Config) -> Vec<TabLayout> {
     let mut ordered = config.tab_layouts.clone();
 
@@ -28,17 +21,12 @@ fn ordered_layouts(config: &Config) -> Vec<TabLayout> {
     ordered
 }
 
-/// Layouts are returned owned because the blank entry may not exist in the config at all.
 fn choose_layout(config: &Config, menu: &mut impl Menu) -> Result<Option<TabLayout>> {
     let mut ordered = ordered_layouts(config);
     if ordered.len() == 1 {
         return Ok(ordered.pop());
     }
 
-    // The rows and the layouts they were rendered from stay side by side, so the selection
-    // resolves by position instead of re-rendering every label a second time. An answer
-    // that matches no row — empty, or anything gum returned that is not a choice — falls
-    // out as a cancel rather than a panic.
     let options = ordered
         .iter()
         .map(|layout| layout.menu_label())
@@ -61,9 +49,6 @@ pub fn new(client: &dyn HerdrClient) -> FlowResult {
     new_with(client, &config, &mut menu)
 }
 
-// The layout menu draws before anything touches the socket: it does not depend on the
-// project directory, and popup_with_layout adopts the invoking pane's cwd with a pane.get.
-// Cancelling here therefore issues no request at all.
 fn new_with(client: &dyn HerdrClient, config: &Config, menu: &mut impl Menu) -> FlowResult {
     let Some(layout) = choose_layout(config, menu)? else {
         return Ok(Outcome::Cancelled);
@@ -180,7 +165,6 @@ mod tests {
 
     #[test]
     fn layouts_keep_config_order_and_blank_is_always_last() {
-        // "second" is the default layout; the menu does not hoist it.
         let config = config_with(layouts(), "second");
         let mut menu = FakeMenu::new([None]);
 
@@ -194,8 +178,6 @@ mod tests {
 
     #[test]
     fn a_config_that_declares_no_layouts_still_offers_a_blank_tab() {
-        // A config file with no `tab_layouts` section loads the shipping defaults, which
-        // declare no blank layout. The menu adds one regardless.
         let ordered = ordered_layouts(&Config::test_default());
 
         assert_eq!(
@@ -210,7 +192,6 @@ mod tests {
         let mut mine = layouts[0].clone();
         mine.name = BLANK_LAYOUT_NAME.to_owned();
         mine.label = Some("My Blank".to_owned());
-        // Declared first in config; the menu still sorts it last.
         layouts.insert(0, mine);
         let config = config_with(layouts, "first");
         let mut menu = FakeMenu::new([None]);
@@ -277,8 +258,6 @@ mod tests {
         let client = FakeClient::default();
         let mut menu = FakeMenu::new([None]);
 
-        // No env guard: cancelling returns before popup_with_layout reads the invoking
-        // pane, so the no-call property has to hold whatever the ambient env says.
         let outcome = new_with(&client, &config, &mut menu).unwrap();
 
         assert_eq!(outcome, Outcome::Cancelled);

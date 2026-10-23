@@ -208,7 +208,6 @@ pub struct SessionSnapshotResponse {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LayoutNode {
     Pane {
-        // Herdr rejects nothing here, but omitting empties keeps apply requests readable.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pane_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]

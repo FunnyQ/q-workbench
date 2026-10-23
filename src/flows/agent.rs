@@ -26,15 +26,11 @@ const START_RETRY: Duration = Duration::from_millis(250);
 
 const HARNESS_TITLE: &str = "\u{f169f}  Launch Agent";
 const USE_LAST_PREFIX: &str = "\u{f0709}  use last: ";
-// Two spaces after the glyph. `scripts/agent-launcher.zsh:183` used one; the unified
-// flow follows the popup and the parity contract (GLY-2).
 const USAGE_TITLE: &str = "\u{f27b}  Usage";
-// A tab that runs no harness is named, not classified by usage.
 const TAB_NAME_TITLE: &str = "\u{eb03}  Tab Name";
 const USAGE_DISCUSS: &str = "\u{f442}  discuss";
 const USAGE_REVIEW: &str = "\u{f4af}  review";
 const USAGE_DEBUG: &str = "\u{ead8}  debug";
-// U+2026, one character — not three full stops.
 const USAGE_WRITE: &str = "\u{f19b9}  let me write…";
 const WORKTREE_TITLE: &str = "  New Worktree";
 const WORKTREE_SUBTITLE: &str = "Filter a branch, or name a new one.";
@@ -58,8 +54,6 @@ pub struct LaunchOptions {
     /// resumes; any other agent pane the layout builds still starts fresh.
     pub resume: Option<String>,
     pub layout: Option<String>,
-    /// Which agent pane of the layout this launch is. Restart names the pane it is
-    /// replacing; without it the layout's first agent pane drives the launch.
     pub pane: Option<String>,
 }
 
@@ -82,7 +76,6 @@ pub(crate) fn resolve_layout<'a>(
         .with_context(|| format!("unknown tab layout: {name}"))
 }
 
-/// Run every menu at full width, create side panes last, then replace this process.
 pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions) -> FlowResult {
     let layout = resolve_layout(config, options.layout.as_deref())?;
     let pane = client
@@ -231,12 +224,6 @@ pub(crate) fn inject_with_config(
     Ok(Outcome::Done)
 }
 
-/// The layout pane this launch replaces its own process with.
-///
-/// A launch that also builds the layout treats the invoking pane as the tab root, so the
-/// root has to be the agent pane; the popup path is the one that can put a harness in a
-/// split. A launch that builds nothing — restart — runs in whichever pane it names, so it
-/// carries no root requirement.
 fn launch_target<'a>(layout: &'a TabLayout, options: &LaunchOptions) -> Result<&'a LayoutPane> {
     let Some((index, pane)) = layout.agent_pane(options.pane.as_deref()) else {
         match &options.pane {
@@ -350,8 +337,6 @@ fn build_side_panes(
     Ok(())
 }
 
-/// The label a pane of a whole tab wears: the tab root wears the usage label the tab
-/// itself is named after, every other pane its own.
 fn tab_pane_label(index: usize, pane: &LayoutPane, choice: &AgentChoice) -> Option<String> {
     match index {
         0 => Some(choice.label.clone()),
@@ -368,8 +353,6 @@ fn agent_name(label: &str, kind: &str) -> String {
             'a'..='z' | '0'..='9' | '-' | '_' => character,
             _ => '-',
         };
-        // Nothing before the first letter can start a name, and one separator says as much
-        // as a run of them.
         if (name.is_empty() && !candidate.is_ascii_lowercase())
             || (candidate == '-' && name.ends_with('-'))
         {
@@ -388,7 +371,6 @@ fn agent_name(label: &str, kind: &str) -> String {
     }
 }
 
-/// `base-number`, truncating the base so the whole still fits Herdr's 32 characters.
 fn numbered_agent_name(base: &str, number: usize) -> String {
     let suffix = format!("-{number}");
     let base = &base[..base.len().min(32 - suffix.len())];
@@ -478,8 +460,6 @@ fn start_pane(
     Ok(())
 }
 
-/// What the session reporter needs for one agent pane, or None for an agent whose kind
-/// names no session files to poll.
 fn reporter_options(
     agent: &PaneAgent,
     choice: &AgentChoice,
@@ -512,8 +492,6 @@ fn send_pane_input(
 }
 
 fn pane_label(pane: &LayoutPane, choice: &AgentChoice) -> Option<String> {
-    // An agent pane that names no label says which harness it is running instead;
-    // "codex" beside "claude code" is what tells two agent panes apart.
     let fallback = (pane.pane_type == PaneType::Agent)
         .then(|| choice.agent(Some(&pane.name)))
         .flatten()
@@ -524,8 +502,6 @@ fn pane_label(pane: &LayoutPane, choice: &AgentChoice) -> Option<String> {
         .or(fallback)
 }
 
-/// One node of the fold before it becomes a `LayoutNode`; a leaf names the layout pane it
-/// stands for, and a split refers back into the arena that holds it.
 enum FoldNode {
     Leaf(usize),
     Split {
@@ -536,12 +512,6 @@ enum FoldNode {
     },
 }
 
-/// Fold a layout's flat pane list into the tree `layout.apply` takes, alongside its leaves'
-/// layout pane names in traversal order.
-///
-/// Each pane takes the place of the leaf it splits from, pushing that leaf down as the
-/// split's first child. `split_from` is validated at load to name an earlier pane, so no
-/// step can miss its slot or close a cycle.
 fn build_layout_tree<'a>(
     layout: &'a TabLayout,
     choice: &AgentChoice,
@@ -619,7 +589,6 @@ fn materialise_layout<'a>(
     }
 }
 
-/// Every leaf of a Herdr layout tree, left to right.
 fn leaf_pane_ids(node: &LayoutNode) -> Vec<String> {
     match node {
         LayoutNode::Pane { pane_id, .. } => vec![pane_id.clone().unwrap_or_default()],
@@ -654,21 +623,16 @@ fn positive_dimension(value: Option<&Value>) -> Option<u16> {
     value?.as_u64()?.try_into().ok().filter(|value| *value > 0)
 }
 
-/// Collect a popup decision, then create and focus its tab.
 pub fn popup(
     client: &dyn HerdrClient,
     worktree: bool,
     requested_layout: Option<&str>,
 ) -> FlowResult {
-    // Config first: adopting the invoking pane's cwd queries Herdr, and a broken config
-    // must be reported before the first socket call.
     let config = Config::load().context("failed to load config")?;
     let layout = resolve_layout(&config, requested_layout)?;
     popup_with_layout(client, &config, layout, worktree)
 }
 
-/// The popup flow from the invoking pane's cwd onwards, for a layout the caller has
-/// already resolved.
 pub(crate) fn popup_with_layout(
     client: &dyn HerdrClient,
     config: &Config,
@@ -742,7 +706,6 @@ pub(crate) fn create_popup_tab(
     Ok(())
 }
 
-/// The tab `layout.apply` built, with Herdr's pane ids under our own layout pane names.
 struct AppliedTab {
     tab_id: String,
     pane_ids: BTreeMap<String, String>,
@@ -805,7 +768,6 @@ fn fill_popup_tab(
     client
         .tab_focus(json!({ "tab_id": applied.tab_id }))
         .context("failed to focus agent tab")?;
-    // The layout's own order, so two agent panes start in the order they are written.
     for (index, pane) in layout.panes.iter().enumerate() {
         let pane_id = &applied.pane_ids[pane.name.as_str()];
         let name = tab_pane_label(index, pane, choice).unwrap_or_else(|| pane.name.clone());
@@ -829,55 +791,37 @@ fn last_agent_record(agent: &PaneAgent, layout: &TabLayout) -> Result<state::Las
     })
 }
 
-/// One resolved launch decision.
-///
-/// Nothing in here exists yet. A chosen worktree is only *named*, so a caller that
-/// abandons the choice leaves no directory and no branch behind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentChoice {
-    /// The tab label, and the label of an agent pane that declares none: the usage label,
-    /// plus two spaces and the branch when a worktree was chosen.
     pub label: String,
-    /// The worktree when one was chosen, else the repository toplevel or the cwd.
     pub project_dir: PathBuf,
     pub branch: Option<String>,
-    /// One entry per agent pane the caller asked about, in layout order. Empty for a
-    /// layout that declares no agent pane.
     pub agents: Vec<PaneAgent>,
 }
 
-/// The harness resolved for one agent pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaneAgent {
     /// The layout pane's `name`. Restart stores it so a side agent pane replays its own
     /// pin rather than the first agent pane's.
     pub pane: String,
-    /// argv, ready for `exec` or for a pane command.
     pub launch: Vec<String>,
-    /// Set when Herdr can start this harness itself; None keeps the typed-argv path.
     pub start: Option<AgentStart>,
     /// Set even when `start` is None, because an overridden command still writes the
     /// session files of its kind.
     pub kind: Option<String>,
-    /// The [[agents]] entry's `name`, not its rendered label.
     pub agent_name: String,
-    /// The chosen [[agents.options]] entry's `name`; None for an agent with no options.
     pub option_name: Option<String>,
-    /// The effort that option launches at, already resolved; None when it takes none.
     pub effort: Option<String>,
 }
 
-/// What `agent.start` needs to run a harness in a pane sitting at its shell prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentStart {
     /// Herdr's agent kind, which is also where it derives the executable from.
     pub kind: String,
-    /// Everything after that executable: the option's args, then the agent's extra args.
     pub args: Vec<String>,
 }
 
 impl AgentChoice {
-    /// The decision for one layout pane, or the first when `pane` is None.
     pub fn agent(&self, pane: Option<&str>) -> Option<&PaneAgent> {
         match pane {
             Some(pane) => self.agents.iter().find(|entry| entry.pane == pane),
@@ -961,9 +905,6 @@ fn choose_agent_with_last(
 ) -> Result<Option<AgentChoice>> {
     let repo_root = git.toplevel(cwd);
 
-    // The worktree step runs first even though creation is deferred: the chosen branch
-    // names the directory every pane is born in, so it has to be known before anything
-    // else. Outside a work tree the step is skipped entirely.
     let branch = match (worktree, repo_root.as_deref()) {
         (true, Some(root)) => match select_worktree(root, menu, git)? {
             Some(branch) => Some(branch),
@@ -972,9 +913,6 @@ fn choose_agent_with_last(
         _ => None,
     };
 
-    // Every agent pane is decided before anything is created, so cancelling at the last
-    // pane's model menu still costs nothing. A stored choice replays only when one pane
-    // is being asked about: with several it names no particular one.
     let last = last
         .filter(|_| panes.len() == 1)
         .filter(|record| state::last_choice_is_valid(record, config));
@@ -987,10 +925,6 @@ fn choose_agent_with_last(
         agents.push(agent);
     }
 
-    // A fixed usage skips the menu and is used verbatim: the restart path passes the
-    // pane's current label, and the project picker passes its pinned tab label. A layout
-    // with no agent pane is not for a harness, so the usage question does not apply; it
-    // asks for a plain tab name instead.
     let usage = match fixed_usage.or(layout.tab_label.as_deref()) {
         Some(usage) => usage.to_owned(),
         None if agents.is_empty() => match select_tab_name(layout, menu)? {
@@ -1017,10 +951,6 @@ fn choose_agent_with_last(
     }))
 }
 
-/// Run the harness and model menus for one agent pane.
-///
-/// `qualify` appends the pane to both menu titles. A single-agent layout leaves them
-/// exactly as they were, so the common flow is unchanged.
 pub(crate) fn choose_pane_agent(
     config: &Config,
     pane: &LayoutPane,
@@ -1033,7 +963,6 @@ pub(crate) fn choose_pane_agent(
         false => base.to_owned(),
     };
 
-    // A pane that pins its agent runs no harness menu, so nothing here is built for it.
     let (agent_name, stored_option, stored_effort) = if let Some(agent_name) = &pane.agent {
         (agent_name.clone(), None, None)
     } else {
@@ -1075,7 +1004,6 @@ pub(crate) fn choose_pane_agent(
             let record = last.expect("use-last entry requires a stored choice");
             (record.agent, record.option, record.effort)
         } else {
-            // Rendered labels are unique across agents, enforced at config load.
             let agent_name = config
                 .agents
                 .iter()
@@ -1137,8 +1065,6 @@ pub(crate) fn choose_pane_agent(
     }))
 }
 
-/// One model menu row, starting on `effort` when the row offers it, else on the option's
-/// own default.
 pub(crate) fn model_row(agent: &Agent, option: &AgentOption, effort: Option<&str>) -> ModelRow {
     let efforts = match &option.effort {
         Some(_) => agent.efforts_for(option).to_vec(),
@@ -1160,15 +1086,7 @@ pub(crate) fn model_row(agent: &Agent, option: &AgentOption, effort: Option<&str
     }
 }
 
-/// Ask what to call a tab that runs no harness.
-///
-/// Submitting nothing keeps the layout's own label: a blank tab always has a usable name,
-/// so an empty answer is a shrug rather than a cancellation. Escape still cancels, which
-/// is why the empty string and `None` are not folded together the way [`select_usage`]
-/// folds them.
 fn select_tab_name(layout: &TabLayout, menu: &mut impl Menu) -> Result<Option<String>> {
-    // A trailing ellipsis marks a menu row as opening a prompt; it belongs to the row, not
-    // to the tab. Without this the blank layout would name its tab "Blank Tab…".
     let fallback = layout
         .menu_label()
         .trim_end_matches('\u{2026}')
@@ -1206,7 +1124,6 @@ fn select_usage(menu: &mut impl Menu) -> Result<Option<String>> {
         return Ok(if usage.is_empty() { None } else { Some(usage) });
     }
 
-    // `--width 40` and no indent, exactly as `scripts/new-agent-popup.zsh:130` draws it.
     let Some(label) = menu.input(
         USAGE_TITLE,
         "Name this tab.",
@@ -1220,8 +1137,6 @@ fn select_usage(menu: &mut impl Menu) -> Result<Option<String>> {
     Ok(if label.is_empty() { None } else { Some(label) })
 }
 
-/// `effort` is a request, resolved by [`Agent::resolve_effort`]; None asks for the option's
-/// own default.
 pub(crate) fn build_launch(
     config: &Config,
     agent_name: &str,
@@ -1253,8 +1168,6 @@ pub(crate) fn build_launch(
     }
     launch.extend(option.into_iter().flat_map(|option| option.args.clone()));
     launch.extend(option_effort_args(agent, option, effort));
-    // A command override changes only the executable; extra args apply to every
-    // launch of the agent, including overridden commands.
     launch.extend(agent.extra_args.clone());
     Ok(launch)
 }
@@ -1270,8 +1183,6 @@ fn option_effort_args(
         .unwrap_or_default()
 }
 
-/// How a launch picks up an earlier session: continue it in place, or branch a copy of it
-/// under a new id so the original stays open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Continuation<'a> {
     Resume(&'a str),
@@ -1383,12 +1294,6 @@ fn select_worktree(
     Ok(Some(format!("wt-{timestamp}")))
 }
 
-/// The git reads the worktree step needs.
-///
-/// Behind a trait for one reason: a test can then drive the worktree menu with no
-/// repository present, which is what turns "cancelling creates nothing" into a checkable
-/// claim. Creation is deliberately absent from this trait — [`realise_worktree`] is the
-/// only function in this module that writes anything.
 trait Git {
     fn toplevel(&self, cwd: &Path) -> Option<PathBuf>;
     fn prune_worktrees(&self, repo_root: &Path);
@@ -1431,8 +1336,6 @@ impl Git for RealGit {
     }
 }
 
-/// Stdout lines of a git command. A failure yields no lines, which degrades the menu to
-/// the free-text field rather than aborting the flow.
 fn git_lines(repo_root: &Path, args: &[&str]) -> Vec<String> {
     let Ok(output) = Command::new("git")
         .arg("-C")
@@ -1458,21 +1361,13 @@ fn worktree_path(repo_root: &Path, branch: &str) -> PathBuf {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("repo");
-    // A slash would otherwise create a nested directory under the `-wt` sibling.
     parent
         .join(format!("{name}-wt"))
         .join(branch.replace('/', "-"))
 }
 
-/// Create or reuse the worktree for a chosen branch.
-/// Returns None when `git worktree add` failed, meaning: proceed without one.
-///
-/// Separate from the flow on purpose: the flow only names a branch, so the caller runs
-/// every menu first and calls this once, after a choice came back. That is what makes
-/// cancelling free of side effects.
 pub fn realise_worktree(repo_root: &Path, branch: &str) -> Option<PathBuf> {
     let directory = worktree_path(repo_root, branch);
-    // Reuse a directory left over from an earlier session rather than failing on it.
     if directory.is_dir() {
         return Some(directory);
     }
@@ -1521,8 +1416,6 @@ pub fn without_worktree(mut choice: AgentChoice, repo_root: &Path) -> AgentChoic
     choice
 }
 
-/// The usage label, then two spaces and the branch when a worktree was chosen. The
-/// suffix is what keeps parallel worktree tabs distinguishable.
 fn compose_label(usage: &str, branch: Option<&str>) -> String {
     match branch {
         Some(branch) => format!("{usage}  {branch}"),
@@ -1567,8 +1460,6 @@ mod popup {
         config.layout(&config.default_tab_layout).unwrap().clone()
     }
 
-    /// Herdr's reply for the shipped layout: the tree it built, carrying pane ids and none
-    /// of our pane names.
     fn queue_popup_apply(client: &FakeClient) {
         client.queue_response(
             "layout.apply",
@@ -1615,7 +1506,6 @@ mod popup {
             panic!("expected a split at the root: {root:?}");
         };
         assert_eq!(direction, "right");
-        // Config's 0.62 describes `files`; Herdr's ratio is the agent's remaining share.
         assert_eq!(*ratio, 0.38);
         assert_eq!(
             **first,
@@ -1660,8 +1550,6 @@ mod popup {
         );
     }
 
-    /// `split_from` moves a pane's leaf down the tree, so the leaves stop matching config
-    /// order — which is why the response is mapped back by traversal position, not index.
     #[test]
     fn split_from_reorders_the_leaves_away_from_config_order() {
         let mut layout = default_layout();
@@ -1687,8 +1575,6 @@ mod popup {
         build_side_panes(&client, &default_layout(), &popup_choice(), "root").unwrap();
 
         let calls = client.calls.into_inner();
-        // The second split carries no `env` key at all, not an empty one. The whole-vec
-        // compare below covers it, but the baseline is worth naming on its own line.
         assert!(calls[3].1.get("env").is_none(), "{:?}", calls[3].1);
         assert_eq!(
             calls,
@@ -1771,7 +1657,6 @@ mod popup {
         let default = launch_target(&layout, &launch_options(None, false)).unwrap();
         assert_eq!(default.name, "agent");
 
-        // Naming a side pane is only legal when nothing is being built around it.
         let mut named = launch_options(None, true);
         named.pane = Some("files".to_owned());
         assert_eq!(launch_target(&layout, &named).unwrap().name, "files");
@@ -1784,8 +1669,6 @@ mod popup {
         let error = launch_target(&shell_root, &launch_options(None, false)).unwrap_err();
         assert!(error.to_string().contains("no agent pane"), "{error}");
 
-        // An agent pane that is not the root cannot be reached by injecting into the pane
-        // the launcher is already running in.
         let mut side_agent = default_layout();
         side_agent.panes[0].pane_type = PaneType::Shell;
         side_agent.panes[1].pane_type = PaneType::Agent;
@@ -1803,7 +1686,6 @@ mod popup {
     fn a_side_agent_pane_is_typed_into_its_split() {
         let client = FakeClient::default();
         let mut layout = default_layout();
-        // `files` becomes a second agent pane; the trailing `term` shell stays put.
         layout.panes[1].pane_type = PaneType::Agent;
         layout.panes[1].command = None;
         let mut choice = popup_choice();
@@ -1826,7 +1708,6 @@ mod popup {
             .filter(|(method, _)| method == "pane.send_input")
             .map(|(_, params)| (params["pane_id"].clone(), params["text"].clone()))
             .collect::<Vec<_>>();
-        // Quoted argument by argument, exactly as the root agent pane is launched.
         assert_eq!(
             inputs,
             [(
@@ -1923,7 +1804,6 @@ mod popup {
             }),
             "{calls:?}"
         );
-        // The tab is still named and focused; only the harness is absent.
         assert!(calls.iter().any(|(method, _)| method == "tab.focus"));
     }
 
@@ -1948,8 +1828,6 @@ mod popup {
             "HERDR_PLUGIN_CONTEXT_JSON",
         ]
         .map(|name| (name, std::env::var_os(name)));
-        // Without the context JSON the cwd adoption falls through to a pane.get, which is
-        // the socket call this test proves never happens.
         std::env::remove_var("HERDR_PLUGIN_CONTEXT_JSON");
         std::env::set_var("HOME", &directory);
         std::env::set_var("Q_WORKBENCH_LOCAL_CONFIG", &config_file);
@@ -2267,7 +2145,6 @@ mod popup {
         );
     }
 
-    /// Herdr starts the harness itself, under the name the pane already wears.
     #[test]
     fn an_agent_with_a_kind_starts_through_herdr() {
         let client = FakeClient::default();
@@ -2293,7 +2170,6 @@ mod popup {
                 "kind": "codex", "args": ["--profile work"],
             })]
         );
-        // Nothing is typed into the agent pane any more; the command pane still is.
         let inputs = calls
             .iter()
             .filter(|(method, _)| method == "pane.send_input")
@@ -2304,7 +2180,6 @@ mod popup {
 
     #[test]
     fn a_command_override_keeps_the_typed_argv_path() {
-        // `ccr code` replaces the executable a kind implies, so `agent.start` cannot run it.
         assert!(build_start(
             &Config::test_default(),
             "claude code",
@@ -2389,7 +2264,6 @@ mod popup {
             .filter(|(method, _)| method == "agent.start")
             .count();
         assert_eq!(starts, 2);
-        // The refusal is spent on the retry, not reported, so no tab was torn down.
         assert!(
             !calls.iter().any(|(method, _)| method == "tab.close"),
             "{calls:?}"
@@ -2448,7 +2322,6 @@ mod popup {
             ("Agentic Coding", "agentic-coding"),
             ("claude code", "claude-code"),
             ("gpt-5.6_sol", "gpt-5-6_sol"),
-            // Nothing usable in the label at all, so the kind stands in.
             ("\u{f09d1}", "claude"),
             ("", "claude"),
             ("繁體中文", "claude"),
@@ -2467,7 +2340,6 @@ mod popup {
             );
         }
 
-        // Thirty-three characters in, thirty-two out, with no separator left dangling.
         assert_eq!(agent_name(&"a".repeat(33), "claude").len(), 32);
         assert_eq!(
             agent_name(&format!("{}-x", "b".repeat(31)), "claude").len(),
@@ -2484,13 +2356,10 @@ mod popup {
 
         assert_eq!(start.kind, "claude");
         assert_eq!(start.args, ["--model", "claude-opus-4-8", "--search"]);
-        // An agent whose entry names no kind has no executable Herdr can derive.
         config.agents[1].kind = None;
         assert!(build_start(&config, "codex", None, None, None).is_none());
     }
 
-    /// `agent.start` derives the executable from the kind and appends only the args, so an
-    /// agent that names anything else in `command` has to keep the typed-argv path.
     #[test]
     fn an_agent_command_that_is_not_the_bare_kind_keeps_the_typed_argv_path() {
         for command in [
@@ -2506,8 +2375,6 @@ mod popup {
         }
     }
 
-    /// Every agent pane the plugin does not `exec` into reports from `start_pane`, so its
-    /// options come from the pane's own agent rather than the launch it never runs.
     #[test]
     fn a_reporter_is_described_for_an_agent_pane_that_names_a_kind() {
         let mut choice = popup_choice();
@@ -2539,8 +2406,6 @@ mod popup {
         }
     }
 
-    /// The response's leaves carry Herdr's pane ids in the order we sent ours, so the third
-    /// leaf's id is what the third pane of the fold — not of the config — receives.
     #[test]
     fn a_reordered_fold_still_sends_each_command_to_its_own_pane() {
         let client = FakeClient::default();
@@ -2619,8 +2484,6 @@ mod popup {
         );
     }
 
-    /// Apply is atomic, so its own failure leaves nothing on screen; every later step runs
-    /// inside a tab that exists, and abandoning it would strand a tab with no agent.
     #[test]
     fn a_popup_failure_after_apply_closes_the_tab_it_built() {
         let methods = [
@@ -2702,8 +2565,6 @@ mod popup {
         );
     }
 
-    /// The shipped defaults plus the two `extra_args` values these tests pin, so a change
-    /// to `default_agents()` cannot silently diverge from a hand-written parallel copy.
     fn config() -> Config {
         let mut config = Config::test_default();
         config.tab_layouts = Vec::new();
@@ -2713,7 +2574,6 @@ mod popup {
         config
     }
 
-    /// A layout whose only pane is a bare agent root: nothing pinned, so every menu runs.
     fn bare_layout(name: &str) -> TabLayout {
         TabLayout {
             name: name.to_owned(),
@@ -2736,7 +2596,6 @@ mod popup {
         }
     }
 
-    /// Replays scripted answers in menu order, so a test can cancel at an exact step.
     struct FakeMenu {
         answers: VecDeque<Option<String>>,
         options: Vec<Vec<String>>,
@@ -2787,8 +2646,6 @@ mod popup {
         ) -> Result<Option<String>> {
             Ok(self.answers.pop_front().flatten())
         }
-        /// An answer names a row, optionally `row|effort`; a bare row is picked where it
-        /// started, which is what enter without an arrow does.
         fn choose_model(
             &mut self,
             title: &str,
@@ -2836,7 +2693,6 @@ mod popup {
         assert_eq!(menu.titles, [HARNESS_TITLE, TEST_CLAUDE_LABEL, USAGE_TITLE]);
     }
 
-    /// `bare_layout` plus a second agent pane split off it.
     fn two_agent_layout(name: &str) -> TabLayout {
         let mut layout = bare_layout(name);
         let mut reviewer = layout.panes[0].clone();
@@ -2872,8 +2728,6 @@ mod popup {
         .unwrap();
 
         assert!(menu.answered_everything());
-        // codex has no options, so it contributes no model menu. The usage menu still runs
-        // exactly once, after every pane is decided.
         assert_eq!(
             menu.titles,
             [
@@ -2959,7 +2813,6 @@ mod popup {
         assert_eq!(choice.agents[1].option_name.as_deref(), Some("Opus"));
     }
 
-    /// `bare_layout` with its one pane turned into a plain shell.
     fn shell_only_layout(name: &str, label: &str) -> TabLayout {
         let mut layout = bare_layout(name);
         layout.label = Some(label.to_owned());
@@ -3099,8 +2952,6 @@ mod popup {
         .unwrap()
         .unwrap();
 
-        // The record names one pane, so with two being asked it cannot say which. Every
-        // harness menu therefore opens on the plain agent list.
         assert!(
             !menu.options[0][0].starts_with(USE_LAST_PREFIX),
             "{:?}",
@@ -3243,7 +3094,6 @@ mod popup {
 
         let rows = &menu.model_rows[0];
         assert_eq!(rows[1].efforts[rows[1].effort], "medium");
-        // An option without a default effort offers none to step through.
         assert!(rows[0].efforts.is_empty());
         let agent = &choice.agents[0];
         assert_eq!(agent.effort.as_deref(), Some("xhigh"));
@@ -3414,8 +3264,6 @@ mod popup {
 
     static FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
-    /// A throwaway git repository with one commit, so worktree behaviour can be checked
-    /// against real git rather than a stand-in.
     struct RepoFixture {
         directory: PathBuf,
     }
@@ -3477,8 +3325,6 @@ mod popup {
         let mut config = Config::test_default();
         config.agents[1].extra_args = vec!["--search".to_owned()];
 
-        // codex's `resume` is a subcommand, so it has to follow the executable directly
-        // and precede the model args; claude's flag form lands in the same slot.
         assert_eq!(
             build_launch(
                 &config,
@@ -3514,7 +3360,6 @@ mod popup {
             ["ccr", "code", "--resume", "uuid-1"]
         );
 
-        // An agent Herdr has no kind for gets no resume arguments at all.
         config.agents[1].kind = None;
         assert_eq!(
             build_launch(
@@ -3625,13 +3470,10 @@ mod popup {
                 .args,
             ["--model", "opusplan", "--effort", "xhigh", "--search"]
         );
-        // A level the config no longer lists falls back to the option's own default, so a
-        // stored choice outlives an edited efforts list.
         assert_eq!(
             build_launch(&config, "claude code", plan, Some("gone"), None).unwrap(),
             ["claude", "--model", "opusplan", "--effort", "medium", "--search"]
         );
-        // An option without a default takes no effort, whatever is asked for.
         assert_eq!(
             build_launch(&config, "claude code", Some("Opus"), Some("high"), None).unwrap(),
             ["claude", "--model", "claude-opus-4-8", "--search"]
@@ -3845,8 +3687,6 @@ mod popup {
     fn a_fixed_usage_skips_the_usage_menu_and_is_used_verbatim() {
         let config = config();
 
-        // Only the harness answer is scripted: a usage menu would read past the end and
-        // cancel the flow.
         let mut menu = FakeMenu::new([Some(TEST_CODEX_LABEL)]);
         let choice = choose_agent_with(
             &config,
@@ -3968,8 +3808,6 @@ mod popup {
         let branches_before = fixture.branches();
         assert_eq!(branches_before, ["main"]);
 
-        // The fixture's only branch is checked out in the main worktree, so the menu falls
-        // through to the free-text field — the first answer names a branch either way.
         let cases: [(&str, Vec<Option<&str>>); 4] = [
             ("worktree", vec![None]),
             ("harness", vec![Some("feature/menu"), None]),
@@ -4055,13 +3893,11 @@ mod popup {
         assert_eq!(fixture.branches(), ["main"], "the flow created a branch");
         assert!(!choice.project_dir.exists(), "the flow created a directory");
 
-        // The caller creates it, once, after the flow returned a choice.
         let created = realise_worktree(&repo_root, "feature/menu").unwrap();
         assert_eq!(created, choice.project_dir);
         assert!(created.is_dir());
         assert_eq!(fixture.branches(), ["feature/menu", "main"]);
 
-        // A second call reuses the directory instead of failing on it.
         assert_eq!(
             realise_worktree(&repo_root, "feature/menu").unwrap(),
             choice.project_dir

@@ -2,7 +2,6 @@ use serde_json::json;
 
 use crate::herdr::HerdrClient;
 
-/// Attempts to show an error without replacing the error being reported.
 pub fn notify(client: &dyn HerdrClient, title: &str, body: &str) {
     let _ = client.notification_show(json!({
         "title": title,

@@ -18,7 +18,6 @@ const SOURCE: &str = "q.workbench";
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const POLL_ATTEMPTS: u32 = 60;
 
-/// A session file this pane's agent is believed to have written.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedSession {
     pub id: String,
@@ -50,7 +49,6 @@ pub fn resolve_session(
     }
 }
 
-/// Runs detached, so a pane whose agent never writes a session file exits without a word.
 pub fn report(client: &dyn HerdrClient, options: &ReportOptions) -> FlowResult {
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
         return Ok(Outcome::Cancelled);
@@ -115,7 +113,6 @@ fn reporter_argv(options: &ReportOptions) -> Vec<String> {
 
 fn claude_session(home: &Path, cwd: &Path, since_ms: u64) -> Option<ResolvedSession> {
     let directory = home.join(".claude/projects").join(claude_slug(cwd));
-    // Flat, not recursive: `subagents/` holds transcripts that are not the pane's session.
     let path = files_newer_than(&directory, since_ms, false, &|path| {
         path.extension()
             .is_some_and(|extension| extension == "jsonl")
@@ -134,7 +131,6 @@ fn codex_session(home: &Path, cwd: &Path, since_ms: u64) -> Option<ResolvedSessi
             .and_then(|name| name.to_str())
             .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
     }) {
-        // Every project's rollouts share one tree, so the header's cwd is what picks ours.
         let Some(meta) = first_line(&path).and_then(|line| line.parse::<Value>().ok()) else {
             continue;
         };
@@ -166,7 +162,7 @@ fn claude_slug(cwd: &Path) -> String {
         .collect()
 }
 
-/// Matching files created after `since_ms`, newest first. The stamp is read before any
+/// The stamp is read before any
 /// file is opened, which is what keeps a poll over thousands of rollouts affordable.
 fn files_newer_than(
     directory: &Path,
@@ -247,10 +243,6 @@ mod tests {
             Self { home }
         }
 
-        /// Writes a file and pins its mtime, so "newer than `--since`" is asserted
-        /// against a fixed clock rather than however fast the test ran.
-        /// Stamps creation, which is what the sweep reads, and modification with it so a
-        /// fixture cannot pass by accident on the wrong one.
         fn write_at(&self, path: &str, contents: &str, created_ms: u64) {
             self.write_stamped(path, contents, created_ms, created_ms);
         }
@@ -284,13 +276,10 @@ mod tests {
         .to_string()
     }
 
-    /// An agent already running in this cwd keeps writing, so modification time made its
-    /// live session the newest file and handed it to every new pane.
     #[test]
     fn a_session_already_running_in_this_cwd_is_not_claimed() {
         let fixture = Fixture::new("claude-running");
         let slug = "-Users-q-Projects-demo";
-        // Started long before this pane, still being written to.
         fixture.write_stamped(
             &format!(".claude/projects/{slug}/live-elsewhere.jsonl"),
             "{}",
@@ -325,7 +314,6 @@ mod tests {
         )
         .unwrap();
 
-        // The transcript is named after the session, so the stem is the id.
         assert_eq!(resolved.id, "newer");
         assert_eq!(
             resolved.path,
@@ -334,7 +322,6 @@ mod tests {
                 .join(format!(".claude/projects/{slug}/newer.jsonl"))
         );
 
-        // Push the window past both and nothing is claimed.
         assert_eq!(
             resolve_session(
                 "claude",
@@ -350,7 +337,6 @@ mod tests {
     fn claude_ignores_nested_transcripts_and_non_transcripts() {
         let fixture = Fixture::new("claude-nested");
         let slug = "-Users-q--config-demo";
-        // Subagent transcripts live one level down and are not the pane's session.
         fixture.write_at(
             &format!(".claude/projects/{slug}/subagents/nested.jsonl"),
             "{}",
@@ -383,13 +369,11 @@ mod tests {
             &codex_rollout("aaa", "/Users/q/Projects/demo"),
             3_000,
         );
-        // Newer, but another project's session.
         fixture.write_at(
             ".codex/sessions/2026/09/09/rollout-2026-09-09T11-10-00-bbb.jsonl",
             &codex_rollout("bbb", "/Users/q/Projects/other"),
             5_000,
         );
-        // Ours, but from before the launch.
         fixture.write_at(
             ".codex/sessions/2026/09/08/rollout-2026-09-08T11-00-00-ccc.jsonl",
             &codex_rollout("ccc", "/Users/q/Projects/demo"),

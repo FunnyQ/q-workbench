@@ -8,8 +8,6 @@
 # TOML assigns every key after a [[table]] header to that table. Keep all the scalars in
 # the first section, and keep each entry's own scalars above its nested tables.
 
-# -- Paths and pointers -------------------------------------------------------
-
 # Names a Herdr workspace label directly, not a config entry; matched against Herdr's workspace list.
 dashboard_workspace = "personal-assistant"
 
@@ -17,10 +15,8 @@ dashboard_workspace = "personal-assistant"
 # picker, a restart, an agent started in the current tab. Names a [[tab_layouts]] entry.
 default_tab_layout = "agentic-coding"
 
-# Project registry JSON path.
 project_registry_file = "$HOME/.local/state/herdr-projects/registry.json"
 
-# Root directory scanned for projects.
 projects_root = "$HOME/Projects"
 
 # File names that make a directory a project in the picker's sweep, alongside `.git`.
@@ -29,18 +25,12 @@ projects_root = "$HOME/Projects"
 # leave `.git` as the only marker.
 project_markers = ["package.json", "Gemfile", "Cargo.toml", "CLAUDE.md"]
 
-# SSH target registry JSON path.
 ssh_registry_file = "$HOME/.local/state/ssh-targets/registry.json"
 
-# SSH config file read and updated by sync.
 ssh_config_file = "$HOME/.config/ssh/config"
 
-# Shell history used to seed SSH targets.
 ssh_history_file = "$HOME/.zsh_history"
 
-
-# -- Tab layouts --------------------------------------------------------------
-#
 # A layout is selected with `--layout <name>` — `workbench agent popup --layout
 # personal-assistant`, or a Herdr action whose command carries the flag. Without the
 # flag the launcher uses `default_tab_layout`. The `new-tab` action asks, listing every
@@ -92,7 +82,6 @@ ssh_history_file = "$HOME/.zsh_history"
 # an agent pane therefore opens from the popup - the `new-tab` action or the project
 # picker - not from `agent launch` in an existing pane.
 
-# Today's popup, unchanged: harness, model, and usage are all asked.
 [[tab_layouts]]
 name = "agentic-coding"
 
@@ -119,7 +108,6 @@ name = "agentic-coding"
   direction = "down"
   ratio = 0.1
 
-# Everything pinned: opens straight to Opus, no menus at all.
 [[tab_layouts]]
 name = "personal-assistant"
 label = "Personal Assistant"
@@ -174,8 +162,6 @@ icon = "󰓩"                    # nf-md-tab
   name = "term"
   type = "shell"
 
-# -- Agents -------------------------------------------------------------------
-#
 #   name        Stable id. A pane's agent field names it.
 #   label       Harness menu text. Defaults to name.
 #   icon        Drawn before the label, exactly as it is for a pane.

@@ -23,7 +23,6 @@ fn temporary_directory() -> PathBuf {
     directory
 }
 
-/// A registry with a hidden entry, an aliased entry, a used and an unused one.
 fn write_fixture_registry(directory: &Path, home: &Path) -> PathBuf {
     let registry = directory.join("registry.json");
     let contents = format!(
@@ -92,8 +91,6 @@ fn a_missing_registry_exits_non_zero_without_writing_anything() {
     fs::remove_dir_all(&directory).expect("remove temporary directory");
 }
 
-/// `zoxide` is optional. With an empty PATH the spawn fails with `NotFound`, and the
-/// registry rows must still come out with a zero exit.
 #[test]
 fn a_missing_zoxide_binary_is_not_an_error() {
     let directory = temporary_directory();

@@ -1,5 +1,6 @@
 use std::ffi::OsStr;
 use std::io::{self, IsTerminal, Write};
+use std::ops::Range;
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
@@ -63,6 +64,7 @@ enum Step {
 
 struct ModelMenuState {
     row: usize,
+    top: usize,
     efforts: Vec<usize>,
 }
 
@@ -70,8 +72,18 @@ impl ModelMenuState {
     fn new(rows: &[ModelRow]) -> Self {
         Self {
             row: 0,
+            top: 0,
             efforts: rows.iter().map(|row| row.effort).collect(),
         }
+    }
+
+    fn window(&mut self, visible: usize) -> Range<usize> {
+        let visible = visible.clamp(1, self.efforts.len());
+        self.top = self
+            .top
+            .clamp(self.row.saturating_sub(visible - 1), self.row)
+            .min(self.efforts.len() - visible);
+        self.top..self.top + visible
     }
 
     fn press(&mut self, rows: &[ModelRow], key: Key) -> Step {
@@ -319,7 +331,7 @@ impl GumMenu {
     /// `gum style` offsets its border lines, because the outer call measures the ANSI
     /// escapes as visible width and pads each line differently — the box comes out
     /// ragged. Printing the lines here keeps the border square.
-    fn render_banner(&self, title: &str, subtitle: &str, body_lines: u16) -> Result<()> {
+    fn render_banner(&self, title: &str, subtitle: &str, body_lines: u16) -> Result<u16> {
         if io::stdout().is_terminal() {
             print!("\x1b[2J\x1b[H");
         }
@@ -343,13 +355,15 @@ impl GumMenu {
         // and adds rows. `+ 1` is the blank line this prints between banner and body.
         let banner_lines = u16::try_from(banner.lines().count()).unwrap_or(u16::MAX);
         let block = banner_lines.saturating_add(1).saturating_add(body_lines);
-        print!("{}", "\n".repeat(self.vertical_padding(block).into()));
+        let padding = self.vertical_padding(block);
+        print!("{}", "\n".repeat(padding.into()));
         let margin = usize::from(self.content_margin());
         for line in banner.lines() {
             println!("{:margin$}{line}", "");
         }
         println!();
-        io::stdout().flush().context("failed to draw menu banner")
+        io::stdout().flush().context("failed to draw menu banner")?;
+        Ok(padding.saturating_add(banner_lines).saturating_add(1))
     }
 
     /// Indent every option by one shared margin so the block is centered and its glyphs
@@ -480,26 +494,25 @@ impl Menu for GumMenu {
         subtitle: &str,
         rows: &[ModelRow],
     ) -> Result<Option<(usize, Option<String>)>> {
-        // No scrolling: every row is drawn, which fits any model list a popup can show.
         let height = u16::try_from(rows.len()).unwrap_or(u16::MAX);
-        self.render_banner(title, subtitle, height)?;
+        let banner = self.render_banner(title, subtitle, height)?;
+        let visible = usize::from(self.lines.saturating_sub(banner));
         let terminal = RawTerminal::enter()?;
         let mut state = ModelMenuState::new(rows);
         let mut stdout = io::stdout();
-        let mut drawn = false;
+        let mut drawn = 0;
         loop {
-            if drawn && rows.len() > 1 {
-                write!(stdout, "\x1b[{}A", rows.len() - 1)?;
+            if drawn > 1 {
+                write!(stdout, "\x1b[{}A", drawn - 1)?;
             }
-            for (index, line) in render_model_rows(rows, &state, self.cols)
-                .iter()
-                .enumerate()
-            {
-                let newline = if index + 1 < rows.len() { "\n" } else { "" };
+            let window = state.window(visible);
+            drawn = window.len();
+            let lines = render_model_rows(rows, &state, self.cols);
+            for (index, line) in lines[window].iter().enumerate() {
+                let newline = if index + 1 < drawn { "\n" } else { "" };
                 write!(stdout, "\r\x1b[2K{line}{newline}")?;
             }
             stdout.flush().context("failed to draw the model menu")?;
-            drawn = true;
             for key in terminal.read_keys()? {
                 match state.press(rows, key) {
                     Step::Continue => {}
@@ -691,6 +704,25 @@ mod tests {
         assert_eq!(state.picked(&rows), (2, None));
         state.row = 1;
         assert_eq!(state.picked(&rows), (1, Some("low".to_owned())));
+    }
+
+    #[test]
+    fn the_visible_window_follows_the_highlighted_row() {
+        let rows = model_rows();
+        let mut state = ModelMenuState::new(&rows);
+
+        assert_eq!(state.window(2), 0..2);
+        state.press(&rows, Key::Down);
+        assert_eq!(state.window(2), 0..2);
+        state.press(&rows, Key::Down);
+        assert_eq!(state.window(2), 1..3);
+        state.press(&rows, Key::Up);
+        assert_eq!(state.window(2), 1..3);
+        state.press(&rows, Key::Up);
+        assert_eq!(state.window(2), 0..2);
+        state.press(&rows, Key::Up);
+        assert_eq!(state.window(2), 1..3);
+        assert_eq!(state.window(5), 0..3);
     }
 
     #[test]

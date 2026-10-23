@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-10-23
+
+_tracks tag `v0.11.1`_
+
+### Fixed
+- The model menu no longer scrolls the terminal or redraws in the wrong place when it has more rows than the popup can show; it now draws only the rows that fit and keeps the highlighted row in view.
+
 ## [0.11.0] - 2026-10-01
 
 _tracks tag `v0.11.0`_

@@ -28,9 +28,8 @@ pub struct LastAgentRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
     pub layout: String,
-    /// The layout pane this agent was launched as. Restart replays that pane's pin, which
-    /// is not the first agent pane's once a layout declares several.
-    pub pane: String,
+    #[serde(rename = "pane")]
+    pub layout_pane: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
     pub recorded_at: u64,
@@ -82,7 +81,7 @@ pub fn last_choice_is_valid(record: &LastAgentRecord, config: &Config) -> bool {
     };
     let pane_ok = config
         .layout(&record.layout)
-        .is_some_and(|layout| layout.agent_pane(Some(&record.pane)).is_some());
+        .is_some_and(|layout| layout.agent_pane(Some(&record.layout_pane)).is_some());
     option_ok && pane_ok
 }
 
@@ -170,7 +169,7 @@ mod tests {
             option: None,
             effort: None,
             layout: "agentic-coding".to_owned(),
-            pane: "agent".to_owned(),
+            layout_pane: "agent".to_owned(),
             session: None,
             recorded_at: 42,
         };
@@ -267,7 +266,7 @@ mod tests {
                 option: None,
                 effort: None,
                 layout: "agentic-coding".to_owned(),
-                pane: "agent".to_owned(),
+                layout_pane: "agent".to_owned(),
                 session: None,
                 recorded_at: 1,
             },
@@ -284,7 +283,7 @@ mod tests {
                 option: Some("Removed".to_owned()),
                 effort: None,
                 layout: "agentic-coding".to_owned(),
-                pane: "agent".to_owned(),
+                layout_pane: "agent".to_owned(),
                 session: None,
                 recorded_at: 1,
             },
@@ -301,7 +300,7 @@ mod tests {
                 option: None,
                 effort: None,
                 layout: "agentic-coding".to_owned(),
-                pane: "agent".to_owned(),
+                layout_pane: "agent".to_owned(),
                 session: None,
                 recorded_at: 1,
             },
@@ -318,7 +317,7 @@ mod tests {
                 option: Some("Removed".to_owned()),
                 effort: None,
                 layout: "agentic-coding".to_owned(),
-                pane: "agent".to_owned(),
+                layout_pane: "agent".to_owned(),
                 session: None,
                 recorded_at: 1,
             },
@@ -335,7 +334,7 @@ mod tests {
                 option: None,
                 effort: None,
                 layout: "removed-layout".to_owned(),
-                pane: "agent".to_owned(),
+                layout_pane: "agent".to_owned(),
                 session: None,
                 recorded_at: 1,
             },
@@ -352,7 +351,7 @@ mod tests {
                 option: None,
                 effort: None,
                 layout: "agentic-coding".to_owned(),
-                pane: "term".to_owned(),
+                layout_pane: "term".to_owned(),
                 session: None,
                 recorded_at: 1,
             },

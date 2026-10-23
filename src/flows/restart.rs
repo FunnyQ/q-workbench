@@ -353,7 +353,7 @@ fn injected_command(
             "--layout".to_owned(),
             record.layout.clone(),
             "--pane".to_owned(),
-            record.pane.clone(),
+            record.layout_pane.clone(),
         ]);
     }
     if let Some(resume) = resume {
@@ -597,7 +597,7 @@ mod tests {
             option: None,
             effort: None,
             layout: "agentic-coding".to_owned(),
-            pane: "agent".to_owned(),
+            layout_pane: "agent".to_owned(),
             session: Some("stored-id".to_owned()),
             recorded_at: 1,
         };
@@ -641,7 +641,7 @@ mod tests {
             option: None,
             effort: None,
             layout: "agentic-coding".to_owned(),
-            pane: "agent".to_owned(),
+            layout_pane: "agent".to_owned(),
             session: Some("stored-id".to_owned()),
             recorded_at: 1,
         };
@@ -687,7 +687,7 @@ mod tests {
             option: None,
             effort: None,
             layout: "agentic-coding".to_owned(),
-            pane: "agent".to_owned(),
+            layout_pane: "agent".to_owned(),
             session: None,
             recorded_at: seconds,
         };
@@ -723,7 +723,7 @@ mod tests {
             option: None,
             effort: None,
             layout: "agentic-coding".to_owned(),
-            pane: "agent".to_owned(),
+            layout_pane: "agent".to_owned(),
             session: Some("stored-id".to_owned()),
             recorded_at: 1,
         };

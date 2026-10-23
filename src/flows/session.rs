@@ -421,7 +421,7 @@ mod tests {
                 option: None,
                 effort: None,
                 layout: "agentic-coding".to_owned(),
-                pane: "agent".to_owned(),
+                layout_pane: "agent".to_owned(),
                 session: None,
                 recorded_at: 1,
             },

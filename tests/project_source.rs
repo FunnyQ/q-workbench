@@ -78,7 +78,7 @@ fn emits_the_registry_as_nul_delimited_records() {
 /// The picker reloads this on every keystroke, so a failure must stay silent on both
 /// channels — stdout would become an fzf row and stderr would corrupt the popup.
 #[test]
-fn a_missing_registry_exits_non_zero_without_writing_anything() {
+fn a_failing_source_exits_non_zero_without_adding_a_picker_row_or_popup_noise() {
     let directory = temporary_directory();
     let home = directory.join("home");
     let missing = directory.join("missing.json");

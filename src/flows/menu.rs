@@ -241,23 +241,16 @@ fn stdin_ready(timeout_ms: i32) -> bool {
     unsafe { libc::poll(&mut poll, 1, timeout_ms) > 0 }
 }
 
-/// Where a `gum input` field starts.
-///
-/// The two input fields are indented differently in `scripts/new-agent-popup.zsh`: the
-/// branch field is preceded by `printf '%*s' "$choice_margin"` (line 78) while the usage
-/// field is not (line 130). The difference is visible on screen, so it is carried across
-/// rather than tidied away.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InputIndent {
-    Centered,
-    None,
+    BranchField,
+    TabNameField,
 }
 
 pub(crate) fn strip_pad(value: &str) -> String {
     value.trim_start().to_owned()
 }
 
-///
 /// Centering pads have to agree with what `gum` draws, so this mirrors how `gum` measures
 /// text. Verified with `gum style --border rounded`: `中文分支` renders 8 columns and
 /// `こんにちは` 10, while the Nerd Font glyph in `\u{f15ce}  claude code` renders 1, so
@@ -466,7 +459,7 @@ impl Menu for GumMenu {
         indent: InputIndent,
     ) -> Result<Option<String>> {
         self.render_banner(title, subtitle, 1)?;
-        if indent == InputIndent::Centered {
+        if indent == InputIndent::BranchField {
             print!("{}", " ".repeat(usize::from(self.block_margin(width))));
             io::stdout().flush().context("failed to indent gum input")?;
         }

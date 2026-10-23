@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -299,7 +300,7 @@ impl Cli {
                             worktree: args.worktree,
                             no_layout: args.no_layout,
                             restart: args.restart,
-                            resume: args.resume,
+                            target_resume: args.resume,
                             layout: args.layout,
                             pane: args.pane,
                         },
@@ -561,10 +562,17 @@ impl Cli {
 /// The picker binds `change:reload(<self> source {q})`, so this subcommand runs once
 /// per keystroke and process startup is its whole cost. Matching argv here skips
 /// clap's parser construction for the one hot path; every other invocation returns
-/// `None` and takes the normal route. A failure exits non-zero **silently**: the
-/// picker must never gain output of any kind, on either channel (MSG-6).
+/// `None` and takes the normal route.
 fn project_source_fast_path() -> Option<ExitCode> {
-    let mut args = std::env::args_os().skip(1);
+    let query = project_source_query(std::env::args_os())?;
+    Some(match flows::picker::project_source(query.as_deref()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(_) => ExitCode::FAILURE,
+    })
+}
+
+fn project_source_query(args: impl Iterator<Item = OsString>) -> Option<Option<String>> {
+    let mut args = args.skip(1);
     if args.next()? != "project" || args.next()? != "source" {
         return None;
     }
@@ -581,11 +589,7 @@ fn project_source_fast_path() -> Option<ExitCode> {
     if args.next().is_some() {
         return None;
     }
-
-    Some(match flows::picker::project_source(query.as_deref()) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(_) => ExitCode::FAILURE,
-    })
+    Some(query)
 }
 
 fn main() -> ExitCode {
@@ -709,6 +713,49 @@ fn notification_body(metadata: Option<&FlowError>, error: &anyhow::Error) -> Str
 mod tests {
     use super::*;
     use workbench::herdr;
+
+    fn source_query(argv: &[&str]) -> Option<Option<String>> {
+        project_source_query(argv.iter().map(OsString::from))
+    }
+
+    #[test]
+    fn the_fast_path_takes_project_source_with_at_most_one_query() {
+        assert_eq!(
+            source_query(&["workbench", "project", "source"]),
+            Some(None)
+        );
+        assert_eq!(
+            source_query(&["workbench", "project", "source", "alp"]),
+            Some(Some("alp".to_owned()))
+        );
+    }
+
+    #[test]
+    fn the_fast_path_hands_flags_and_other_argv_back_to_clap() {
+        for argv in [
+            &["workbench"][..],
+            &["workbench", "project"],
+            &["workbench", "project", "scan"],
+            &["workbench", "agent", "source"],
+            &["workbench", "project", "source", "--help"],
+            &["workbench", "project", "source", "-h"],
+            &["workbench", "project", "source", "alp", "extra"],
+        ] {
+            assert_eq!(source_query(argv), None, "{argv:?}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_fast_path_hands_a_non_utf8_query_back_to_clap() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let argv = ["workbench", "project", "source"]
+            .into_iter()
+            .map(OsString::from)
+            .chain([OsString::from_vec(vec![0xff])]);
+        assert_eq!(project_source_query(argv), None);
+    }
 
     #[test]
     fn every_leaf_parses_with_all_supported_arguments() {

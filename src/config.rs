@@ -134,12 +134,8 @@ pub struct AgentOption {
     pub efforts: Option<Vec<String>>,
 }
 
-/// File names that mark a directory as a project even without a `.git` in it.
-///
-/// The project picker's sweep treats one of these the way it treats `.git`: as a leaf,
-/// which both admits the directory and stops the walk there. That is what separates a
-/// project from the directory that merely holds projects — depth cannot, because a
-/// projects root nests them unevenly.
+/// Depth cannot separate a project from a directory that holds projects, because a
+/// projects root nests them unevenly; a marker can.
 fn default_project_markers() -> Vec<String> {
     ["package.json", "Gemfile", "Cargo.toml", "CLAUDE.md"]
         .into_iter()
@@ -217,11 +213,6 @@ fn default_agents() -> Vec<Agent> {
     ]
 }
 
-/// The name of the built-in blank layout.
-///
-/// Reserved rather than private: a config may declare a layout under this name to change
-/// what "blank" opens, and the menu shows that one instead. Either way exactly one blank
-/// entry appears, and it always sorts last.
 pub const BLANK_LAYOUT_NAME: &str = "blank-tab";
 
 pub fn blank_tab_layout() -> TabLayout {
@@ -636,9 +627,6 @@ impl Config {
         }
 
         for agent in &self.agents {
-            // An empty executable is as unlaunchable as an empty vector, and both fail
-            // only at exec time — after the tab is already on screen. Later argv entries
-            // may legitimately be empty strings, so only the executable is checked.
             if agent
                 .command
                 .first()
@@ -746,8 +734,6 @@ impl TabLayout {
 
     /// The layout's agent panes, paired with their index in `panes`, in config order.
     ///
-    /// A layout may declare none. Such a tab runs no harness, so it skips the harness,
-    /// model, and usage menus, and nothing writes restart state for it.
     pub fn agent_panes(&self) -> impl Iterator<Item = (usize, &LayoutPane)> {
         self.panes
             .iter()
@@ -1671,6 +1657,23 @@ type = "agent"
         let error = validation_error(&config);
 
         assert!(error.contains("claude code"), "{error}");
+    }
+
+    #[test]
+    fn a_blank_executable_is_rejected_but_a_later_empty_argument_is_not() {
+        let mut config = Config::test_default();
+        config.agents[0].command = vec![" ".to_owned(), "--flag".to_owned()];
+
+        let error = validation_error(&config);
+        assert!(
+            error.contains("agent 'claude code': command is empty"),
+            "{error}"
+        );
+
+        config.agents[0].command = vec!["claude".to_owned(), String::new()];
+        config
+            .validate()
+            .expect("an empty argument after the executable is valid");
     }
 
     #[test]

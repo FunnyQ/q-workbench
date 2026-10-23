@@ -34,6 +34,7 @@ const USAGE_DEBUG: &str = "\u{ead8}  debug";
 const USAGE_WRITE: &str = "\u{f19b9}  let me write…";
 const WORKTREE_TITLE: &str = "  New Worktree";
 const WORKTREE_SUBTITLE: &str = "Filter a branch, or name a new one.";
+const WORKTREE_INPUT_WIDTH: u16 = 44;
 const AGENT_LABEL: &str = "\u{f169f}  agent";
 #[cfg(test)]
 const TEST_CLAUDE_LABEL: &str = "\u{f15ce}  claude code";
@@ -50,9 +51,7 @@ pub struct LaunchOptions {
     pub worktree: bool,
     pub no_layout: bool,
     pub restart: bool,
-    /// The session the restarted harness should pick up. Only the pane being restarted
-    /// resumes; any other agent pane the layout builds still starts fresh.
-    pub resume: Option<String>,
+    pub target_resume: Option<String>,
     pub layout: Option<String>,
     pub pane: Option<String>,
 }
@@ -93,9 +92,7 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
         })?;
     let (cols, lines) = pane_viewport(client, &options.pane_id);
     let target = launch_target(layout, options)?;
-    // Building the layout means creating its other agent panes too, so every one of them
-    // has to be decided here. A launch that builds nothing asks about the target alone.
-    let panes = if options.no_layout {
+    let agent_panes_this_launch_builds = if options.no_layout {
         vec![target]
     } else {
         layout.agent_panes().map(|(_, pane)| pane).collect()
@@ -103,7 +100,7 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
     let Some(mut choice) = choose_agent(
         config,
         layout,
-        &panes,
+        &agent_panes_this_launch_builds,
         &cwd,
         options.worktree,
         options.usage.as_deref(),
@@ -128,9 +125,7 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
         .agent(Some(&target.name))
         .expect("the target pane was asked about")
         .clone();
-    // Rebuilt rather than threaded through the menus: resume belongs to this one pane,
-    // and the menus decide for every agent pane the layout builds.
-    if let Some(session) = &options.resume {
+    if let Some(session) = &options.target_resume {
         launch.launch = build_launch(
             config,
             &launch.agent_name,
@@ -146,18 +141,10 @@ pub fn launch(client: &dyn HerdrClient, config: &Config, options: &LaunchOptions
         .status()
         .context("failed to clear the terminal before launching the agent")?;
 
-    // Narrowest possible window: the harness this pane is about to become writes its
-    // session file after the exec below.
-    let since_ms = session::now_ms();
-    let mut record = last_agent_record(&launch, layout)?;
-    // A resume already knows its session, and losing it here would leave the next resume
-    // with nothing to fall back on when the reporter finds no file.
-    record.session = options.resume.clone();
+    let just_before_exec_ms = session::now_ms();
+    let record = last_agent_record(&launch, layout, options.target_resume.clone())?;
     let _ = state::write_state(client, &options.pane_id, &record);
-    // exec destroys this process, so the only moment a reporter can be started is here.
-    if let Some(report) = reporter_options(&launch, &choice, &options.pane_id, since_ms) {
-        let _ = session::spawn_reporter(&report);
-    }
+    spawn_session_reporter(&launch, &choice, &options.pane_id, just_before_exec_ms);
 
     // A child wrapper breaks restart-in-place. exec only returns when execvp fails.
     let error = Command::new(&launch.launch[0])
@@ -202,17 +189,15 @@ pub(crate) fn inject_with_config(
         argv.extend(["--layout".to_owned(), layout.clone()]);
     }
 
-    // At inject time the usage menu has not run, so the layout root is the best
-    // available name and the generic agent label remains the fallback.
     let root = &layout.panes[0];
-    let pane_label = root
+    let label_until_usage_is_chosen = root
         .label
         .as_deref()
         .map(|label| render_label(root.icon.as_deref(), label))
         .unwrap_or_else(|| AGENT_LABEL.to_owned());
 
     client
-        .pane_rename(json!({ "pane_id": options.pane_id, "label": pane_label }))
+        .pane_rename(json!({ "pane_id": options.pane_id, "label": label_until_usage_is_chosen }))
         .context("failed to rename the injected agent pane")?;
     client
         .pane_send_input(json!({
@@ -292,10 +277,7 @@ fn build_side_panes(
             crate::config::Direction::Right => "right",
             crate::config::Direction::Down => "down",
         };
-        // Config ratios are self-describing as each new pane's share, while Herdr's
-        // ratio is the original pane's share after the split. For example, `files`
-        // uses 0.62 so Files takes 62%, the agent keeps 38%, and Herdr receives 38%.
-        let ratio = 1.0 - pane.ratio.expect("validated at load");
+        let ratio = herdr_ratio(pane.ratio.expect("validated at load"));
         let mut params = Map::from_iter([
             ("target_pane_id".to_owned(), json!(target_pane_id)),
             ("direction".to_owned(), json!(direction)),
@@ -335,6 +317,11 @@ fn build_side_panes(
         previous_pane_id = pane_id;
     }
     Ok(())
+}
+
+// Herdr's ratio is the original pane's share after the split, not the new pane's.
+fn herdr_ratio(new_pane_share: f64) -> f64 {
+    1.0 - new_pane_share
 }
 
 fn tab_pane_label(index: usize, pane: &LayoutPane, choice: &AgentChoice) -> Option<String> {
@@ -424,9 +411,7 @@ fn start_pane(
         let Some(agent) = choice.agent(Some(&pane.name)) else {
             return Ok(());
         };
-        // Read before the harness starts: a transcript written during startup would
-        // otherwise be older than the window the reporter searches.
-        let since_ms = session::now_ms();
+        let before_start_ms = session::now_ms();
         match &agent.start {
             Some(start) => {
                 start_agent(
@@ -445,19 +430,21 @@ fn start_pane(
                 send_pane_input(client, pane_id, &command, &pane.name)?
             }
         }
-        let record = last_agent_record(agent, layout)?;
+        let record = last_agent_record(agent, layout, None)?;
         let _ = state::write_state(client, pane_id, &record);
-        // Every agent pane the plugin does not `exec` into reports from here; the one it
-        // does reports from `launch`, which has no process left after the exec.
-        if let Some(options) = reporter_options(agent, choice, pane_id, since_ms) {
-            let _ = session::spawn_reporter(&options);
-        }
+        spawn_session_reporter(agent, choice, pane_id, before_start_ms);
         return Ok(());
     }
     if let (PaneType::Command, Some(command)) = (pane.pane_type, &pane.command) {
         send_pane_input(client, pane_id, command, &pane.name)?;
     }
     Ok(())
+}
+
+fn spawn_session_reporter(agent: &PaneAgent, choice: &AgentChoice, pane_id: &str, since_ms: u64) {
+    if let Some(options) = reporter_options(agent, choice, pane_id, since_ms) {
+        let _ = session::spawn_reporter(&options);
+    }
 }
 
 fn reporter_options(
@@ -535,10 +522,7 @@ fn build_layout_tree<'a>(
                 crate::config::Direction::Right => "right",
                 crate::config::Direction::Down => "down",
             },
-            // Config ratios are self-describing as each new pane's share, while Herdr's
-            // ratio is the original pane's share after the split. For example, `files`
-            // uses 0.62 so Files takes 62%, the agent keeps 38%, and Herdr receives 38%.
-            ratio: 1.0 - pane.ratio.expect("validated at load"),
+            ratio: herdr_ratio(pane.ratio.expect("validated at load")),
             first: moved,
             second: added,
         };
@@ -776,14 +760,18 @@ fn fill_popup_tab(
     Ok(())
 }
 
-fn last_agent_record(agent: &PaneAgent, layout: &TabLayout) -> Result<state::LastAgentRecord> {
+fn last_agent_record(
+    agent: &PaneAgent,
+    layout: &TabLayout,
+    resumed_session: Option<String>,
+) -> Result<state::LastAgentRecord> {
     Ok(state::LastAgentRecord {
         agent: agent.agent_name.clone(),
         option: agent.option_name.clone(),
         effort: agent.effort.clone(),
         layout: layout.name.clone(),
-        pane: agent.pane.clone(),
-        session: None,
+        layout_pane: agent.pane.clone(),
+        session: resumed_session,
         recorded_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .context("system clock is before Unix epoch")?
@@ -801,13 +789,9 @@ pub struct AgentChoice {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaneAgent {
-    /// The layout pane's `name`. Restart stores it so a side agent pane replays its own
-    /// pin rather than the first agent pane's.
     pub pane: String,
     pub launch: Vec<String>,
     pub start: Option<AgentStart>,
-    /// Set even when `start` is None, because an overridden command still writes the
-    /// session files of its kind.
     pub kind: Option<String>,
     pub agent_name: String,
     pub option_name: Option<String>,
@@ -1097,7 +1081,7 @@ fn select_tab_name(layout: &TabLayout, menu: &mut impl Menu) -> Result<Option<St
         "Name this tab.",
         &fallback,
         40,
-        InputIndent::None,
+        InputIndent::TabNameField,
     )?
     else {
         return Ok(None);
@@ -1129,7 +1113,7 @@ fn select_usage(menu: &mut impl Menu) -> Result<Option<String>> {
         "Name this tab.",
         "label for this tab…",
         40,
-        InputIndent::None,
+        InputIndent::TabNameField,
     )?
     else {
         return Ok(None);
@@ -1258,14 +1242,13 @@ fn select_worktree(
         .collect::<Vec<_>>();
 
     // One field, two jobs: it filters the existing branches and names a new one.
-    // `--width 44` is literal in the popup, not derived from the viewport.
     let selection = if branches.is_empty() {
         menu.input(
             WORKTREE_TITLE,
             WORKTREE_SUBTITLE,
             "new branch name…",
-            44,
-            InputIndent::Centered,
+            WORKTREE_INPUT_WIDTH,
+            InputIndent::BranchField,
         )?
     } else {
         menu.filter(
@@ -1402,9 +1385,8 @@ pub fn realise_worktree(repo_root: &Path, branch: &str) -> Option<PathBuf> {
 /// Strip the worktree from a choice whose creation failed.
 ///
 /// Without this a caller would split panes into a directory that was never created and
-/// label the tab with a branch that does not exist. `repo_root` must be the original cwd
-/// when there is no repository.
-pub fn without_worktree(mut choice: AgentChoice, repo_root: &Path) -> AgentChoice {
+/// label the tab with a branch that does not exist.
+pub fn without_worktree(mut choice: AgentChoice, fallback_dir: &Path) -> AgentChoice {
     let branch = choice.branch.take();
     if let Some(branch) = branch {
         let suffix = format!("  {branch}");
@@ -1412,7 +1394,7 @@ pub fn without_worktree(mut choice: AgentChoice, repo_root: &Path) -> AgentChoic
             choice.label = compose_label(usage, None);
         }
     }
-    choice.project_dir = repo_root.to_path_buf();
+    choice.project_dir = fallback_dir.to_path_buf();
     choice
 }
 
@@ -1786,6 +1768,7 @@ mod popup {
 
     #[test]
     fn a_shell_root_starts_nothing_in_the_tab_root() {
+        let _guard = crate::state::env_lock();
         let client = FakeClient::default();
         let mut layout = default_layout();
         layout.panes[0].pane_type = PaneType::Shell;
@@ -1891,7 +1874,7 @@ mod popup {
             no_layout,
             pane: None,
             restart: false,
-            resume: None,
+            target_resume: None,
             layout: None,
         }
     }
@@ -2090,6 +2073,7 @@ mod popup {
 
     #[test]
     fn popup_reproduces_the_exact_four_call_sequence() {
+        let _guard = crate::state::env_lock();
         let client = FakeClient::default();
         queue_popup_apply(&client);
 
@@ -2147,6 +2131,7 @@ mod popup {
 
     #[test]
     fn an_agent_with_a_kind_starts_through_herdr() {
+        let _guard = crate::state::env_lock();
         let client = FakeClient::default();
         queue_popup_apply(&client);
         let mut choice = popup_choice();
@@ -2180,6 +2165,7 @@ mod popup {
 
     #[test]
     fn a_command_override_keeps_the_typed_argv_path() {
+        let _guard = crate::state::env_lock();
         assert!(build_start(
             &Config::test_default(),
             "claude code",
@@ -2221,6 +2207,7 @@ mod popup {
     /// `agent.start` waits for the harness to be ready, so its timeout is a tab failure.
     #[test]
     fn a_timed_out_agent_start_becomes_a_flow_error() {
+        let _guard = crate::state::env_lock();
         let client = FakeClient::default();
         queue_popup_apply(&client);
         client.queue_error("agent.start", "timeout", "agent did not become ready");
@@ -2243,6 +2230,7 @@ mod popup {
     /// first `agent.start` is refused and only a retry gets the tab built.
     #[test]
     fn a_pane_not_yet_at_its_prompt_is_retried_until_it_is() {
+        let _guard = crate::state::env_lock();
         let client = FakeClient::default();
         queue_popup_apply(&client);
         client.queue_error(
@@ -2274,6 +2262,7 @@ mod popup {
     /// refuses, so the second start takes a numbered name instead of closing its tab.
     #[test]
     fn a_taken_agent_name_is_retried_with_a_number() {
+        let _guard = crate::state::env_lock();
         let client = FakeClient::default();
         queue_popup_apply(&client);
         client.queue_error(
@@ -2395,6 +2384,7 @@ mod popup {
 
     #[test]
     fn popup_workspace_id_is_omitted_when_empty_and_sent_when_present() {
+        let _guard = crate::state::env_lock();
         for (workspace, expected) in [(None, None), (Some("w1".to_owned()), Some(json!("w1")))] {
             let client = FakeClient::default();
             queue_popup_apply(&client);
@@ -2408,6 +2398,7 @@ mod popup {
 
     #[test]
     fn a_reordered_fold_still_sends_each_command_to_its_own_pane() {
+        let _guard = crate::state::env_lock();
         let client = FakeClient::default();
         let mut layout = default_layout();
         layout.panes[2].split_from = Some("agent".to_owned());
@@ -2436,6 +2427,7 @@ mod popup {
 
     #[test]
     fn a_layout_apply_reply_that_does_not_match_the_layout_is_rejected() {
+        let _guard = crate::state::env_lock();
         let client = FakeClient::default();
         client.queue_response(
             "layout.apply",
@@ -2486,6 +2478,7 @@ mod popup {
 
     #[test]
     fn a_popup_failure_after_apply_closes_the_tab_it_built() {
+        let _guard = crate::state::env_lock();
         let methods = [
             "layout.apply",
             "tab.focus",
@@ -2530,6 +2523,7 @@ mod popup {
 
     #[test]
     fn popup_cancelled_choice_makes_zero_calls() {
+        let _guard = crate::state::env_lock();
         let client = FakeClient::default();
         let choice: Option<AgentChoice> = None;
         if let Some(choice) = choice {
@@ -2842,6 +2836,144 @@ mod popup {
         assert_eq!(choice.label, "scratch");
     }
 
+    fn state_fixture(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "workbench-agent-state-{name}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        std::env::set_var("Q_WORKBENCH_STATE_FILE", &path);
+        path
+    }
+
+    #[test]
+    fn a_layout_with_no_agent_pane_skips_every_agent_menu_and_writes_no_restart_state() {
+        let _guard = crate::state::env_lock();
+        let state_file = state_fixture("no-agent-pane");
+        let config = config();
+        let layout = shell_only_layout("blank", "Blank Tab");
+        let mut menu = FakeMenu::new([Some("scratch")]);
+
+        let choice = choose_agent_with(
+            &config,
+            &layout,
+            Path::new("/project"),
+            false,
+            None,
+            &mut menu,
+            &FakeGit::nowhere(),
+        )
+        .unwrap()
+        .unwrap();
+        let client = FakeClient::default();
+        client.queue_response(
+            "layout.apply",
+            json!({
+                "type": "layout_apply",
+                "layout": {
+                    "workspace_id": "w1", "tab_id": "t1", "zoomed": false,
+                    "focused_pane_id": "p1",
+                    "root": { "type": "pane", "pane_id": "p1" },
+                },
+            }),
+        );
+        client.queue_response("pane.list", json!({ "panes": [{ "pane_id": "p1" }] }));
+        create_popup_tab(&client, &layout, &choice, None).unwrap();
+
+        let written = state_file.exists();
+        let _ = fs::remove_file(&state_file);
+        std::env::remove_var("Q_WORKBENCH_STATE_FILE");
+        assert!(menu.titles.is_empty(), "{:?}", menu.titles);
+        assert!(!written);
+    }
+
+    #[test]
+    fn a_restarted_side_agent_pane_replays_its_own_pin() {
+        let _guard = crate::state::env_lock();
+        let state_file = state_fixture("side-pin");
+        let mut config = config();
+        for agent in &mut config.agents {
+            agent.kind = None;
+        }
+        let mut layout = two_agent_layout("pair");
+        layout.tab_label = Some("pair".to_owned());
+        layout.panes[0].agent = Some("claude code".to_owned());
+        layout.panes[0].option_name = Some("Opus".to_owned());
+        layout.panes[1].agent = Some("codex".to_owned());
+        config.tab_layouts.push(layout.clone());
+        let choice = choose_agent_with(
+            &config,
+            &layout,
+            Path::new("/project"),
+            false,
+            None,
+            &mut FakeMenu::new([]),
+            &FakeGit::nowhere(),
+        )
+        .unwrap()
+        .unwrap();
+        let client = FakeClient::default();
+        client.queue_response(
+            "layout.apply",
+            json!({
+                "type": "layout_apply",
+                "layout": {
+                    "workspace_id": "w1", "tab_id": "t1", "zoomed": false,
+                    "focused_pane_id": "p1",
+                    "root": {
+                        "type": "split", "direction": "right", "ratio": 0.5,
+                        "first": { "type": "pane", "pane_id": "p1" },
+                        "second": { "type": "pane", "pane_id": "p2" },
+                    },
+                },
+            }),
+        );
+        for _ in 0..2 {
+            client.queue_response(
+                "pane.list",
+                json!({ "panes": [{ "pane_id": "p1" }, { "pane_id": "p2" }] }),
+            );
+        }
+        create_popup_tab(&client, &layout, &choice, None).unwrap();
+
+        let record = state::get_for_pane("p2", &config);
+        let _ = fs::remove_file(&state_file);
+        std::env::remove_var("Q_WORKBENCH_STATE_FILE");
+        let record = record.expect("the side agent pane recorded its launch");
+        let mut restart = launch_options(None, true);
+        restart.pane = Some(record.layout_pane.clone());
+        let target = launch_target(&layout, &restart).unwrap();
+        let replayed = choose_agent_with_last(
+            &config,
+            &layout,
+            &[target],
+            Path::new("/project"),
+            false,
+            None,
+            Some(record),
+            &mut FakeMenu::new([]),
+            &FakeGit::nowhere(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(replayed.agents[0].agent_name, "codex");
+    }
+
+    #[test]
+    fn an_option_that_overrides_the_command_still_names_its_kind() {
+        let config = Config::test_default();
+        let mut pane = bare_layout("ccr").panes.remove(0);
+        pane.agent = Some("claude code".to_owned());
+        pane.option_name = Some("CCR".to_owned());
+
+        let agent = choose_pane_agent(&config, &pane, false, None, &mut FakeMenu::new([]))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(agent.start, None);
+        assert_eq!(agent.kind.as_deref(), Some("claude"));
+    }
+
     #[test]
     fn an_empty_tab_name_keeps_the_layout_label_but_escape_cancels() {
         let config = config();
@@ -2942,7 +3074,7 @@ mod popup {
                 option: Some("Opus".to_owned()),
                 effort: None,
                 layout: "agentic-coding".to_owned(),
-                pane: "agent".to_owned(),
+                layout_pane: "agent".to_owned(),
                 session: None,
                 recorded_at: 1,
             }),
@@ -3134,7 +3266,7 @@ mod popup {
                 option: Some("OpusPlan (Sonnet)".to_owned()),
                 effort: Some("max".to_owned()),
                 layout: "agentic-coding".to_owned(),
-                pane: "agent".to_owned(),
+                layout_pane: "agent".to_owned(),
                 session: None,
                 recorded_at: 1,
             }),
@@ -3173,7 +3305,7 @@ mod popup {
                 option: Some("Opus".to_owned()),
                 effort: None,
                 layout: "agentic-coding".to_owned(),
-                pane: "agent".to_owned(),
+                layout_pane: "agent".to_owned(),
                 session: None,
                 recorded_at: 1,
             }),
@@ -3211,7 +3343,7 @@ mod popup {
                 option: Some("Removed".to_owned()),
                 effort: None,
                 layout: "agentic-coding".to_owned(),
-                pane: "agent".to_owned(),
+                layout_pane: "agent".to_owned(),
                 session: None,
                 recorded_at: 1,
             }),

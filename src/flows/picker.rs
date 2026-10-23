@@ -1316,7 +1316,7 @@ mod tests {
     }
 
     #[test]
-    fn sweeps_unregistered_projects_after_the_zoxide_row() {
+    fn sweeps_unregistered_projects_after_the_zoxide_row_and_stops_at_a_marked_directory() {
         let directory = TestDirectory::new();
         let home = directory
             .0

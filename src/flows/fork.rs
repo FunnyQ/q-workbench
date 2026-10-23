@@ -22,7 +22,6 @@ const NO_SESSION: &str = "No session to fork yet. Send the agent a prompt first.
 const FORK_SUFFIX: &str = " (fork)";
 
 pub fn fork(client: &dyn HerdrClient) -> FlowResult {
-    // Config first: a broken config must be reported before the first socket call.
     let config = Config::load().context("failed to load config")?;
     let invocation = invocation_pane_id()?;
     let (cols, lines) = popup_viewport();
@@ -98,7 +97,7 @@ fn choose_fork(
         option.and_then(|option| agent.resolve_effort(option, requested_effort.as_deref()));
     let continuation = Some(Continuation::Fork(session));
     let forked = PaneAgent {
-        pane: record.pane.clone(),
+        pane: record.layout_pane.clone(),
         launch: build_launch(
             config,
             &agent.name,
@@ -124,7 +123,7 @@ fn choose_fork(
         .expect("validated by get_for_pane");
     let mut agents = Vec::new();
     for (_, pane) in layout.agent_panes() {
-        if pane.name == record.pane {
+        if pane.name == record.layout_pane {
             agents.push(forked.clone());
             continue;
         }
@@ -220,7 +219,7 @@ mod tests {
             option: option.map(str::to_owned),
             effort: effort.map(str::to_owned),
             layout: "agentic-coding".to_owned(),
-            pane: "agent".to_owned(),
+            layout_pane: "agent".to_owned(),
             session: Some("stored-id".to_owned()),
             recorded_at: 1,
         }
@@ -339,7 +338,7 @@ mod tests {
         config.tab_layouts.push(layout);
         let mut stored = record("codex", None, None);
         stored.layout = "pair".to_owned();
-        stored.pane = side.clone();
+        stored.layout_pane = side.clone();
         let mut menu = FakeMenu::default();
         menu.models.push_back(Some((0, None)));
 
@@ -364,6 +363,25 @@ mod tests {
     fn a_fork_of_a_fork_keeps_one_suffix() {
         assert_eq!(fork_label("review"), "review (fork)");
         assert_eq!(fork_label("review (fork)"), "review (fork)");
+    }
+
+    #[test]
+    fn a_broken_config_fails_before_the_first_socket_call() {
+        let _guard = crate::state::env_lock();
+        let path =
+            env::temp_dir().join(format!("workbench-fork-config-{}.toml", std::process::id()));
+        fs::write(&path, "[[agents]\n").unwrap();
+        env::set_var("Q_WORKBENCH_LOCAL_CONFIG", &path);
+        env::set_var("HERDR_PLUGIN_CONTEXT_JSON", r#"{"focused_pane_id":"p1"}"#);
+        let client = FakeClient::default();
+
+        let result = fork(&client);
+
+        env::remove_var("Q_WORKBENCH_LOCAL_CONFIG");
+        env::remove_var("HERDR_PLUGIN_CONTEXT_JSON");
+        fs::remove_file(path).unwrap();
+        assert!(result.is_err());
+        assert!(client.calls.borrow().is_empty());
     }
 
     #[test]
